@@ -1,0 +1,105 @@
+ID,Family,Title,Has OS Commands,Commands,Guidance
+03.01.01,Access Control,Account Management,True,useradd -m [user] | usermod -L [user] | chage -l [user],"Manage system accounts including establishment, activation, modification, and disablement."
+03.01.02,Access Control,Access Enforcement,True,chmod 700 /home/[user] | setfacl -m u:[user]:rw [file],Control access to CUI based on authorized identities and roles.
+03.01.03,Access Control,Information Flow Enforcement,True,iptables -L -n | nft list ruleset,Control information flow between interconnected systems.
+03.01.04,Access Control,Separation of Duties,False,N/A,Establish separation of duties to prevent malevolent activity without collusion.
+03.01.05,Access Control,Least Privilege,True,visudo | find / -perm -4000,Assign only the minimum privileges required for a user or process to perform its function.
+03.01.06,Access Control,Non-Privileged Access,False,N/A,Ensure privileged users use non-privileged accounts for non-privileged functions.
+03.01.07,Access Control,Privileged Functions,True,grep 'Defaults logfile' /etc/sudoers,Restrict access to privileged functions and log their execution.
+03.01.08,Access Control,Unsuccessful Logon Attempts,True,faillock --user [user] | grep pam_faillock /etc/pam.d/password-auth,Limit unsuccessful logon attempts and lock accounts automatically.
+03.01.09,Access Control,System Use Notification,True,cat /etc/issue | cat /etc/issue.net,Display privacy and security notices before granting access.
+03.01.10,Access Control,Device Lock,True,echo $TMOUT | gsettings get org.gnome.desktop.session idle-delay,Prevent access to systems after inactivity by initiating device locks.
+03.01.11,Access Control,Session Termination,True,grep ClientAliveInterval /etc/ssh/sshd_config,Automatically terminate user sessions after specified conditions.
+03.01.12,Access Control,Remote Access Monitoring,True,last -a | who,Monitor and control remote access sessions.
+03.01.13,Access Control,Remote Access Confidentiality,True,sshd -T | grep ciphers,Use cryptography to protect the confidentiality of remote access sessions.
+03.01.14,Access Control,Remote Access Termination,True,systemctl stop sshd,Ensure remote access can be terminated upon session completion or after inactivity.
+03.01.15,Access Control,Privileged Access via Remote,True,grep PermitRootLogin /etc/ssh/sshd_config,Route all remote privileged access through managed access control points.
+03.01.16,Access Control,Wireless Access,True,nmcli radio wifi off | rfkill block wifi,Establish usage restrictions and configuration requirements for wireless access.
+03.01.17,Access Control,Wireless Access Protection,True,iwconfig,Protect wireless access with authentication and encryption.
+03.01.18,Access Control,Mobile Device Connections,True,lsmod | grep usb_storage,Control connection of mobile devices to organizational systems.
+03.01.19,Access Control,Encrypted Mobile Storage,True,cryptsetup status [device],Encrypt CUI on mobile devices and computing platforms.
+03.01.20,Access Control,External Systems,False,N/A,"Limit use of organizational systems on external systems (e.g., public kiosks)."
+03.01.21,Access Control,Public Information,False,N/A,Limit CUI on publicly accessible systems.
+03.01.22,Access Control,Control CUI Posting,False,N/A,Limit CUI posting on publicly accessible systems to authorized personnel.
+03.02.01,Awareness and Training,Literacy Training,False,N/A,Provide security awareness training to all system users.
+03.02.02,Awareness and Training,Role-Based Training,False,N/A,Provide specialized training for those with security-significant roles.
+03.02.03,Awareness and Training,Training Records,False,N/A,Maintain records of security training completion.
+03.03.01,Audit and Accountability,Audit Record Creation,True,systemctl status auditd | auditctl -s,Create and retain system audit records to enable monitoring and investigation.
+03.03.02,Audit and Accountability,Audit Content,True,ausearch -m SYSCALL,"Ensure audit records contain sufficient information (Who, what, when, where)."
+03.03.03,Audit and Accountability,Audit Review and Analysis,True,aureport --summary,Review and analyze audit records for unusual activity.
+03.03.04,Audit and Accountability,Audit Failure Alerts,True,grep 'admin_space_left_action' /etc/audit/auditd.conf,Alert personnel in the event of an audit logging failure.
+03.03.05,Audit and Accountability,Audit Correlation,True,grep 'log_format' /etc/audit/auditd.conf,Correlate audit record review across different repositories.
+03.03.06,Audit and Accountability,Audit Reduction,True,aureport -ts today -te tomorrow,Provide audit reduction and report generation capability.
+03.03.07,Audit and Accountability,Time Stamps,True,chronyc sources | date,Use synchronized internal system clocks to generate time stamps.
+03.03.08,Audit and Accountability,Audit Protection,True,chmod 600 /var/log/audit/audit.log,Protect audit information from unauthorized access or deletion.
+03.03.09,Audit and Accountability,Audit Management,True,auditctl -l,Limit management of audit functions to authorized personnel.
+03.04.01,Configuration Management,Baseline Configuration,False,N/A,Establish and maintain baseline configurations of organizational systems.
+03.04.02,Configuration Management,Configuration Change Control,False,N/A,"Track, review, approve, and log changes to organizational systems."
+03.04.03,Configuration Management,Security Configuration Settings,True,sysctl -a | grep 'umask' /etc/bashrc,Establish and enforce security configuration settings.
+03.04.04,Configuration Management,Inventory Management,True,rpm -qa | dpkg -l,Maintain an inventory of system components.
+03.04.05,Configuration Management,Least Functionality,True,systemctl list-units --type=service,Configure systems to provide only essential capabilities.
+03.04.06,Configuration Management,Software Blacklisting,True,grep -r 'blacklist' /etc/modprobe.d/,Identify and prohibit unauthorized software.
+03.04.07,Configuration Management,Least Privilege (Config),True,ls -l /etc/shadow,Restrict access to configuration settings to authorized personnel.
+03.04.08,Configuration Management,User-Installed Software,False,N/A,Establish and enforce policies regarding user-installed software.
+03.04.09,Configuration Management,System Component Integrity,True,sha256sum /bin/ls,Control and monitor user-installed software.
+03.05.01,Identification and Auth,Identifier Management,True,cut -d: -f3 /etc/passwd | sort -n,"Uniquely identify system users, processes, and devices."
+03.05.02,Identification and Auth,Multi-Factor Authentication,True,grep 'pam_google_authenticator.so' /etc/pam.d/sshd,Implement MFA for local and network access.
+03.05.03,Identification and Auth,MFA Replay Protection,False,N/A,Use MFA resistant to replay attacks.
+03.05.04,Identification and Auth,Password Complexity,True,grep 'pam_pwquality.so' /etc/pam.d/system-auth,Enforce minimum password complexity.
+03.05.05,Identification and Auth,Identifier Reuse,False,N/A,Prevent reuse of identifiers for a defined period.
+03.05.06,Identification and Auth,Authenticator Management,True,chage -l [user],Manage authenticators for users and devices.
+03.05.07,Identification and Auth,Authenticator Feedback,True,grep pam_unix.so /etc/pam.d/system-auth,Obscure feedback of authentication information.
+03.05.08,Identification and Auth,Cryptographic Strength,True,openssl ciphers -v,Use strong cryptography for authentication.
+03.05.09,Identification and Auth,Non-Privileged Accounts,False,N/A,Prohibit direct login for privileged accounts.
+03.05.10,Identification and Auth,Session Cache,True,sudo -v,Store and transmit only cryptographically protected authenticators.
+03.05.11,Identification and Auth,Password Protection,True,grep sha512 /etc/login.defs,Protect passwords at rest and in transit.
+03.06.01,Incident Response,Incident Handling,False,N/A,Establish operational incident-handling capability.
+03.06.02,Incident Response,Incident Reporting,False,N/A,"Track, document, and report incidents."
+03.06.03,Incident Response,Incident Testing,False,N/A,Test the organizational incident response capability.
+03.07.01,Maintenance,System Maintenance,False,N/A,Perform periodic and timely maintenance.
+03.07.02,Maintenance,Maintenance Tools,True,ls -l /usr/sbin/ethtool,Inspect and approve maintenance tools.
+03.07.03,Maintenance,Remote Maintenance,True,systemctl status teamviewer,Sanitize equipment removed for off-site maintenance.
+03.07.04,Maintenance,Maintenance Logs,False,N/A,Check media containing diagnostic programs for malicious code.
+03.07.05,Maintenance,Remote Maintenance Auth,True,grep 'AllowGroups' /etc/ssh/sshd_config,Require MFA for all remote maintenance sessions.
+03.08.01,Media Protection,Media Storage,False,N/A,Physically control and securely store CUI media.
+03.08.02,Media Protection,Media Access,False,N/A,Limit access to CUI on system media.
+03.08.03,Media Protection,Media Sanitization,True,shred -u [file] | wipe [device],Sanitize or destroy system media containing CUI.
+03.08.04,Media Protection,Media Transport,False,N/A,Protect media during transport outside of controlled areas.
+03.08.05,Media Protection,Cryptographic Protection,True,cryptsetup luksDump /dev/sda2,Implement cryptographic mechanisms for digital media.
+03.08.06,Media Protection,Media Marking,False,N/A,Mark media with necessary CUI labels.
+03.09.01,Personnel Security,Screening,False,N/A,Screen individuals prior to authorizing access.
+03.09.02,Personnel Security,Termination,True,userdel -r [user],Ensure systems are disabled upon termination.
+03.10.01,Physical Protection,Physical Access Control,False,N/A,Limit physical access to systems.
+03.10.02,Physical Protection,Monitoring,False,N/A,Monitor physical access to organizational systems.
+03.10.03,Physical Protection,Visitor Logs,False,N/A,Maintain audit logs of physical access.
+03.10.04,Physical Protection,Visitor Control,False,N/A,Control and manage physical access devices.
+03.10.05,Physical Protection,Access Devices,False,N/A,Manage physical access devices.
+03.10.06,Physical Protection,Alternate Work Sites,False,N/A,Enforce safeguards at alternate work sites.
+03.11.01,Risk Assessment,Risk Identification,False,N/A,Periodically assess risk to organizational operations.
+03.11.02,Risk Assessment,Vulnerability Scanning,True,oscap xccdf eval --profile [profile],Scan for vulnerabilities in organizational systems.
+03.11.03,Risk Assessment,Risk Response,False,N/A,Remediate vulnerabilities in accordance with risk assessments.
+03.12.01,Security Assessment,Security Plans,False,N/A,Develop and update System Security Plans (SSP).
+03.12.02,Security Assessment,Control Assessment,False,N/A,Assess controls to determine if they are effective.
+03.12.03,Security Assessment,Continuous Monitoring,True,tail -f /var/log/secure,Monitor security controls on an ongoing basis.
+03.12.04,Security Assessment,Plans of Action,False,N/A,Develop Plans of Action and Milestones (POAM).
+03.13.01,System and Comm,Boundary Protection,True,firewall-cmd --list-all,Monitor and control communications boundaries.
+03.13.02,System and Comm,Security Engineering,False,N/A,Employ architectural designs and security engineering principles.
+03.13.03,System and Comm,Role Separation,False,N/A,Separate user functionality from system management functionality.
+03.13.04,System and Comm,Shared Resources,False,N/A,Prevent unauthorized information transfer via shared resources.
+03.13.05,System and Comm,Denial of Service,True,sysctl -w net.ipv4.tcp_syncookies=1,Protect against denial of service attacks.
+03.13.06,System and Comm,IP Restrictions,True,sysctl -w net.ipv4.conf.all.rp_filter=1,Prevent IP spoofing.
+03.13.08,System and Comm,Transmission Confidentiality,True,grep 'Ciphers' /etc/ssh/sshd_config,Protect the confidentiality of transmitted CUI.
+03.13.10,System and Comm,Key Management,True,ssh-keygen -l -f /etc/ssh/ssh_host_rsa_key,Establish and manage cryptographic keys.
+03.13.11,System and Comm,Session Authenticity,True,grep 'HostKey' /etc/ssh/sshd_config,Protect the authenticity of communications sessions.
+03.13.12,System and Comm,Collaborative Computing,True,echo 'blacklist uvcvideo' > /etc/modprobe.d/camera.conf,Prohibit remote activation of collaborative computing devices.
+03.13.13,System and Comm,Mobile Code,False,N/A,Control and monitor the use of mobile code.
+03.13.14,System and Comm,VoIP,False,N/A,Prohibit use of VoIP technologies unless specified.
+03.13.15,System and Comm,Session Protection,True,grep 'cookie_lifetime' /etc/php.ini,Protect the authenticity of communications sessions.
+03.13.16,System and Comm,Data at Rest,True,lsblk -f,Protect the confidentiality of CUI at rest.
+03.14.01,System Integrity,Flaw Remediation,True,dnf updateinfo list security,"Identify, report, and correct system flaws."
+03.14.02,System Integrity,Malicious Code Protection,True,clamscan -r /,Update malicious code protection mechanisms.
+03.14.03,System Integrity,System Monitoring,True,tcpdump -i any,Monitor system to detect attacks.
+03.14.04,System Integrity,Indicators of Compromise,False,N/A,Monitor for indicators of compromise.
+03.14.05,System Integrity,System Scanning,True,rkhunter --check,Perform periodic scans of the system.
+03.14.06,System Integrity,Security Alerts,False,N/A,Receive and act upon security alerts.
+03.14.07,System Integrity,File Integrity Monitoring,True,aide --check,Perform file integrity monitoring.
