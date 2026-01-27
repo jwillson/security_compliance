@@ -64,7 +64,7 @@ Vagrant.configure("2") do |config|
   # SCENARIO C: VIRTUALBOX (Legacy / Intel Mac / Windows)
   # Advantage: Slow, but universally compatible. Supports Snapshots.
   # ------------------------------------------------------------------------
-  config.vm.provider "virtualbox" do |vb|
+  config.vm.provider "virtualbox" do |vb, override|
     # Override the box specifically for VirtualBox provider
     override.vm.box = "bento/rocky-linux-9"
     vb.memory = "2048"
