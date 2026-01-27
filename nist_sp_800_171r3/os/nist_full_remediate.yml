@@ -1,0 +1,249 @@
+---
+- name: NIST SP 800-171r3 Audit & Remediation
+  hosts: all
+  become: yes
+  vars_files:
+    - nist_vars.yml
+
+  tasks:
+    # ==========================================================================
+    # FAMILY 3.1: ACCESS CONTROL
+    # ==========================================================================
+    - name: "3.1.1/3.5.1 - Ensure inactive accounts are locked (Audit Only)"
+      command: "usermod -L {{ item }}"
+      with_items: [] # Admin must populate this list or rely on IDM
+      tags: access_control, manual_review
+
+    - name: "3.1.2 - Ensure /etc/shadow permissions are 000"
+      file:
+        path: /etc/shadow
+        owner: root
+        group: root
+        mode: '0000'
+      tags: access_control
+
+    - name: "3.1.7 - Restrict access to privileged functions (sudoers)"
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '^Defaults logfile'
+        line: 'Defaults logfile="/var/log/sudo.log"'
+        validate: 'visudo -cf %s'
+      tags: access_control
+
+    - name: "3.1.9 - Set System Use Notification Banner"
+      copy:
+        content: "{{ ac_banner_text }}"
+        dest: /etc/issue
+      notify: Reload SSH
+      tags: access_control
+
+    - name: "3.1.10 - Set Session Inactivity Timeout (Shell)"
+      copy:
+        dest: /etc/profile.d/nist_timeout.sh
+        content: |
+          readonly TMOUT={{ ac_idle_timeout_seconds }}
+          export TMOUT
+        mode: '0644'
+      tags: access_control
+
+    - name: "3.1.12 - Configure SSH for Remote Access Monitoring"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^ClientAliveInterval', line: 'ClientAliveInterval {{ ac_ssh_client_alive_interval }}' }
+        - { regexp: '^ClientAliveCountMax', line: 'ClientAliveCountMax {{ ac_ssh_client_alive_count }}' }
+        - { regexp: '^MaxAuthTries', line: 'MaxAuthTries {{ ac_max_auth_tries }}' }
+        - { regexp: '^Banner', line: 'Banner /etc/issue' }
+      notify: Reload SSH
+      tags: access_control
+
+    # ==========================================================================
+    # FAMILY 3.3: AUDIT AND ACCOUNTABILITY
+    # ==========================================================================
+    - name: "3.3.1 - Ensure Auditd Service is Enabled"
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+      tags: audit
+
+    - name: "3.3.2/3.3.5 - Configure Audit Rules (Identity & Exec)"
+      blockinfile:
+        path: /etc/audit/rules.d/nist.rules
+        create: yes
+        block: |
+          -w /etc/passwd -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/sudoers -p wa -k privileged
+          -a always,exit -F arch={{ audit_arch_map[ansible_architecture] }} -S execve -k exec_logging
+      notify: Reload Auditd
+      tags: audit
+
+    - name: "3.3.3 - Configure Audit Storage Capacity"
+      lineinfile:
+        path: /etc/audit/auditd.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^max_log_file =', line: 'max_log_file = {{ audit_log_max_size_mb }}' }
+        - { regexp: '^disk_full_action =', line: 'disk_full_action = {{ audit_disk_full_action }}' }
+      tags: audit
+
+    - name: "3.3.7 - Ensure Time Synchronization (NTP/Chrony)"
+      package:
+        name: chrony
+        state: present
+      tags: audit
+
+    - name: "3.3.7 - Configure NTP Servers"
+      lineinfile:
+        path: /etc/chrony.conf
+        regexp: '^server {{ item }}'
+        line: 'server {{ item }} iburst'
+      loop: "{{ audit_ntp_servers }}"
+      notify: Restart Chrony
+      tags: audit
+
+    # ==========================================================================
+    # FAMILY 3.4: CONFIGURATION MANAGEMENT
+    # ==========================================================================
+    - name: "3.4.2 - Apply Security Sysctl Settings"
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop: "{{ sysctl_settings }}"
+      tags: config_mgmt
+
+    - name: "3.4.6 - Disable Unwanted Packages (Blacklisting)"
+      package:
+        name: "{{ unwanted_packages }}"
+        state: absent
+      tags: config_mgmt
+
+    # ==========================================================================
+    # FAMILY 3.5: IDENTIFICATION AND AUTHENTICATION
+    # ==========================================================================
+    - name: "3.5.0 - Install EPEL Repository (Required for MFA & ClamAV)"
+      package:
+        name: epel-release
+        state: present
+      tags: identity
+
+    - name: "3.5.2 - Ensure MFA PAM Module is Installed"
+      package:
+        name: google-authenticator
+        state: present
+      tags: identity
+
+    - name: "3.5.11 - Ensure Password Security (authselect)"
+      # Rocky 9 uses 'authselect' to manage PAM and defaults to SHA512/Yescrypt
+      command: "authselect select sssd with-faillock --force"
+      register: authselect_result
+      changed_when: "'Make sure that SSSD service is configured' in authselect_result.stdout"
+
+    # ==========================================================================
+    # FAMILY 3.13: SYSTEM AND COMMUNICATIONS PROTECTION
+    # ==========================================================================
+    - name: "3.13.1 - Ensure Firewalld is Active"
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+      tags: network_protection
+
+    - name: "3.13.8 - Enforce Strong SSH Ciphers (FIPS/NIST)"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^Ciphers', line: 'Ciphers {{ ssh_ciphers }}' }
+        - { regexp: '^MACs', line: 'MACs {{ ssh_macs }}' }
+      notify: Reload SSH
+      tags: network_protection
+
+    - name: "3.13.12/3.13.13 - Disable Wireless and USB Storage Modules"
+      copy:
+        dest: "/etc/modprobe.d/nist_blacklist.conf"
+        content: |
+          {% for mod in disabled_modules %}
+          install {{ mod }} /bin/true
+          blacklist {{ mod }}
+          {% endfor %}
+      tags: network_protection
+
+    # ==========================================================================
+    # FAMILY 3.14: SYSTEM INTEGRITY
+    # ==========================================================================
+    - name: "3.14.1 - Install Security Updates Only"
+      yum:
+        name: '*'
+        security: yes
+        state: latest
+      tags: system_integrity
+
+    - name: "3.14.2 - Install Malware Protection (ClamAV)"
+      package:
+        name:
+          - clamav
+          - clamav-update
+        state: present
+      tags: system_integrity
+
+    - name: "3.14.7 - Install File Integrity Monitoring (AIDE)"
+      package:
+        name: aide
+        state: present
+      tags: system_integrity
+
+    - name: "3.14.7 - Initialize AIDE Database (If Missing)"
+      command: "aide --init"
+      args:
+        creates: /var/lib/aide/aide.db.new.gz
+      tags: system_integrity
+
+    # ==========================================================================
+    # TELEMETRY & REPORTING
+    # ==========================================================================
+    - name: "Telemetry - Find the latest Audit Report"
+      find:
+        paths: "."
+        pattern: "nist_audit_report_*.json"
+        age: "-1m" # Created in the last minute
+      register: latest_report
+      delegate_to: localhost
+      become: no
+      tags: report
+
+    - name: "Telemetry - Ship Audit Data to Central Logging (Example)"
+      uri:
+        url: "https://audit-collector.yourcompany.com/api/logs"
+        method: POST
+        body_format: json
+        body: "{{ lookup('file', item.path) }}"
+        status_code: 200
+      loop: "{{ latest_report.files }}"
+      delegate_to: localhost
+      become: no
+      ignore_errors: yes
+      when: latest_report.matched > 0
+      tags: report
+
+  handlers:
+    - name: Reload SSH
+      service:
+        name: sshd
+        state: reloaded
+
+    - name: Reload Auditd
+      command: "augenrules --load"
+
+    - name: Restart Chrony
+      service:
+        name: chronyd
+        state: restarted
