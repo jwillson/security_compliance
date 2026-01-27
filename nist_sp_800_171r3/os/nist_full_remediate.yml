@@ -6,6 +6,16 @@
     - nist_vars.yml
 
   tasks:
+    - name: "PRE-FIX: Resolve Rocky Linux 9 Repo Conflicts"
+      dnf:
+        name: "*"
+        state: latest
+        allowerasing: yes
+        update_cache: yes
+      register: dnf_update
+      retries: 3
+      delay: 5
+      until: dnf_update is success
     # ==========================================================================
     # FAMILY 3.1: ACCESS CONTROL
     # ==========================================================================
