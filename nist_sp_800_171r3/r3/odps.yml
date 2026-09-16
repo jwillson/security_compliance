@@ -1,0 +1,73 @@
+# Organization-defined parameters for NIST SP 800-171r3
+# CIS Linux L2 / DISA STIG RHEL 9 aligned where the publication leaves an ODP.
+# Edit, then pass to ansible via vars_files.
+odp:
+  inactive_days: 35
+  notify_period: 24h
+  logout_inactivity: 900
+  idle_seconds: 900
+  priv_review: 90d
+  sec_functions: "account mgmt, sudoers, auditd, firewall, crypto keys, package install"
+  priv_roles: wheel
+  faillock_deny: 3
+  faillock_interval: 900
+  faillock_unlock: 900
+  banner: This system processes CUI. Unauthorized use is prohibited. Use may be monitored.
+  session_events: 900s idle; end of shift; incident lockout
+  max_auth_tries: 3
+  client_alive: 300
+  ext_reqs: Same 800-171r3 overlay; no CUI on unmanaged endpoints
+  ssh_allow_cidrs: 10.0.0.0/8
+  syslog_server: 127.0.0.1
+  password_min_len: 14
+  audit_retain_days: 90
+  net_idle: 900
+  at_freq: 12 months
+  rbt_freq: 12 months
+  event_types: "logon/logoff, privileged exec, account change, config change, auditd, module load, time change, network"
+  event_review: 12 months
+  audit_alert: immediate (syslog/email)
+  audit_fail_action: SUSPEND writing when admin space exhausted
+  audit_review_freq: 7 days
+  time_granularity: "1 second, NTP-synced UTC"
+  baseline_review: 12 months or on change
+  config_settings: DISA RHEL 9 STIG + CIS L2 + this overlay
+  denied_services: "telnet, rsh, rlogin, ypserv, tftp, talk, ftp, bluetooth (servers), rpcbind if unused"
+  svc_review: 90 days
+  allowlist_review: 90 days
+  inv_review: 30 days
+  travel_config: "sanitized disk, no CUI, usbguard, VPN-only, reimage on return"
+  reauth: privilege elevation; 12h; authenticator change
+  device_types: hosts in the CUI enclave; admin jump hosts; VPN endpoints
+  id_reuse: 1 year
+  id_status: "employee | contractor | vendor"
+  pwlist_update: 7 days and on suspected compromise
+  auth_refresh: "on compromise, role change, or 1 year for hardware tokens; passwords on recovery not calendar"
+  ir_report_time: 1 hour for confirmed CUI incident; 24 hours suspected
+  ir_authorities: CISO; contracting officer; CISA as required
+  ir_test: 12 months
+  ir_train: 12 months
+  media_types: unmanaged USB mass storage; U3; writable optical on servers
+  rescreen: privilege increase; 5 years; cause
+  offboard_time: immediate for cause; 4 hours otherwise
+  pe_review: 90 days
+  pe_log_review: 7 days and on incident
+  aws_reqs: "full-disk encryption, VPN, no local CUI copies, privacy screen"
+  ra_freq: 12 months or on significant change
+  scan_freq: 7 days authenticated; continuous dnf-automatic
+  remediate_sla: critical 15d; high 30d; medium 90d
+  assess_freq: 12 months
+  isa_types: interconnection security agreements; NDAs
+  isa_review: 12 months
+  key_mgmt: FIPS 140-3; ssh-keygen; LUKS; no keys in world-readable files; destroy via shred/luksErase
+  crypto_types: FIPS 140-3 validated (crypto-policies FIPS; LUKS; TLS 1.2+)
+  collab_exceptions: none on CUI servers; user-initiated conferencing on workstations
+  patch_sla: critical 15d; high 30d
+  av_scan: daily full; real-time on ingest
+  policy_review: 12 months
+  ssp_review: 12 months
+  rob_review: 12 months
+  sse_principles: "SP 800-160 layered protections, threat modeling, secure SDLC, least functionality"
+  ext_svc_reqs: Flow down 800-171r3; no CUI in non-FIPS SaaS; logging to org SIEM
+  scrm_review: 12 months
+  sc_reqs: "provenance, signed packages (rpm keys), no untrusted COPR, vetted vendors"
