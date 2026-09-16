@@ -1,0 +1,22 @@
+## 03.03.01 event logging — STIG-like subset
+-D
+-b 8192
+-f 1
+-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change
+-w /etc/localtime -p wa -k time-change
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d -p wa -k sshd
+-w /etc/audit -p wa -k audit-config
+-w /etc/sudoers -p wa -k scope
+-w /var/log/sudo.log -p wa -k actions
+-a always,exit -F arch=b64 -S mount -k mounts
+-w /usr/sbin/insmod -p x -k modules
+-w /usr/sbin/rmmod -p x -k modules
+-w /usr/sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module,delete_module,finit_module -k modules
+-e 2

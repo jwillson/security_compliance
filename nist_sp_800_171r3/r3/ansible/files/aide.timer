@@ -1,0 +1,10 @@
+[Unit]
+Description=AIDE integrity check (03.12.03 / 03.14.06)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
