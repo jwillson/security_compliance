@@ -113,16 +113,16 @@ Found by building a second host. Each was invisible with one VM.
       *Proven:* rules genuinely pending -> `Reboot required: True`; nothing
       pending -> `False`, on the same host minutes apart.
 
-- [ ] **1b.6 The collector is not idempotent.** `03.14.08 | Tighten
-      permissions on existing log files` reports changed on every run against
-      `rl9-log-01`, while `rl9-cui-01` sits at `changed=0`. The collector
-      continuously creates `/var/log/nist-remote/<host>/<program>.log`, so
-      the task always finds files it has not seen — even though rsyslog
-      already creates them 0600 via `$FileCreateMode`.
-      *Why it matters:* `./apply.sh --check` is documented as a drift
-      detector. On a collector it now reports permanent drift, which is the
-      kind of noise that makes people stop reading it.
-      *Fix:* have the task touch only files whose mode is actually wrong.
+- [x] **1b.6 The collector is idempotent after all — my earlier reading was
+      wrong.** I recorded that `03.14.08 | Tighten permissions on existing log
+      files` changed on every run. Isolating it (`--tags 03.14.08`, twice) gave
+      `changed=0` both times, and a subsequent full apply of the collector gave
+      `changed=0` overall. The task is correctly written: it chmods only files
+      whose mode exceeds 600 and reports changed only if it acted, and it is
+      `maxdepth 1`, so the `/var/log/nist-remote/` files I blamed are out of
+      its scope entirely. The `changed=3` runs were a freshly rebooted host
+      settling (journal directory recreated, then its files tightened). No
+      defect. *Recorded here because the wrong diagnosis was committed.*
 
 - [x] **1b.7 `--tags <requirement>` ran nothing at all.** README, RUNBOOK and
       `apply.sh --help` all promised that `--tags 03.05.07` applies exactly
@@ -217,13 +217,45 @@ No amount of testing substitutes for these. Each is a live commitment.
       execution will block unprofiled applications. Run with
       `nist_fapolicyd_permissive: true`, collect, write rules, re-enforce.
 
-- [ ] **4.4 Re-examine three classifications inherited from this merge.**
-      These moved from `os_partial` to `technical`, meaning a failing check is
-      now treated as a real finding rather than a partial obligation:
-      `03.05.05` Identifier Management, `03.05.12` Authenticator Management,
-      `03.08.02` Media Access.
-      *Why:* the merge adopted the stricter reading wholesale. These three are
-      the ones where it is genuinely arguable.
+- [ ] **4.4 Six requirements report PASS while conceding they are not fully
+      satisfied.** Reviewed in depth; decision outstanding because changing a
+      disposition changes what the tool claims about compliance.
+
+      `03.01.05`, `03.01.10`, `03.01.12`, `03.05.05`, `03.05.12` and
+      `03.07.05` are classified `technical` *and* carry a `residual` field.
+      `residual` is the field that names what the organization still owes — it
+      is the definition of `partial`. The assessor only downgrades `partial`
+      to MANUAL, so all six print **PASS** in the current report next to prose
+      conceding non-compliance. That is precisely the overstatement this
+      project exists to prevent, and it is live today.
+
+      Three were examined against the publication text, the checks and the
+      implementing tasks. All three should be `partial`:
+      * `03.05.05` — nothing implements statement (c), reuse prevention over a
+        time period. `ia-05-no-uid-reuse` tests that no two *current* accounts
+        share a UID, which is 03.05.01a restated. Statement (d)'s
+        status-characteristic clause has no control either.
+      * `03.05.12` — statements (a), (c), (d) uncovered; (e) enforced for
+        local passwords only, not for the event triggers, SSH keys or tokens.
+      * `03.08.02` — the publication defines system media as including
+        **non-digital** media, which is why siblings 03.08.01/.04/.05 are
+        already `organizational`. A PASS also transitively claims what
+        03.04.11 explicitly disclaims. And `cuiusers`, the operative
+        definition of "authorized personnel", is created empty and unmanaged.
+
+      *Two `host_scope` claims are simply false and should be struck whatever
+      is decided — both were verified as unimplemented:*
+      * `03.05.12`: "the installer's root password is expired at first boot" —
+        no such task exists anywhere in the role.
+      * `03.05.05`: "UID reuse is blocked by retaining the account record" —
+        no such mechanism; the only reuse control is password history.
+      * `03.08.02`: "its parent path is not world-traversable" — asserted by
+        no check.
+
+- [ ] **4.4b Make `validate.py` reject `residual` on a `technical` entry.**
+      It already rejects `partial` without a `residual`; the converse is the
+      same error the other way round and would have caught all six above
+      automatically, at no judgement cost.
 
 - [ ] **4.5 Decide what happens to `nist_sp_800_171r3/web/`.** An nginx TLS
       snippet, orphaned from the tool, which hardens hosts rather than web
