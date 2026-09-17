@@ -267,15 +267,56 @@
     daemon_reload: true
   tags: ["03.04.06", "03.10.07"]
 
+# The separate filesystems below are an install-time control: the kickstart
+# creates them as LVM volumes, and no playbook can carve them out of a running
+# host's single root filesystem. Mounting a device that does not exist used to
+# fail the task and abort the whole play, so a host this toolkit did not build
+# could not be hardened at all. Act only on what exists, and record the rest so
+# the gap is visible rather than silent — the assessment reports it as a
+# deviation under 03.04.06 either way.
+- name: "03.04.06 | Determine which separate filesystems exist on this host"
+  ansible.builtin.stat:
+    path: "{{ item.src }}"
+  loop: "{{ nist_mount_hardening }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: nist_mount_devices
+  changed_when: false
+  check_mode: false
+  tags: ["03.04.06"]
+
 - name: "03.04.06 | Harden mount options on separate filesystems"
   ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "{{ item.src }}"
-    fstype: "{{ item.fstype }}"
-    opts: "{{ item.opts }}"
+    path: "{{ item.item.path }}"
+    src: "{{ item.item.src }}"
+    fstype: "{{ item.item.fstype }}"
+    opts: "{{ item.item.opts }}"
     state: mounted
-  loop: "{{ nist_mount_hardening }}"
-  when: nist_mount_hardening | length > 0
+  loop: "{{ nist_mount_devices.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Record separate filesystems that could not be retrofitted"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/unretrofittable-mounts"
+    content: |
+      # 03.04.06 Least Functionality - separate filesystems
+      #
+      # These mount points are configured as separate filesystems by the
+      # install-time kickstart. This host was not built that way and the
+      # devices do not exist, so the mount options below were not applied.
+      # A playbook cannot repartition a running system: closing this gap
+      # means a rebuild, not another apply.
+      {% for m in nist_mount_devices.results | rejectattr('stat.exists') %}
+      {{ '%-16s' | format(m.item.path) }} {{ m.item.src }}  ({{ m.item.opts }})
+      {% endfor %}
+      {% if nist_mount_devices.results | rejectattr('stat.exists') | list | length == 0 %}
+      # none - every separate filesystem in the baseline is present.
+      {% endif %}
+    owner: root
+    group: root
+    mode: "0644"
   tags: ["03.04.06"]
 
 - name: "03.04.06 | Harden /dev/shm, which the installer does not separate"

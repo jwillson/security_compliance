@@ -158,19 +158,50 @@ Found by building a second host. Each was invisible with one VM.
 The stated goal is a single portable tool that can harden *any* Rocky 9 host.
 Nothing has tested that outside the kickstart VMs.
 
-- [ ] **2.1 Harden a Rocky 9 host this toolkit did not build.** A stock
-  cloud image or minimal ISO install is fine — it must *not* come from
-  `make vm`.
-  ```bash
-  cp inventory/hosts.yml.example inventory/hosts.yml   # edit for that host
-  ./apply.sh --check --diff        # read it before applying
-  ./apply.sh && ./verify.sh
-  ```
-  *Why:* this is the difference between "hardens the VM it builds" and "a
-  hardening tool". The install-time controls will fail here and that is the
-  point.
-  *Done when:* it applies without error and the only deviations are
-  install-time ones.
+- [~] **2.1 Harden a Rocky 9 host this toolkit did not build.** *In progress —
+      paused mid-task.* A stock Rocky 9 GenericCloud image (`byo-rl9-01`,
+      192.168.171.151, user `byoadmin`, UEFI, single 19 GB root, FIPS off,
+      firewalld inactive) was booted with cloud-init — deliberately not via
+      `build-vm.sh`. It found three real defects; the portability claim was
+      false as shipped.
+
+      * **FIXED and proven — `site.yml` only worked on hosts its own kickstart
+        built.** The `pre_task` that records the overlay version writes into
+        `/etc/nist-800-171/`, and the role task that *creates* that directory
+        runs in `roles:`, i.e. after `pre_tasks:`. The kickstart does
+        `mkdir -p /etc/nist-800-171` in `%post`
+        (`vm/kickstart/rl9-cui.ks.j2:145`), so lab hosts had it already and
+        the bug was invisible. On the BYO host the play died on its second
+        task: *"Destination directory /etc/nist-800-171 does not exist"*.
+        The pre_task now creates it. Proven: the apply went from `ok=2` to
+        `ok=87, changed=53`.
+
+      * **FIXED, NOT YET VERIFIED — mount hardening aborted the whole play.**
+        03.04.06 mounts the kickstart's LVM volumes
+        (`/dev/mapper/vg_sys-lv_home`, `-lv_tmp`, `-lv_vartmp`). On a
+        single-partition host those devices do not exist, the task failed, and
+        the play stopped — so the remaining overlay never applied and a BYO
+        host could not be hardened at all. The task now stats each device
+        first, hardens only what exists, and writes
+        `{{ nist_conf_dir }}/unretrofittable-mounts` naming the rest.
+        **This change is syntax-checked only. Re-run the BYO apply to confirm
+        it completes.**
+
+      * **OPEN — `./apply.sh --check --diff` cannot succeed on a host that has
+        never been applied.** Both README and RUNBOOK tell BYO operators to
+        dry-run first. In check mode the tasks that would create the systemd
+        units do not actually write, so the task that enables
+        `nist-audit-review.timer` fails with *"Could not find the requested
+        service"*. Verified asymmetry: `--check` succeeds on `rl9-cui-01`
+        (already applied, `changed=0`) and fails on `byo-rl9-01`.
+        *Fix:* guard service-enable tasks with `when: not ansible_check_mode`,
+        or make them tolerant of a unit that does not exist yet. Then correct
+        the docs, which currently promise a dry-run that cannot work.
+
+      *Resume here:* re-run
+      `./apply.sh -i <byo-inventory> --limit byo-rl9-01` with
+      `NIST_BECOME_PASSWORD` exported, confirm it completes, then `./verify.sh`
+      and record the deviations for 2.2.
 
 - [ ] **2.2 Write down which requirements a retrofit cannot satisfy.**
   Expect the separate `/var/log/audit` filesystem (03.04.06) and FIPS from

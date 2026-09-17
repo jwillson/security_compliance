@@ -30,9 +30,24 @@
           {{ ansible_facts['distribution_version'] }}.
       tags: [always]
 
+    # The kickstart creates this directory in %post, so a host built by this
+    # toolkit already has it and the task below used to succeed by accident.
+    # On any other Rocky 9 host it does not exist yet — the role task that
+    # creates it runs in `roles:`, which is after `pre_tasks:` — so the play
+    # failed on its second task with "Destination directory does not exist".
+    # That made the portability claim false as shipped. Create it here.
+    - name: Ensure the toolkit configuration directory exists
+      ansible.builtin.file:
+        path: "{{ nist_conf_dir | default('/etc/nist-800-171') }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      tags: [always]
+
     - name: Record which overlay version is being applied
       ansible.builtin.copy:
-        dest: /etc/nist-800-171/overlay-version
+        dest: "{{ nist_conf_dir | default('/etc/nist-800-171') }}/overlay-version"
         content: |
           overlay_version={{ meta.version }}
           overlay_name={{ meta.name }}
