@@ -1,3 +1,15 @@
+> **ARCHIVED — do not follow these instructions.**
+>
+> This tree is superseded by `../../rl9-171/`. Its catalog agrees with the
+> current one on every requirement ID, title and withdrawn flag, but its
+> verifier grades on exit status alone and its generated playbook has no
+> handlers. See `../README.md` for the full reasoning, and
+> `../../rl9-171/docs/legacy-gap.md` for the reconciliation this tree's
+> `gap.md` used to hold (corrected — the original misnamed 03.10.07 and
+> 03.10.08).
+>
+> Do not extend anything here. Port it into `rl9-171/` instead.
+
 # nistctl — SP 800-171r3 Linux overlay
 
 Catalog-driven hardening for Rocky Linux 9 / RHEL 9 family. This tree is the
@@ -53,17 +65,27 @@ python3 nistctl.py catalog --impl linux
 python3 nistctl.py gap --kind missing_from_legacy
 python3 nistctl.py odps --write odps.yml
 python3 nistctl.py playbook --out ansible/site.yml
-python3 nistctl.py audit --id 03.01.08          # read-only, this host
+python3 nistctl.py audit --id 03.01.08 --limit cui-01   # guests (needs inventory)
+python3 nistctl.py audit --id 03.01.08 --local          # this host only
 ```
 
-Apply only against a CUI enclave host you intend to overlay:
+Apply only against a CUI enclave host you intend to overlay. Local throwaway
+guests (QEMU/KVM, not Vagrant):
+
+```bash
+python3 lab/labctl.py up
+ansible-galaxy collection install -r ansible/requirements.yml
+python3 nistctl.py audit --id 03.01.08 --limit cui-01
+python3 nistctl.py remediate --check --id 03.01.08
+python3 nistctl.py remediate --apply --id 03.01.08
+```
+
+`labctl up` writes `ansible/inventory.ini` (gitignored). To target some other
+host instead:
 
 ```bash
 cp ansible/inventory.ini.example ansible/inventory.ini
 # edit inventory + odps.yml
-ansible-galaxy collection install -r ansible/requirements.yml
-python3 nistctl.py remediate --check
-python3 nistctl.py remediate --apply --id 03.01.08
 ```
 
 `--apply` is never implied. `--check` is a dry run.

@@ -8,7 +8,7 @@ task is sourced from catalog.json (SP 800-171 Revision 3, May 2024).
     nistctl gap [--kind missing_from_legacy]
     nistctl odps [--write odps.yml]
     nistctl playbook [--out ansible/site.yml]
-    nistctl audit [--id 03.01.08]          # read-only local checks
+    nistctl audit [--id 03.01.08] [--limit cui-01]   # guests via inventory; --local for this host
     nistctl remediate [--id 03.01.08] --check
     nistctl remediate --apply              # runs ansible-playbook; never the default
 
@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -298,37 +299,181 @@ def run_check(command: str) -> tuple[int, str]:
         return 1, str(exc)
 
 
-def cmd_audit(args: argparse.Namespace) -> int:
-    """Read-only. Never writes. Interprets a non-zero command as fail, not as proof of non-compliance."""
-    catalog = load_catalog()
-    results = []
+def collect_audit_items(catalog: list[dict], ids: list[str] | None) -> list[dict]:
+    items = []
     for c in catalog:
-        if args.id and c["id"] not in args.id:
+        if ids and c["id"] not in ids:
             continue
         linux = c.get("linux") or {}
         for chk in linux.get("audit") or []:
-            rc, observed = run_check(chk["command"])
-            item = {
-                "id": c["id"],
-                "check": chk["id"],
-                "title": chk["title"],
-                "command": chk["command"],
-                "expect": chk["expect"],
-                "rc": rc,
-                "observed": observed,
-                "verdict": "pass" if rc == 0 else "fail",
-            }
-            results.append(item)
-    if args.json:
+            items.append(
+                {
+                    "id": c["id"],
+                    "check": chk["id"],
+                    "title": chk["title"],
+                    "command": chk["command"],
+                    "expect": chk["expect"],
+                }
+            )
+    return items
+
+
+def print_audit_results(results: list[dict], as_json: bool) -> int:
+    if as_json:
         json.dump(results, sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
-        print(f"{'ID':<10} {'CHECK':<14} {'RC':<4} {'VERDICT':<6} TITLE")
-        for r in results:
-            print(f"{r['id']:<10} {r['check']:<14} {r['rc']:<4} {r['verdict']:<6} {r['title']}")
+        with_host = any("host" in r for r in results)
+        if with_host:
+            print(f"{'HOST':<10} {'ID':<10} {'CHECK':<14} {'RC':<4} {'VERDICT':<6} TITLE")
+            for r in results:
+                print(
+                    f"{r.get('host', '-'):<10} {r['id']:<10} {r['check']:<14} {r['rc']:<4} {r['verdict']:<6} {r['title']}"
+                )
+        else:
+            print(f"{'ID':<10} {'CHECK':<14} {'RC':<4} {'VERDICT':<6} TITLE")
+            for r in results:
+                print(f"{r['id']:<10} {r['check']:<14} {r['rc']:<4} {r['verdict']:<6} {r['title']}")
     failed = sum(1 for r in results if r["verdict"] == "fail")
     print(f"# {len(results)} checks, {failed} non-zero", file=sys.stderr)
     return 1 if failed else 0
+
+
+def audit_runner_source(items: list[dict]) -> str:
+    """Python 3 script executed on the target. Same bash -lc semantics as local audit."""
+    payload = json.dumps(items)
+    return f"""#!/usr/bin/env python3
+import json
+import subprocess
+from pathlib import Path
+
+CHECKS = json.loads({payload!r})
+out = []
+for chk in CHECKS:
+    try:
+        proc = subprocess.run(
+            ["bash", "-lc", chk["command"]],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        observed = ((proc.stdout or "") + (proc.stderr or "")).strip()[:400]
+        rc = proc.returncode
+    except subprocess.TimeoutExpired:
+        rc, observed = 124, "timeout"
+    except OSError as exc:
+        rc, observed = 1, str(exc)
+    item = dict(chk)
+    item["rc"] = rc
+    item["observed"] = observed
+    item["verdict"] = "pass" if rc == 0 else "fail"
+    out.append(item)
+text = json.dumps(out)
+Path("/tmp/nistctl-audit.json").write_text(text)
+print(text)
+"""
+
+
+def ansible_env() -> dict[str, str]:
+    env = os.environ.copy()
+    cfg = HERE / "ansible" / "ansible.cfg"
+    if cfg.exists():
+        env["ANSIBLE_CONFIG"] = str(cfg)
+    return env
+
+
+def audit_remote(items: list[dict], inventory: Path, limit: str | None) -> list[dict]:
+    ansible = shutil.which("ansible-playbook")
+    if ansible is None:
+        sys.exit("ansible-playbook not on PATH. Install ansible-core, then rerun.")
+    with tempfile.TemporaryDirectory(prefix="nistctl-audit-") as raw:
+        work = Path(raw)
+        runner = work / "run_audit.py"
+        runner.write_text(audit_runner_source(items))
+        runner.chmod(0o755)
+        results_dir = work / "results"
+        results_dir.mkdir()
+        playbook = work / "audit.yml"
+        playbook.write_text(
+            f"""---
+# generated by nistctl audit — read-only, never a remediator
+- name: nistctl 800-171r3 audit
+  hosts: cui
+  become: true
+  gather_facts: false
+  tasks:
+    - name: run catalog audit commands
+      ansible.builtin.script:
+        cmd: {runner}
+      args:
+        executable: /usr/bin/python3
+      register: nist_audit
+      changed_when: false
+      failed_when: false
+
+    - name: fetch audit json
+      ansible.builtin.fetch:
+        src: /tmp/nistctl-audit.json
+        dest: {results_dir}/{{{{ inventory_hostname }}}}.json
+        flat: true
+"""
+        )
+        cmd = ["ansible-playbook", "-i", str(inventory), str(playbook)]
+        if limit:
+            cmd.extend(["--limit", limit])
+        print(" ".join(cmd), file=sys.stderr)
+        rc = subprocess.call(cmd, env=ansible_env())
+        if rc != 0:
+            sys.exit(f"ansible-playbook failed ({rc}); guests unreachable or inventory missing")
+        results: list[dict] = []
+        files = sorted(results_dir.glob("*.json"))
+        if not files:
+            sys.exit("audit playbook ran but fetched no results")
+        for path in files:
+            host = path.stem
+            try:
+                payload = json.loads(path.read_text())
+            except json.JSONDecodeError as exc:
+                sys.exit(f"bad audit json from {host}: {exc}")
+            if not isinstance(payload, list):
+                sys.exit(f"bad audit json from {host}: expected a list")
+            for item in payload:
+                item["host"] = host
+                results.append(item)
+        return results
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Read-only. Never writes. Interprets a non-zero command as fail, not as proof of non-compliance."""
+    catalog = load_catalog()
+    items = collect_audit_items(catalog, args.id)
+    inventory = Path(args.inventory) if args.inventory else HERE / "ansible" / "inventory.ini"
+    remote = False if args.local else bool(args.limit or inventory.exists())
+    if remote:
+        if not inventory.exists():
+            print(
+                "no ansible/inventory.ini — cannot audit a guest. "
+                "Run labctl up, or pass --local to audit this host.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"auditing guests via {inventory} (read-only; --local would be this host)", file=sys.stderr)
+        results = audit_remote(items, inventory, args.limit)
+        return print_audit_results(results, args.json)
+    print(
+        "auditing this host. For a lab/CUI guest: nistctl audit --limit cui-01 "
+        "(needs ansible/inventory.ini).",
+        file=sys.stderr,
+    )
+    results = []
+    for chk in items:
+        rc, observed = run_check(chk["command"])
+        item = dict(chk)
+        item["rc"] = rc
+        item["observed"] = observed
+        item["verdict"] = "pass" if rc == 0 else "fail"
+        results.append(item)
+    return print_audit_results(results, args.json)
 
 
 def cmd_remediate(args: argparse.Namespace) -> int:
@@ -352,8 +497,7 @@ def cmd_remediate(args: argparse.Namespace) -> int:
     if not args.apply and not args.check:
         print("refusing to change the host: pass --check (dry-run) or --apply.", file=sys.stderr)
         return 2
-    env = os.environ.copy()
-    return subprocess.call(cmd, env=env)
+    return subprocess.call(cmd, env=ansible_env())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -381,8 +525,18 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--id", action="append")
     pb.set_defaults(func=cmd_playbook)
 
-    a = sub.add_parser("audit", help="run read-only local checks")
+    a = sub.add_parser(
+        "audit",
+        help="run read-only catalog checks on guests (inventory) or this host (--local)",
+    )
     a.add_argument("--id", action="append")
+    a.add_argument("--limit", help="inventory host or group (implies remote)")
+    a.add_argument(
+        "--local",
+        action="store_true",
+        help="audit this machine even if ansible/inventory.ini exists",
+    )
+    a.add_argument("--inventory", help="path to inventory.ini (default: ansible/inventory.ini)")
     a.add_argument("--json", action="store_true")
     a.set_defaults(func=cmd_audit)
 

@@ -1,7 +1,20 @@
+> **ARCHIVED — do not follow these instructions.**
+>
+> This tree is superseded by `../../rl9-171/`. Its catalog agrees with the
+> current one on every requirement ID, title and withdrawn flag, but its
+> verifier grades on exit status alone and its generated playbook has no
+> handlers. See `../README.md` for the full reasoning, and
+> `../../rl9-171/docs/legacy-gap.md` for the reconciliation this tree's
+> `gap.md` used to hold (corrected — the original misnamed 03.10.07 and
+> 03.10.08).
+>
+> Do not extend anything here. Port it into `rl9-171/` instead.
+
 # r3 overlay
 
 Source of truth: `catalog.json` (NIST SP 800-171 Revision 3, May 2024).
 97 active + 33 withdrawn. Linux-implementable: 72 (`os` + `os_partial`).
+Publication PDF (prose, not the machine catalog): `../../rl9-171/NIST.SP.800-171r3.pdf`.
 
 ## Source of truth
 
@@ -10,6 +23,7 @@ Source of truth: `catalog.json` (NIST SP 800-171 Revision 3, May 2024).
 - Do **not** hand-edit `ansible/site.yml`.
 - Machine ODPs live in `odps.yml` (`inactive_days: 35`, not `"35 days"`).
 - Copy payloads go in `ansible/files/`. Bare `src:` values are rewritten to `{{ playbook_dir }}/files/...`.
+- `../../rl9-171/NIST.SP.800-171r3.pdf` is the May 2024 publication. Use it to resolve wording; put the result in `catalog.json`.
 - `../stig/nist_800_171r3_stig.json` is the r2-shaped extraction. Use `gap.md` / `python3 nistctl.py gap` instead of trusting its titles.
 
 ## Implementability
@@ -42,9 +56,12 @@ python3 nistctl.py catalog --impl linux
 python3 nistctl.py gap --kind missing_from_legacy
 python3 nistctl.py odps --write odps.yml
 python3 nistctl.py playbook --out ansible/site.yml
-python3 nistctl.py audit --id 03.01.08          # read-only, this host
+python3 nistctl.py audit --id 03.01.08 --limit cui-01   # guests via inventory
+python3 nistctl.py audit --id 03.01.08 --local          # this host only
 python3 nistctl.py remediate --check
 python3 nistctl.py remediate --apply --id 03.01.08   # only on a throwaway Rocky 9
+python3 lab/labctl.py up                             # QEMU/KVM cluster, writes ansible/inventory.ini
+# Guest walkthrough: lab/RUNBOOK.md
 ```
 
 `--apply` is never implied. FIPS (`03.13.08` / `03.13.11`) needs a reboot after `fips-mode-setup --enable`.

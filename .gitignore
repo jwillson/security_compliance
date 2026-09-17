@@ -1,1 +1,20 @@
 .vagrant/
+__pycache__/
+*.pyc
+
+# Key material. rl9-171/.gitignore repeats this for the tool tree; these
+# copies are path-independent so the guard survives a tree being moved,
+# renamed, or copied out of the repo.
+.secrets/
+*.pem
+id_rsa
+id_ed25519
+
+# Large downloaded or generated artifacts. Regenerate them, do not commit
+# them: `make iso` fetches the installer, labctl caches the cloud image.
+*.iso
+*.qcow2
+
+# Live inventories name real hosts.
+nist_sp_800_171r3/archive/r3/ansible/inventory.ini
+nist_sp_800_171r3/archive/r3/lab/.state/
