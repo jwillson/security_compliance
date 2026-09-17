@@ -26,5 +26,9 @@ requirement the host only partly satisfies.
 
 See its [README](nist_sp_800_171r3/rl9-171/README.md) for the full design.
 
+Open work is tracked in [TASKS.md](TASKS.md) — what is proven against a
+running host, what is written but not yet executed, and the decisions that
+need a system owner rather than a test.
+
 Earlier work on the same problem is kept unmaintained under
 [`nist_sp_800_171r3/archive/`](nist_sp_800_171r3/archive/README.md).
