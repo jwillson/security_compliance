@@ -225,8 +225,14 @@ cat <<DONE
   VM:        $VM_NAME  (role: $VM_ROLE)
   Address:   $IP
   User:      $ADMIN_USER  (password in .secrets/admin_password)
-  SSH:       ssh -i .secrets/id_rsa $ADMIN_USER@$IP
+  SSH:       bash -c '. lib/ssh-env.sh; ssh -i .secrets/id_rsa \\
+               -o UserKnownHostsFile=.secrets/known_hosts $ADMIN_USER@$IP'
   Console:   sudo virsh -c $LIBVIRT_URI console $VM_NAME
+
+  A plain \`ssh\` works now and stops working after ./apply.sh: 03.05.03
+  requires publickey AND password, and only lib/ssh-env.sh supplies the
+  second factor. Otherwise OpenSSH asks you for $ADMIN_USER's password
+  (it is in .secrets/admin_password).
 
   Next:      ./apply.sh          apply the 800-171r3 overlay
              ./verify.sh         assess the host against all 97 requirements

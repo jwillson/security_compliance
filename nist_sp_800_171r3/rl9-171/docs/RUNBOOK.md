@@ -14,6 +14,7 @@ been rehearsed here, it says so.
 - [Day 0 — choose a target](#day-0--choose-a-target)
 - [Day 1 — apply the overlay](#day-1--apply-the-overlay)
 - [Day 1 — what changes about connecting](#day-1--what-changes-about-connecting)
+  - [Anything outside apply.sh / verify.sh needs the SSH environment](#anything-outside-applysh--verifysh-needs-the-ssh-environment)
 - [Day 2 — what runs on its own](#day-2--what-runs-on-its-own)
 - [Day 2 — where the evidence is](#day-2--where-the-evidence-is)
 - [Reading an assessment](#reading-an-assessment)
@@ -144,19 +145,48 @@ time you hit it.
 | Symptom | Cause | What to do |
 |---|---|---|
 | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` | FIPS policy (03.13.11) excludes ed25519 | Use RSA >= 3072 or ECDSA P-256/384. `make secrets` generates RSA-3072. |
-| Key alone no longer authenticates | 03.05.03 sets `AuthenticationMethods publickey,password` | Supply the password factor. `lib/ssh-env.sh` does this via `SSH_ASKPASS`. |
+| Key alone no longer authenticates; you are asked for a password | 03.05.03 sets `AuthenticationMethods publickey,password` | Expected. Source `lib/ssh-env.sh`, or type the password from `.secrets/admin_password`. See below. |
 | Host key changed after the first apply | 03.13.10 removes the weak DSA/ECDSA host keys | Expected once. `apply.sh` re-records it on success. `verify.sh` never does — an *unexpected* change stays an error. |
 | `ping` times out | firewalld default zone target is DROP (03.13.06) | Not a fault. The host is reachable on its permitted services. |
 | `last`, `lastlog`, `w` need root | `wtmp`/`btmp`/`lastlog` are audit information under 03.03.08a, mode 0600 | Use `sudo`. |
 
-**Ad-hoc `ansible` commands need the SSH environment.** `apply.sh` and
-`verify.sh` source `lib/ssh-env.sh`; a bare `ansible` invocation does not, and
-against a hardened host it fails with
-`Timeout waiting for privilege escalation prompt`. Source it first:
+### Anything outside apply.sh / verify.sh needs the SSH environment
+
+This is the first thing that will confuse you, and it is the control working.
+
+After `./apply.sh`, `sshd -T` reports
+`authenticationmethods publickey,password` (03.05.03). Your key authenticates
+as factor one and sshd then demands factor two. `apply.sh` and `verify.sh`
+source `lib/ssh-env.sh`, which points `SSH_ASKPASS` at `.secrets/askpass.sh`
+and sets `SSH_ASKPASS_REQUIRE=force` so ssh uses it even with a terminal
+attached. Nothing else does.
+
+So a plain `ssh` prompts you for the admin password:
+
+```
+cuiadmin@10.0.0.10: Permission denied (password).     # with BatchMode
+cuiadmin@10.0.0.10's password:                        # without
+```
+
+and a bare `ansible` fails with
+`Timeout waiting for privilege escalation prompt`.
+
+Source the environment first, and both work silently:
 
 ```bash
+bash -c '. lib/ssh-env.sh; ssh -i .secrets/id_rsa \
+  -o UserKnownHostsFile=.secrets/known_hosts cuiadmin@10.0.0.10'
+
 bash -c '. lib/ssh-env.sh; ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'
 ```
+
+Or type the password — it is in `.secrets/admin_password`. Either is fine;
+what you must not do is "fix" this by relaxing `AuthenticationMethods`, which
+is the requirement itself.
+
+The `ssh` line printed by `vm/build-vm.sh` reflects this. A plain `ssh` works
+against a freshly built guest and stops working the moment you apply the
+overlay.
 
 ---
 
