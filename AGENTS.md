@@ -9,12 +9,11 @@ deliberately reading history.
 
 | Path | Status | Treat as |
 | --- | --- | --- |
-| `nist_sp_800_171r3/rl9-171/` | **the tool** | Catalog extracted from the publication PDF, Ansible role, independent assessor, reference VM build. Everything else is history. |
-| `nist_sp_800_171r3/web/` | adjunct, out of scope | nginx TLS snippet for a web tier. Not covered by the role, which hardens hosts. Requirement IDs in its comments are checked against the catalog. |
-| `nist_sp_800_171r3/archive/` | **superseded — do not extend** | `r3/`, `os/`, `stig/`, and the PDF copy their relative paths resolve to. See `archive/README.md`. |
+| `nist_sp_800_171r3/rl9-171/` | **the tool** | Catalog extracted from the publication PDF, two Ansible roles (`nist_800_171` over `cui_hosts`, `nist_log_collector` over `log_hosts`), independent assessor, reference VM build, and `tools/inventory.py`, which owns `inventory/hosts.yml`. |
+| `nist_sp_800_171r3/web/` | adjunct, out of scope | nginx TLS snippet for a web tier. Not covered by the roles, which harden hosts. Requirement IDs in its comments are checked against the catalog. |
 
-Do not add features to anything under `archive/`. If something there is worth
-having, port it into `rl9-171/` and note the port in `archive/README.md`.
+Superseded trees (`r3/`, `os/`, `stig/`) were removed once their reconciliation
+had served its purpose. They remain in git history if ever needed.
 
 ## Source of truth
 
@@ -24,9 +23,14 @@ having, port it into `rl9-171/` and note the port in `archive/README.md`.
 - **Mapping and policy**: `rl9-171/catalog/overlay-rocky9.yml` — what Rocky 9
   enforces for each requirement, what it cannot, and the ODP values. This is
   the file to edit.
-- ODPs are defined once, in the overlay's `odp:` block, and substituted into
-  both the role and the checks via `{odp.name}`. Never hardcode a policy value
-  in a task or a check; the two would drift.
+- ODPs live in two blocks of the overlay and nowhere else.
+  `odp:` (29) are values the host enforces: the role applies them and the checks
+  assert them via `{odp.name}`, so they cannot drift. Never hardcode one in a
+  task or a check.
+  `odp_organizational:` (47, across 43 requirements) are the assignments no host
+  setting can satisfy. Nothing substitutes them and no check asserts them; they
+  render into `/etc/nist-800-171/organizational-requirements.md`. Each is keyed
+  to the requirement that asks for the parameter.
 - `make validate` must pass: it confirms the catalog, the overlay and the
   checks all agree. Run it after editing any of the three.
 
@@ -38,6 +42,9 @@ having, port it into `rl9-171/` and note the port in `archive/README.md`.
 - A requirement classed `partial` must never report PASS — only MANUAL. A
   green report must not imply the system is authorized. 28 requirements are
   purely organizational; the assessor reports them `NOT_APPLICABLE(host)`.
+  Six requirements are currently `technical` *and* carry a `residual`, so they
+  report PASS with an obligation outstanding. That is an open defect
+  (TASKS.md 4.4), not a pattern to copy.
 - Verification reads **effective** state, not the file the role wrote:
   `sshd -T` over `sshd_config`, `sysctl -n` over `/etc/sysctl.d/`,
   `auditctl -l` over `rules.d`, `systemctl is-enabled` over unit files. Every
@@ -51,6 +58,16 @@ having, port it into `rl9-171/` and note the port in `archive/README.md`.
 - Git author must match `main`:
   `Jason Willson <jason.willson@gmail.com>`. Do not invent
   `@users.noreply.github.com` addresses.
+- `roles/nist_800_171/tasks/main.yml` uses `import_tasks`, never
+  `include_tasks`. An include is resolved at run time, so the tag filter sees
+  only the family tag on the include statement and `--tags 03.05.07` silently
+  runs nothing at all. An import is resolved at parse time, so each task's own
+  requirement tag is selectable.
+- A role that opens a listening port declares it in
+  `{{ nist_conf_dir }}/authorized-ports.d/<NN>-<role>`. The port checks read
+  that directory rather than hardcoding a port, so 514 is authorized on a
+  collector and still a finding on a plain CUI host. Widening a check to go
+  green is the wrong fix.
 - Python 3, stdlib first. Ansible tasks use FQCN (`ansible.builtin.*`,
   `ansible.posix.*`, `community.general.*`) and carry their requirement ID as
   a tag.
@@ -69,10 +86,17 @@ make help                        # the whole pipeline
 ./verify.sh --failed-only        # assess, show deviations only
 ```
 
-Hardening an existing host needs only an inventory — the VM and ISO targets
-are for building a reference machine, not a prerequisite:
+Hardening an existing host does not need the VM or ISO targets, but it does
+need `make secrets`: 03.08.09 formats the encrypted CUI volumes with the
+passphrase it generates, so an apply without it fails mid-run on any host with
+free volume-group space.
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml   # edit for your host
+make secrets
 ./apply.sh && ./verify.sh
 ```
+
+`site.yml` has two plays: the overlay over `cui_hosts`, then
+`nist_log_collector` over `log_hosts`. `./tools/inventory.py show` lists the
+hosts and where each forwards its records.

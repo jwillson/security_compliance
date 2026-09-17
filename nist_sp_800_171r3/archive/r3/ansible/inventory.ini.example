@@ -1,5 +1,0 @@
-[cui]
-# rocky9-cui-01.lab ansible_user=ansible ansible_become=true
-
-[cui:vars]
-ansible_python_interpreter=/usr/bin/python3

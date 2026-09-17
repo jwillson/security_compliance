@@ -18,19 +18,12 @@ Four artifacts, each with one job:
 |---|---|
 | `catalog/requirements.json` | All 130 requirements parsed from the PDF (97 active, 33 withdrawn) |
 | `catalog/overlay-rocky9.yml` | What Rocky 9 can enforce for each, and what it cannot |
-| `roles/nist_800_171/` | The Ansible role that applies the overlay |
+| `roles/` | `nist_800_171/` applies the overlay to every CUI host; `nist_log_collector/` adds the receiving half of 03.03.05c on a log host |
 | `audit/` | An assessor that verifies the host, written independently of the role |
 
 Day-to-day procedure — building, applying, assessing, and getting back in when
 a control locks you out — is in [docs/RUNBOOK.md](docs/RUNBOOK.md). This README
 is the design: what the tool does and why.
-
-This tree is the tool. Earlier attempts at the same problem — a hand-authored
-catalog with its own middleware, an r2-tagged Vagrant playbook, and an
-extraction that put r2 titles on r3 IDs — are kept unmaintained under
-[`../archive/`](../archive/README.md). [`docs/legacy-gap.md`](docs/legacy-gap.md)
-records exactly where they disagree with the publication, and is regenerated
-from the catalog rather than written by hand.
 
 ---
 
@@ -49,6 +42,7 @@ make secrets    # generate the automation key and credentials
 make iso        # download and checksum the Rocky 9 boot ISO
 make vm         # unattended install of the hardened reference VM
 make vm-log     # log collector, so record forwarding can be verified
+                # (`make all` builds the CUI host only)
 make apply      # apply the overlay via Ansible
 make verify     # assess all 97 requirements, write JSON + HTML
 make report     # open the newest HTML report
@@ -65,11 +59,11 @@ organizational ones as `NOT_APPLICABLE(host)` rather than `PASS`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **technical** | 44 | The host enforces it in full. A failing check is a real finding. |
+| **technical** | 44 | The host enforces it. A failing check is a real finding. Six (`03.01.05`, `03.01.10`, `03.01.12`, `03.05.05`, `03.05.12`, `03.07.05`) also carry a `residual` obligation yet still report PASS — an open defect, see [TASKS.md](../../TASKS.md) 4.4. |
 | **partial** | 25 | The host enforces part of it; `residual` names what the organization still owes. |
 | **organizational** | 28 | Policy, process, personnel, physical. No host setting satisfies it. |
 
-Assessment result for the reference VM built by this toolkit:
+Assessment result for each host in the reference lab — the CUI host and the collector alike:
 
 ```
  43 satisfied            (technical requirements fully enforced and verified)
@@ -178,9 +172,14 @@ the inventory at any Rocky 9 host reachable over SSH with sudo:
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml
 $EDITOR inventory/hosts.yml
+make secrets                     # 03.08.09 reads .secrets/luks_passphrase
 ./apply.sh --check --diff        # see what would change first
 ./apply.sh && ./verify.sh
 ```
+
+The VM and ISO targets are not prerequisites, but `make secrets` is: 03.08.09
+formats the encrypted CUI volumes with the passphrase it generates, so an
+apply without it fails mid-run on any host with free volume-group space.
 
 ```yaml
 # inventory/hosts.yml
@@ -218,10 +217,16 @@ The VM runs on an isolated libvirt network (`nist-lab`, `virbr17`) rather than
 the shared `default` bridge, which keeps lab traffic separated (03.13.01).
 
 ```bash
-./vm/build-vm.sh                      # build (15-25 min, unattended)
+./vm/build-vm.sh                      # build the CUI host (15-25 min, unattended)
+./vm/build-vm.sh --role log           # build the collector
 ./vm/build-vm.sh --name rl9-cui-02 --disk-gb 60
-./vm/build-vm.sh --destroy            # remove VM and disk
+./vm/build-vm.sh --destroy            # remove the CUI VM and its disk
+./vm/build-vm.sh --role log --destroy # remove the collector
+make destroy                          # both
 ```
+
+`--destroy` resolves the name from `--role`, so the plain form leaves a
+collector running.
 
 The kickstart is validated with the real `pykickstart` parser (in a Rocky 9
 container) before any VM is created, because a syntax error otherwise costs a
@@ -335,8 +340,7 @@ rl9-171/
 ├── inventory/
 │   └── hosts.yml.example        copy to hosts.yml to target your own host
 ├── docs/
-│   ├── RUNBOOK.md               operator procedure: build, apply, verify, recover
-│   └── legacy-gap.md            why ../archive/ is not the catalog (generated)
+│   └── RUNBOOK.md               operator procedure: build, apply, verify, recover
 ├── roles/
 │   ├── nist_800_171/            the overlay
 │   │   ├── tasks/               one file per family, per-requirement tags
@@ -352,8 +356,9 @@ rl9-171/
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
-│   ├── inventory.py             owns inventory/hosts.yml across VMs
-│   └── legacy-gap.py            regenerates docs/legacy-gap.md
+│   └── inventory.py             owns inventory/hosts.yml across VMs
+├── lib/ssh-env.sh               supplies the MFA knowledge factor to ssh
+├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile
 └── reports/                     assessment output (generated)
 ```
@@ -374,11 +379,14 @@ The role leaves working artifacts behind, not just settings:
 | `/usr/local/sbin/nist-offboard-user` | One-action offboarding (03.09.02) |
 | `/usr/local/sbin/nist-sanitize-media` | Media sanitization (03.08.03) |
 | `/usr/local/sbin/nist-privilege-report` | Privilege review evidence (03.01.05c) |
+| `/etc/nist-800-171/authorized-ports.d/` | Per-role declaration of authorized listening ports; the port checks read it |
+| `/etc/nist-800-171/log-forwarding-status` | Whether records are forwarded, or local-only (03.03.05c) |
+| `/etc/nist-800-171/log-collector-status` | On a collector: port, record directory, retention |
 | `/var/log/nist-800-171/` | Assessment, scan and review output |
 
-Six systemd timers provide the continuous monitoring strategy (03.12.03):
+Seven systemd timers provide the continuous monitoring strategy (03.12.03):
 integrity check, audit review, vulnerability scan, assessment, inventory
-refresh, and malware scan.
+refresh, malware scan, and security errata (`dnf-automatic`).
 
 ---
 
@@ -400,10 +408,11 @@ automatically on first `./apply.sh`.
   authoritative; re-run `make catalog` if you substitute a different revision.
 - The overlay's ODP values are defensible defaults drawn from the DoD CUI
   baseline and the SSG RHEL 9 CUI profile. **They are not your organization's
-  values** — review the `odp:` block before use.
+  values** — review the `odp:` and `odp_organizational:` blocks before use.
 - `fapolicyd` enforces deny-by-default execution. On a host with unprofiled
   workloads this can block applications; set `nist_fapolicyd_permissive: true`
   to log instead while profiling.
 - Passing every check means the host-enforceable controls are in place. It does
   **not** mean the system is compliant or authorized — 28 requirements are
-  purely organizational and 25 more have residual obligations.
+  purely organizational and 31 more carry residual obligations (25 partial,
+  plus the six technical ones that still report PASS).

@@ -1,5 +1,0 @@
-## 03.01.07 privileged exec
--a always,exit -F arch=b64 -S execve -F euid=0 -k privileged
--a always,exit -F path=/usr/bin/sudo -F perm=x -k privileged
--w /etc/sudoers -p wa -k privileged
--w /etc/sudoers.d -p wa -k privileged

@@ -3,8 +3,8 @@
 How to run this thing. The [README](../README.md) explains *why* the tool is
 built the way it is; this is the procedure.
 
-Everything below was exercised against a hardened Rocky 9 guest unless a step
-says otherwise. Where a recovery procedure is standard practice that has not
+Everything below was exercised against the two hardened Rocky 9 guests of the
+reference lab — a CUI host and a log collector — unless a step says otherwise. Where a recovery procedure is standard practice that has not
 been rehearsed here, it says so.
 
 **Contents**
@@ -39,7 +39,7 @@ been rehearsed here, it says so.
 3. **`./verify.sh` is read-only.** It copies the assessor to the target and
    runs it. It never remediates, and it never re-records a changed host key.
 4. **A clean assessment is not authorization.** 28 requirements have no host
-   control and 25 more have residual obligations. See
+   control and 31 more carry residual obligations. See
    `/etc/nist-800-171/organizational-requirements.md` on the host.
 
 ---
@@ -73,11 +73,14 @@ only need it if you change the extractor or substitute a different revision.
 
 ### An existing Rocky 9 host
 
-The VM targets are **not** a prerequisite.
+The VM targets are **not** a prerequisite. `make secrets` is: 03.08.09 formats
+the encrypted CUI volumes with the passphrase it generates, so an apply without
+it fails mid-run on any host with free volume-group space.
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml
 $EDITOR inventory/hosts.yml
+make secrets
 ```
 
 Install-time controls the role cannot retrofit — a separate `/var/log/audit`
@@ -91,7 +94,11 @@ real findings. Fixing them means a rebuild, not a playbook run.
 make secrets      # RSA-3072 key + admin password + LUKS passphrase
 make iso          # download and checksum the Rocky 9 boot ISO
 make vm           # unattended kickstart install, 15-25 min
+make vm-log       # the log collector, so 03.03.05c can be verified
 ```
+
+Both roles install at 4096 MB — the Rocky 9 network installer needs it — and a
+collector is trimmed back to 2048 MB once the install finishes.
 
 `make vm` establishes what a role cannot: separate filesystems for `/home`,
 `/tmp`, `/var`, `/var/log`, `/var/log/audit`, `/var/tmp` with
@@ -193,7 +200,8 @@ overlay.
 ## Day 2 — what runs on its own
 
 Seven timers provide the continuous monitoring strategy (03.12.03). Schedules
-come from `roles/nist_800_171/defaults/main.yml` and are UTC.
+come from `roles/nist_800_171/defaults/main.yml` — except `dnf-automatic`,
+which is overridden in `tasks/si.yml` — and are UTC.
 
 | Timer | Runs | Does | Requirement |
 |---|---|---|---|
@@ -203,7 +211,7 @@ come from `roles/nist_800_171/defaults/main.yml` and are UTC.
 | `nist-assessment.timer` | 06:00 daily | Full on-host assessment | 03.12.01 |
 | `nist-inventory.timer` | daily | Refresh the component inventory | 03.04.10 |
 | `nist-vuln-scan.timer` | Sun 02:00 | OpenSCAP authenticated scan | 03.11.02 |
-| `dnf-automatic.timer` | daily | Security errata | 03.14.01 |
+| `dnf-automatic.timer` | 01:00 daily | Security errata | 03.14.01 |
 
 Check them:
 
@@ -250,6 +258,8 @@ On the host:
 | `/etc/nist-800-171/overlay-version` | Which overlay version is applied |
 | `/etc/nist-800-171/mfa-status` | Whether pubkey MFA enforcement is on |
 | `/etc/nist-800-171/log-forwarding-status` | Whether records are forwarded, or local-only |
+| `/etc/nist-800-171/authorized-ports.d/` | Authorized listening ports, one fragment per role. The port checks subtract this; a port opened by hand and not declared here is a finding |
+| `/etc/nist-800-171/log-collector-status` | On a collector: port, record directory, retention |
 | `/var/log/nist-800-171/assessment-latest.json` | Most recent on-host assessment |
 | `/var/log/nist-800-171/poam-*.csv` | POA&M generated from failed checks (03.12.02) |
 | `/var/log/nist-800-171/oscap-report-*.html` | Vulnerability scan output |
@@ -280,6 +290,10 @@ Five statuses, and the distinctions matter:
 | `MANUAL` | Host controls verified, organizational evidence still required. A `partial` requirement can never report PASS. |
 | `NOT_APPLICABLE` | No host control exists — policy, process, personnel, physical. |
 | `ERROR` | The check itself could not run. Investigate the check, not the host. |
+
+A `PASS` is not always a discharged obligation. Six requirements are classified
+`technical` yet carry a `residual` field, so they report PASS with an
+organizational obligation still outstanding — see TASKS.md 4.4.
 
 A healthy reference VM reports:
 
@@ -385,7 +399,10 @@ Console access is the way back in. On the reference VM:
 
 ```bash
 sudo virsh -c qemu:///system console rl9-cui-01
+sudo virsh -c qemu:///system console rl9-log-01   # the collector
 ```
+
+`./tools/inventory.py show` lists the guests and their addresses.
 
 The admin password is in `.secrets/admin_password`. Root is locked by design
 (03.01.06) — log in as the admin user and `sudo`.

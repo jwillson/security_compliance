@@ -9,8 +9,18 @@
 # Rocky Linux 9 and reachable over SSH with sudo can be hardened; the VM and
 # ISO make targets exist to build a reference machine, not as a prerequisite.
 #
-# vm/build-vm.sh overwrites inventory/hosts.yml with its own copy, which is
-# why that file is gitignored and this example is not.
+# `make secrets` IS a prerequisite: 03.08.09 formats the encrypted CUI volumes
+# with .secrets/luks_passphrase, so an apply without it fails mid-run on any
+# host with free volume-group space.
+#
+# vm/build-vm.sh registers each guest through tools/inventory.py, which adds
+# and removes hosts rather than overwriting the file — so building a second VM
+# does not evict the first. hosts.yml is gitignored because it names live
+# hosts; this example is not.
+#
+# A host in the `log_hosts` group additionally receives forwarded audit records
+# (03.03.05c); site.yml's second play targets that group. inventory.py sets
+# `nist_log_collector` on the forwarders, so do not set it by hand.
 
 cui_hosts:
   hosts:

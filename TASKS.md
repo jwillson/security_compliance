@@ -125,7 +125,7 @@ Found by building a second host. Each was invisible with one VM.
       defect. *Recorded here because the wrong diagnosis was committed.*
 
 - [x] **1b.7 `--tags <requirement>` ran nothing at all.** README, RUNBOOK and
-      `apply.sh --help` all promised that `--tags 03.05.07` applies exactly
+      `apply.sh`'s own header all promised that `--tags 03.05.07` applies exactly
       that requirement's tasks. `main.yml` used `include_tasks` with only the
       family tag on the include statement, so a requirement tag never reached
       the inner tasks: `--tags 03.05.01` ran **0** tasks while `--tags 03.05`
@@ -301,7 +301,9 @@ No amount of testing substitutes for these. Each is a live commitment.
       project exists to prevent, and it is live today.
 
       Three were examined against the publication text, the checks and the
-      implementing tasks. All three should be `partial`:
+      implementing tasks — two of the six, plus `03.08.02`, which carries no
+      `residual` but overstates in the same way. `03.01.10`, `03.01.12` and
+      `03.07.05` are not yet examined. All three examined should be `partial`:
       * `03.05.05` — nothing implements statement (c), reuse prevention over a
         time period. `ia-05-no-uid-reuse` tests that no two *current* accounts
         share a UID, which is 03.05.01a restated. Statement (d)'s
@@ -331,7 +333,7 @@ No amount of testing substitutes for these. Each is a live commitment.
 - [ ] **4.5 Decide what happens to `nist_sp_800_171r3/web/`.** An nginx TLS
       snippet, orphaned from the tool, which hardens hosts rather than web
       tiers. Its requirement IDs are now correct. Either fold it into scope
-      properly, or archive it and stop implying it is maintained.
+      properly, or delete it and stop implying it is maintained.
 
 ---
 
@@ -346,16 +348,14 @@ No amount of testing substitutes for these. Each is a live commitment.
 - [ ] **5.2 Delete the `r3-hardening-middleware` branch.** `main` contains
       everything; the branch is redundant.
 
-- [ ] **5.3 Decide whether `archive/` stays.** It is 618 MB on disk (mostly
-      the ignored `r3/lab/.state/` qcow2; far less in git). It exists so
-      `docs/legacy-gap.md` has a subject.
-      *If you delete it:* also delete `rl9-171/tools/legacy-gap.py` and
-      `rl9-171/docs/legacy-gap.md`. The tool already refuses to run and says
-      exactly this when its source is missing — it will not fail silently.
+- [x] **5.3 `archive/` removed.** The reconciliation had served its purpose:
+      `r3/`, `os/` and `stig/` are gone, along with `tools/legacy-gap.py` and
+      `docs/legacy-gap.md`, which existed only to document them. 618 MB
+      reclaimed, almost all of it the gitignored `r3/lab/.state/` qcow2.
+      Everything remains in git history. *Done.*
 
-- [ ] **5.4 Prune local build cruft.** `archive/r3/lab/.state/` (646 MB
-      qcow2), `__pycache__` directories, old `reports/`. All gitignored, none
-      of it in history — this is disk, not hygiene.
+- [x] **5.4 Local build cruft pruned** with 5.3 — the cached cloud image and
+      `__pycache__` directories went with the archive. *Done.*
 
 ---
 
@@ -375,8 +375,10 @@ No amount of testing substitutes for these. Each is a live commitment.
 
 - [ ] **6.4 Open POA&M items for every remaining gap.**
       `sudo nist-generate-poam` turns failed checks into a CSV. The 28
-      organizational requirements and 25 residual obligations are not in it —
-      they come from `organizational-requirements.md`.
+      organizational requirements and 25 partial residual obligations are not
+      in it — they come from `organizational-requirements.md`. The six
+      residuals on `technical` requirements (4.4) appear in neither, which is
+      part of why 4.4 matters.
 
 - [ ] **6.5 Re-read the caveat that matters.** Passing every check means the
       host-enforceable controls are in place. It does not mean the system is
@@ -388,9 +390,9 @@ No amount of testing substitutes for these. Each is a live commitment.
 
 Recorded so they do not get re-litigated:
 
-- Reviving anything under `archive/`. `r3/` was retired for cause: its
-  verifier grades on exit status, 14 of its checks cannot fail and 4 are
-  inverted. `os/` and `stig/` are r2-tagged. Both worthwhile pieces have
-  already been ported.
+- Reviving the superseded trees, now deleted (recoverable from git history).
+  `r3/` was retired for cause: its verifier graded on exit status, 14 of its
+  checks could not fail and 4 were inverted. `os/` and `stig/` were r2-tagged.
+  Both worthwhile pieces were ported before removal.
 - Supporting distributions other than the RHEL 9 family. The overlay is
   Rocky 9 specific by design and `site.yml` asserts it.
