@@ -45,9 +45,15 @@ What was worth keeping has been taken across:
   `03.10.08` as "Access Records"; they are Physical Access Control and Access
   Control for Transmission.
 - The organizational ODP register in `r3/odps.yml` and the per-requirement
-  `odps[]` in `r3/catalog.json` — 68 definitions with defaults and rationale,
-  including the organizational assignments (assessment frequency, incident
-  reporting time, rescreening interval, remediation SLA) that the live
-  overlay's machine-value `odp:` block has no slot for. **Not yet ported.**
-- `r3/lab/labctl.py`'s three-node topology, which includes an rsyslog
-  listener (`log-01`) that the single-VM lab lacks. **Not yet ported.**
+  `odps[]` in `r3/catalog.json`. 47 of the 68 definitions are now
+  `odp_organizational:` in the live overlay, keyed to the requirement that
+  asks for each parameter and rendered into the on-host
+  `organizational-requirements.md`. The other 21 duplicated a value the
+  machine `odp:` block already enforces, where the enforced value has to stay
+  the single answer.
+- `r3/lab/labctl.py`'s three-node topology, specifically its rsyslog listener
+  (`log-01`). The receiving half now exists as `rl9-171/roles/nist_log_collector`
+  and `build-vm.sh --role log`, built on the trunk's kickstart VMs rather than
+  labctl's cloud images, so 03.03.05c is verified instead of assumed.
+
+Nothing else here is queued for porting. What remains is history.
