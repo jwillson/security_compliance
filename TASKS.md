@@ -207,6 +207,77 @@ No amount of testing substitutes for these. Each is a live commitment.
       parameter that does not exist — it cannot tell you a number is wrong.
       An assessor will ask where each came from.
 
+- [ ] **4.1b ODP audit results — 26 of 76 carry a finding, 18 assignments are
+      unanswered.** A full audit mapped all 76 ODPs onto the 82
+      organization-defined decision points in the 97 active statements.
+      Spot-verified: every claim below was confirmed directly.
+
+      *Contradictions — the register says the opposite of what the host does:*
+      * `auth_refresh` says "passwords on recovery **not calendar**" while
+        `odp.password_max_age: 60` expires them every 60 days and two checks
+        assert it. The SSP would state the opposite of the evidence. Pick one.
+      * `session_events` says 900s idle, but SSH sessions actually drop at
+        `ssh_client_alive_interval: 600`. It is also in the organizational
+        block despite 03.01.11 being `technical` and machine-asserted.
+
+      *Dead and drifting policy:*
+      * `odp.patch_window_days: 30` is the **only** machine ODP no check
+        references. The dnf timer is hardcoded; changing it changes nothing
+        and fails nothing. 03.14.01b is a policy SLA — `patch_sla` is its
+        right home.
+      * Three registers understate the host: `assess_freq` 12 months /
+        `audit_review_freq` 7 days / `inv_review` 30 days, against timers that
+        all run **daily**. No check asserts any timer's `OnCalendar`, so the
+        schedules are unparameterised, unasserted, and in three cases
+        contradicted by the register the SSP cites.
+      * Four `host_scope` texts cite "the ODP frequency"/"the ODP names" for
+        ODPs that do not exist (03.03.01, 03.11.02, 03.14.02, and see 4.4).
+
+      *Contractual — needs legal/contracts review, do not ship unexamined:*
+      * `ir_authorities` names CISA. For the DoD CUI population this targets,
+        DFARS 252.204-7012 requires reporting to DoD via DIBNet within 72
+        hours. No ODP carries that clock.
+
+      *Baseline coherence:*
+      * `config_settings` names "DISA RHEL 9 STIG + CIS L2 + this overlay"
+        with no precedence rule, so 03.04.02a's "most restrictive mode" is
+        unresolved. `password_min_length: 14` is the CIS value while every
+        neighbouring value is STIG — confirm the STIG minlen for your
+        revision and either raise it or document the deviation.
+      * `patch_sla` drops the medium tier that `remediate_sla` rates 90 days,
+        while claiming "Matches 03.11.02".
+
+      *Assertion semantics:*
+      * `ac-08-faillock-unlock` asserts `>= lockout_duration_seconds`, but the
+        ODP's own comment offers `0 = until admin release`. Set 0 and the
+        check passes anything; leave 900 and the strictest possible host
+        setting (never auto-unlock) **fails**. `ac-08-faillock-deny` likewise
+        passes `deny = 0`, which disables lockout entirely.
+      * `au-03-retention-capacity` asserts `n * s >= 500`, a magic constant
+        unrelated to `audit_retention_days`. auditd's `ROTATE` **deletes** the
+        oldest log at `num_logs`, so 90-day retention is not guaranteed by the
+        settings meant to deliver it.
+
+      *Factual:* `travel_config` and `media_types` name `usbguard`, which this
+      toolkit never installs — it blacklists the `usb-storage` module.
+
+      *Unanswered:* 18 assignments across 13 requirements have no ODP at all,
+      including `03.03.04a`'s audit-failure alert window on a requirement
+      marked `technical`, `03.03.01a`'s event types, and `03.04.06b`'s
+      prohibited functions/ports/services list. Both nested `[Selection:]`
+      choices (03.01.08b, 03.01.10a) are unrecorded.
+
+- [ ] **4.1c Add the two validator guards that would have caught most of
+      this.** Neither costs judgement, and both will red-light `make validate`
+      until the defects above are resolved — which is the point, so sequence
+      them with the fixes:
+      * every key in `odp:` must be referenced by at least one check
+        (catches `patch_window_days`);
+      * no `technical` entry may carry a `residual` (catches all six in 4.4).
+      Longer term: give each ODP an `answers:` field naming the requirement
+      *and statement letter* (`03.14.01b`), then assert every assignment is
+      answered exactly once.
+
 - [ ] **4.2 Decide the ClamAV / EPEL trade-off (03.14.02 vs 03.17.03).**
       Signature scanning needs EPEL, which sits outside the authorized
       repository set. Currently off, which is why the VM reports 43 satisfied
