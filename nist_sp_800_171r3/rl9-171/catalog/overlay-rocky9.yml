@@ -73,6 +73,346 @@ odp:
   # 03.01.09 - system use notification text lives in
   # roles/nist_800_171/templates/banner.j2
 
+# ---------------------------------------------------------------------------
+# Organization-defined parameters that no host setting can satisfy.
+#
+# The `odp:` block above holds values Rocky 9 enforces mechanically; the role
+# applies them and the checks assert them, so the two cannot drift.
+#
+# This block is the other half: the assignments 800-171r3 leaves to the
+# organization which are review frequencies, notification periods, named
+# authorities, and policy statements. Nothing reads them to configure
+# anything, and no check asserts them. They are rendered into
+# /etc/nist-800-171/organizational-requirements.md so that the residual
+# obligation named there carries the organization's decision instead of a
+# blank, and so the SSP has one place to cite.
+#
+# THESE ARE DEFAULTS DRAWN FROM COMMON DoD CUI PRACTICE. THEY ARE NOT YOUR
+# ORGANIZATION'S VALUES. Review every one before an assessment relies on it.
+# ---------------------------------------------------------------------------
+odp_organizational:
+
+  # 03.01.01 Account Management
+  - id: notify_period
+    requirement: "03.01.01"
+    parameter: "Notify account managers within [time period]"
+    value: "24 hours"
+    rationale: "Same-day offboarding."
+
+  # 03.01.05 Least Privilege
+  - id: priv_review
+    requirement: "03.01.05"
+    parameter: "Review privileges [frequency]"
+    value: "90 days"
+    rationale: "Quarterly access recertification."
+  - id: sec_functions
+    requirement: "03.01.05"
+    parameter: "Security functions requiring explicit authorization"
+    value: "account mgmt, sudoers, auditd, firewall, crypto keys, package install"
+    rationale: "STIG admin set."
+
+  # 03.01.06 Least Privilege - Privileged Accounts
+  - id: priv_roles
+    requirement: "03.01.06"
+    parameter: "Personnel/roles allowed privileged accounts"
+    value: "wheel (named admins only)"
+    rationale: "No shared root."
+
+  # 03.01.11 Session Termination
+  - id: session_events
+    requirement: "03.01.11"
+    parameter: "Conditions requiring session disconnect"
+    value: "900s idle; end of shift; incident lockout"
+    rationale: "Matches TMOUT/sshd."
+
+  # 03.01.20 Use of External Systems
+  - id: ext_reqs
+    requirement: "03.01.20"
+    parameter: "Security requirements on external systems"
+    value: "Same 800-171r3 overlay; no CUI on unmanaged endpoints"
+    rationale: "Boundary of the CUI enclave."
+
+  # 03.02.01 Literacy Training and Awareness
+  - id: at_freq
+    requirement: "03.02.01"
+    parameter: "Training frequency"
+    value: "12 months"
+    rationale: "Annual awareness."
+
+  # 03.02.02 Role-Based Training
+  - id: rbt_freq
+    requirement: "03.02.02"
+    parameter: "Role-based training frequency"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.03.01 Event Logging
+  - id: event_review
+    requirement: "03.03.01"
+    parameter: "Review logged event types"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.03.05 Audit Record Review, Analysis, and Reporting
+  - id: audit_review_freq
+    requirement: "03.03.05"
+    parameter: "Review frequency"
+    value: "7 days"
+    rationale: "Weekly plus SIEM continuous."
+
+  # 03.04.01 Baseline Configuration
+  - id: baseline_review
+    requirement: "03.04.01"
+    parameter: "Baseline review frequency"
+    value: "12 months or on change"
+    rationale: "Annual plus change-driven."
+
+  # 03.04.02 Configuration Settings
+  - id: config_settings
+    requirement: "03.04.02"
+    parameter: "Configuration settings"
+    value: "DISA RHEL 9 STIG + CIS L2 + this overlay"
+    rationale: "Common secure configuration."
+
+  # 03.04.06 Least Functionality
+  - id: svc_review
+    requirement: "03.04.06"
+    parameter: "Service review frequency"
+    value: "90 days"
+    rationale: "Quarterly."
+
+  # 03.04.08 Authorized Software - Allow by Exception
+  - id: allowlist_review
+    requirement: "03.04.08"
+    parameter: "Authorized software review"
+    value: "90 days"
+    rationale: "Quarterly."
+
+  # 03.04.10 System Component Inventory
+  - id: inv_review
+    requirement: "03.04.10"
+    parameter: "Inventory review frequency"
+    value: "30 days"
+    rationale: "Monthly automated + quarterly attestation."
+
+  # 03.04.12 System and Component Configuration for High-Risk Areas
+  - id: travel_config
+    requirement: "03.04.12"
+    parameter: "High-risk travel configuration"
+    value: "sanitized disk, no CUI, usbguard, VPN-only, reimage on return"
+    rationale: "STIG travel image."
+
+  # 03.05.01 User Identification and Authentication
+  - id: reauth
+    requirement: "03.05.01"
+    parameter: "Re-authentication circumstances"
+    value: "privilege elevation; 12h; authenticator change"
+    rationale: "sudo + ssh rekey."
+
+  # 03.05.02 Device Identification and Authentication
+  - id: device_types
+    requirement: "03.05.02"
+    parameter: "Devices requiring identification"
+    value: "hosts in the CUI enclave; admin jump hosts; VPN endpoints"
+    rationale: "802.1X / IPA hosts."
+
+  # 03.05.05 Identifier Management
+  - id: id_reuse
+    requirement: "03.05.05"
+    parameter: "Identifier reuse prohibition period"
+    value: "1 year"
+    rationale: "STIG UID freeze."
+  - id: id_status
+    requirement: "03.05.05"
+    parameter: "Characteristic identifying individual status"
+    value: "employee | contractor | vendor"
+    rationale: "in GECOS or IPA."
+
+  # 03.05.07 Password Management
+  - id: pwlist_update
+    requirement: "03.05.07"
+    parameter: "Compromised-password list update"
+    value: "7 days and on suspected compromise"
+    rationale: "Have I Been Pwned / SecLists."
+
+  # 03.05.12 Authenticator Management
+  - id: auth_refresh
+    requirement: "03.05.12"
+    parameter: "Authenticator refresh"
+    value: "on compromise, role change, or 1 year for hardware tokens; passwords on recovery not calendar"
+    rationale: "800-63."
+
+  # 03.06.02 Incident Monitoring, Reporting, and Response Assistance
+  - id: ir_report_time
+    requirement: "03.06.02"
+    parameter: "Report suspected incidents within"
+    value: "1 hour for confirmed CUI incident; 24 hours suspected"
+    rationale: "CMMC-aligned."
+  - id: ir_authorities
+    requirement: "03.06.02"
+    parameter: "Authorities to notify"
+    value: "CISO; contracting officer; CISA as required"
+    rationale: "Contract flow-down."
+
+  # 03.06.03 Incident Response Testing
+  - id: ir_test
+    requirement: "03.06.03"
+    parameter: "IR test frequency"
+    value: "12 months"
+    rationale: "Annual tabletop."
+
+  # 03.06.04 Incident Response Training
+  - id: ir_train
+    requirement: "03.06.04"
+    parameter: "IR training frequency"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.08.07 Media Use
+  - id: media_types
+    requirement: "03.08.07"
+    parameter: "Restricted/prohibited media types"
+    value: "unmanaged USB mass storage; U3; writable optical on servers"
+    rationale: "usbguard."
+
+  # 03.09.01 Personnel Screening
+  - id: rescreen
+    requirement: "03.09.01"
+    parameter: "Rescreen conditions"
+    value: "privilege increase; 5 years; cause"
+    rationale: "Typical contractor screening."
+
+  # 03.09.02 Personnel Termination and Transfer
+  - id: offboard_time
+    requirement: "03.09.02"
+    parameter: "Disable access within"
+    value: "immediate for cause; 4 hours otherwise"
+    rationale: "Lock before notice when for-cause."
+
+  # 03.10.01 Physical Access Authorizations
+  - id: pe_review
+    requirement: "03.10.01"
+    parameter: "Facility access-list review"
+    value: "90 days"
+    rationale: "Quarterly."
+
+  # 03.10.02 Monitoring Physical Access
+  - id: pe_log_review
+    requirement: "03.10.02"
+    parameter: "Physical access log review"
+    value: "7 days and on incident"
+    rationale: "Weekly."
+
+  # 03.10.06 Alternate Work Site
+  - id: aws_reqs
+    requirement: "03.10.06"
+    parameter: "Alternate work-site requirements"
+    value: "full-disk encryption, VPN, no local CUI copies, privacy screen"
+    rationale: "Telework overlay."
+
+  # 03.11.01 Risk Assessment
+  - id: ra_freq
+    requirement: "03.11.01"
+    parameter: "Risk assessment update"
+    value: "12 months or on significant change"
+    rationale: "Annual."
+
+  # 03.11.02 Vulnerability Monitoring and Scanning
+  - id: remediate_sla
+    requirement: "03.11.02"
+    parameter: "Remediation times"
+    value: "critical 15d; high 30d; medium 90d"
+    rationale: "Typical CMMC POA&M."
+
+  # 03.12.01 Security Assessment
+  - id: assess_freq
+    requirement: "03.12.01"
+    parameter: "Assessment frequency"
+    value: "12 months"
+    rationale: "Annual 800-171A."
+
+  # 03.12.05 Information Exchange
+  - id: isa_types
+    requirement: "03.12.05"
+    parameter: "Agreement types"
+    value: "interconnection security agreements; NDAs"
+    rationale: "Pick one or more."
+  - id: isa_review
+    requirement: "03.12.05"
+    parameter: "Exchange agreement review"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.13.10 Cryptographic Key Establishment and Management
+  - id: key_mgmt
+    requirement: "03.13.10"
+    parameter: "Key management requirements"
+    value: "FIPS 140-3; ssh-keygen; LUKS; no keys in world-readable files; destroy via shred/luksErase"
+    rationale: "SP 800-57."
+
+  # 03.13.12 Collaborative Computing Devices and Applications
+  - id: collab_exceptions
+    requirement: "03.13.12"
+    parameter: "Remote-activation exceptions"
+    value: "none on CUI servers; user-initiated conferencing on workstations"
+    rationale: "Servers: blacklist camera/mic."
+
+  # 03.14.01 Flaw Remediation
+  - id: patch_sla
+    requirement: "03.14.01"
+    parameter: "Install security updates within"
+    value: "critical 15d; high 30d"
+    rationale: "Matches 03.11.02."
+
+  # 03.15.01 Policy and Procedures
+  - id: policy_review
+    requirement: "03.15.01"
+    parameter: "Policy review frequency"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.15.02 System Security Plan
+  - id: ssp_review
+    requirement: "03.15.02"
+    parameter: "SSP review frequency"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.15.03 Rules of Behavior
+  - id: rob_review
+    requirement: "03.15.03"
+    parameter: "Rules of behavior review"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.16.01 Security Engineering Principles
+  - id: sse_principles
+    requirement: "03.16.01"
+    parameter: "SSE principles"
+    value: "SP 800-160 layered protections, threat modeling, secure SDLC, least functionality"
+    rationale: "800-160."
+
+  # 03.16.03 External System Services
+  - id: ext_svc_reqs
+    requirement: "03.16.03"
+    parameter: "Requirements on external services"
+    value: "Flow down 800-171r3; no CUI in non-FIPS SaaS; logging to org SIEM"
+    rationale: "Related to 03.01.20."
+
+  # 03.17.01 Supply Chain Risk Management Plan
+  - id: scrm_review
+    requirement: "03.17.01"
+    parameter: "SCRM plan review"
+    value: "12 months"
+    rationale: "Annual."
+
+  # 03.17.03 Supply Chain Requirements and Processes
+  - id: sc_reqs
+    requirement: "03.17.03"
+    parameter: "Supply-chain security requirements"
+    value: "provenance, signed packages (rpm keys), no untrusted COPR, vetted vendors"
+    rationale: "Rocky/RHEL signed repos."
+
 requirements:
 
 # ===========================================================================

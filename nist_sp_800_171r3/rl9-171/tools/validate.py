@@ -90,6 +90,33 @@ for req in overlay["requirements"]:
     if t and not (ROOT / "roles/nist_800_171" / t).is_file():
         errors.append(f"{req['id']} names missing task file {t}")
 
+# 6. The organizational ODP register is well-formed.
+#
+# These are documentation, not configuration: nothing reads them to configure
+# a host and no check asserts them. The guard is therefore that each one is
+# attributable - it names a real requirement and does not shadow a machine
+# ODP, which would leave two answers to the same question.
+org_odp = overlay.get("odp_organizational", [])
+seen_org = set()
+for entry in org_odp:
+    oid = entry.get("id")
+    if not oid:
+        errors.append("an odp_organizational entry has no id")
+        continue
+    if oid in seen_org:
+        errors.append(f"organizational ODP {oid!r} is defined more than once")
+    seen_org.add(oid)
+    if oid in odp:
+        errors.append(f"organizational ODP {oid!r} shadows a machine ODP of "
+                      "the same name")
+    for field in ("requirement", "parameter", "value"):
+        if not entry.get(field):
+            errors.append(f"organizational ODP {oid!r} has no {field}")
+    rid = entry.get("requirement")
+    if rid and rid not in active:
+        errors.append(f"organizational ODP {oid!r} names {rid}, which is not "
+                      "an active requirement")
+
 from collections import Counter
 disp = Counter(r["disposition"] for r in overlay["requirements"])
 
@@ -98,6 +125,8 @@ print(f"catalog   {len(active)} active requirements "
 print(f"overlay   {disp['technical']} technical, {disp['partial']} partial, "
       f"{disp['organizational']} organizational")
 print(f"checks    {len(defined)} defined, {len(declared)} referenced")
+print(f"odp       {len(odp)} enforced by the host, {len(org_odp)} organizational "
+      f"across {len({e.get('requirement') for e in org_odp})} requirements")
 
 for w in warnings:
     print(f"  warn:  {w}")

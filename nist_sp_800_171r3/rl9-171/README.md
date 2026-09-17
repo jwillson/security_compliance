@@ -128,6 +128,24 @@ of `catalog/overlay-rocky9.yml`. The role applies them and the checks assert
 against them via `{odp.name}` substitution, so the two can never drift. Change
 the lockout threshold there and both sides follow.
 
+The publication leaves 47 more parameters to the organization that no host
+setting can satisfy: review frequencies, notification periods, named
+authorities, policy statements. Those live in the same file, under
+`odp_organizational:`, keyed to the requirement that asks for them. Nothing
+reads them to configure anything and no check asserts them — they are rendered
+into `/etc/nist-800-171/organizational-requirements.md` so that each residual
+obligation carries the organization's decision instead of a blank, and so the
+SSP has one place to cite.
+
+The distinction is the point. `lockout_attempts: 3` is evidence, because the
+assessor observes it on every run. "Report suspected incidents within 1 hour"
+is a commitment, and nothing on the host can demonstrate it was kept. Both
+still have to be written down somewhere.
+
+Both blocks ship with defaults drawn from common DoD CUI practice. **They are
+not your organization's values.** `make validate` will not tell you whether
+they are right — only that nothing references a parameter that does not exist.
+
 ---
 
 ## Usage
@@ -277,6 +295,7 @@ rl9-171/
 ├── catalog/
 │   ├── requirements.json        parsed from the PDF (generated)
 │   └── overlay-rocky9.yml       the mapping + ODP values  ← edit policy here
+│                                 (`odp:` enforced, `odp_organizational:` not)
 ├── extract/
 │   └── extract_requirements.py  PDF → JSON
 ├── inventory/
