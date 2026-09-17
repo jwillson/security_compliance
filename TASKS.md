@@ -13,12 +13,13 @@ system owner can make.
 
 Be honest about the difference — most of what follows exists to close the gap.
 
-**Proven against running hosts (`rl9-cui-01` + `rl9-log-01`)**
+**Proven against running hosts (`rl9-cui-01`, `rl9-cui-02`, `rl9-log-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
 - `make validate` — 97 requirements, 327 checks, 29 + 47 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
-- `./verify.sh` — **both hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28
+- `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
+  three report pairs from one run
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
 - `organizational-requirements.md` renders on the host with all 43 ODP sections
 - `make vm-log` / `build-vm.sh --role log` builds a collector end to end
@@ -33,8 +34,10 @@ Be honest about the difference — most of what follows exists to close the gap.
 **Written but never executed**
 
 - The whole BYO-host path (`inventory/hosts.yml.example`) — the headline
-  portability claim, never run against a non-lab machine
-- A third host. `verify.sh` has looped over two, not three
+  portability claim, never run against a machine this toolkit did not build.
+  Note that `make secrets` turns out to be a prerequisite after all (03.08.09
+  reads `.secrets/luks_passphrase`); that trap is now documented but still
+  untested in anger
 - Every lockout recovery procedure in the runbook
 
 ---
@@ -63,12 +66,16 @@ Be honest about the difference — most of what follows exists to close the gap.
   cover it, it is an unhardened box holding CUI evidence.
   *Done when:* it reports the same 43 / 26 / 0 / 28 as the CUI host.
 
-- [ ] **1.4 Build a second CUI host.** `./vm/build-vm.sh --name rl9-cui-02`
-  *Why:* proves `inventory.py` does not evict the first host — the bug that
-  motivated writing it — and that `verify.sh` genuinely loops over hosts
-  rather than assuming one.
-  *Done when:* `./verify.sh` assesses three hosts in one run and writes three
-  report pairs.
+- [x] **1.4 Build a second CUI host.** `./vm/build-vm.sh --name rl9-cui-02`
+      *Done.* Three hosts, one `./verify.sh` run, three report pairs, all
+      **43 / 26 / 0 / 28, 327 checks, 0 failed**. `tools/inventory.py` kept
+      both existing hosts and wired the new one to the collector by itself.
+      Two results the two-host lab could not produce:
+      * **Many-to-one forwarding works.** The collector now holds
+        `/var/log/nist-remote/rl9-cui-01/` and `.../rl9-cui-02/` side by side.
+      * **The build is reproducible.** A host created from scratch reaches the
+        same 43/26/0/28 as one hardened over two days, in one apply plus one
+        reboot.
 
 - [x] **1.5 Read the generated organizational document on a host.**
   `sudo cat /etc/nist-800-171/organizational-requirements.md`
@@ -113,6 +120,16 @@ Found by building a second host. Each was invisible with one VM.
       *Proven:* rules genuinely pending -> `Reboot required: True`; nothing
       pending -> `False`, on the same host minutes apart.
 
+- [x] **1b.5 Answered by 1.4: a from-scratch host genuinely passes.** The
+      worry was that `rl9-cui-01` reported `loginuid_immutable 1` from stale
+      running-kernel state rather than from configuration. `rl9-cui-02` was
+      built, hardened and rebooted once, and passes
+      `ia-01-loginuid-immutable` — so the control is real, and the reboot is
+      the whole of what it needs. The 1b.4 fix also proved itself unstaged in
+      the same run: of the three hosts, only the fresh one reported
+      `Reboot required: True`, and the two settled hosts applied at
+      `changed=0`.
+
 - [x] **1b.6 The collector is idempotent after all — my earlier reading was
       wrong.** I recorded that `03.14.08 | Tighten permissions on existing log
       files` changed on every run. Isolating it (`--tags 03.14.08`, twice) gave
@@ -133,13 +150,6 @@ Found by building a second host. Each was invisible with one VM.
       parse time so each task's own tag is visible to the filter. *Fixed —
       `--tags 03.05.01` now runs exactly those four tasks.* Found only
       because 1b.4 needed to trigger one requirement's tasks in isolation.
-
-- [ ] **1b.5 `rl9-cui-01` was passing `ia-01-loginuid-immutable` by
-      accident.** Neither host configures it persistently in a way that
-      survives without a reboot; cui-01 reported `loginuid_immutable 1` from
-      stale running-kernel state accumulated over 16 hours and several
-      applies. Re-verify after a rebuild from scratch, not after an apply to
-      a long-lived host.
 
 ---
 
