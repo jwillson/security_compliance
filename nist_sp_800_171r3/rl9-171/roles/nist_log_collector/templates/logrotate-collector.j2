@@ -1,0 +1,16 @@
+# Retention for forwarded records: the same audit retention period the
+# overlay applies locally (odp.audit_retention_days), so a record is not kept
+# longer here than policy allows there.
+{{ nist_remote_log_dir }}/*/*.log {
+    daily
+    rotate {{ odp.audit_retention_days }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0600 root root
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl kill -s HUP rsyslog.service 2>/dev/null || true
+    endscript
+}

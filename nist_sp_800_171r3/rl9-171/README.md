@@ -44,6 +44,7 @@ make validate   # confirm catalog, overlay and checks agree
 make secrets    # generate the automation key and credentials
 make iso        # download and checksum the Rocky 9 boot ISO
 make vm         # unattended install of the hardened reference VM
+make vm-log     # log collector, so record forwarding can be verified
 make apply      # apply the overlay via Ansible
 make verify     # assess all 97 requirements, write JSON + HTML
 make report     # open the newest HTML report
@@ -72,7 +73,7 @@ Assessment result for the reference VM built by this toolkit:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 325 checks run, 0 failed
+ 97 requirements assessed, 327 checks run, 0 failed
 ```
 
 43 rather than 44 satisfied, because 03.14.02 (Malicious Code Protection)
@@ -109,7 +110,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-325 checks cover the 69 enforceable requirements. Each declares exactly one
+327 checks cover the 69 enforceable requirements. Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -222,6 +223,35 @@ The kickstart is validated with the real `pykickstart` parser (in a Rocky 9
 container) before any VM is created, because a syntax error otherwise costs a
 full install cycle to discover.
 
+### The log collector
+
+One host cannot demonstrate audit-record forwarding. 03.03.05c asks for
+records to be correlated *across repositories*, and on a single VM there is no
+second repository — the role writes the forwarding rule, nothing receives it,
+and the assessor reports MANUAL because nothing was observed.
+
+```bash
+make vm-log        # or ./vm/build-vm.sh --role log
+./apply.sh         # the CUI hosts now forward; the collector now receives
+```
+
+The collector is a CUI host too — it stores other systems' audit records — so
+the same overlay hardens it, and `roles/nist_log_collector` adds only the
+receiving half: rsyslog on 514/tcp, one directory per sending host at mode
+0700, and rotation at the same `audit_retention_days` the records had at
+origin. `tools/inventory.py` owns `inventory/hosts.yml` and points the
+forwarders at the collector; adding or removing a log host rewires them.
+
+Two checks then assert the path rather than the configuration:
+
+| Check | Asserts |
+|---|---|
+| `au-05-forward-established` | rsyslog holds a live TCP connection to the collector. It queues to disk when the collector is unreachable, so a host can look configured and be forwarding nothing. |
+| `au-05-collector-receiving` | The collector holds records from a host other than itself. |
+
+Both degrade to MANUAL on a single-node lab rather than failing it: no
+collector configured is the one-VM case, not a deviation.
+
 ---
 
 ## Things the hardened baseline changes about how you connect
@@ -302,19 +332,22 @@ rl9-171/
 │   └── hosts.yml.example        copy to hosts.yml to target your own host
 ├── docs/
 │   └── legacy-gap.md            why ../archive/ is not the catalog (generated)
-├── roles/nist_800_171/
-│   ├── tasks/                   one file per family, per-requirement tags
-│   ├── templates/               auditd rules, sshd, banner, helper scripts
-│   └── defaults/main.yml        implementation detail (not policy)
+├── roles/
+│   ├── nist_800_171/            the overlay
+│   │   ├── tasks/               one file per family, per-requirement tags
+│   │   ├── templates/           auditd rules, sshd, banner, helper scripts
+│   │   └── defaults/main.yml    implementation detail (not policy)
+│   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               325 check definitions
+│   └── checks.yml               327 check definitions
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
+│   ├── inventory.py             owns inventory/hosts.yml across VMs
 │   └── legacy-gap.py            regenerates docs/legacy-gap.md
 ├── apply.sh  verify.sh  Makefile
 └── reports/                     assessment output (generated)

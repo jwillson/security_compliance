@@ -528,6 +528,47 @@ checks:
     expect_match: "@"
     manual_if_absent: true
 
+  - id: au-05-forward-established
+    description: The forwarding connection to the collector is live
+    command: |
+      # The rule above only proves a line was written. rsyslog queues to disk
+      # when the collector is unreachable, so a host can look configured and
+      # be forwarding nothing. Read the socket instead.
+      rule=$(grep -rhoE '^[[:space:]]*\*\.\*[[:space:]]+@@?[^[:space:]]+' \
+               /etc/rsyslog.d/ /etc/rsyslog.conf 2>/dev/null | head -1)
+      # No collector configured is not a failure of this host - it is the
+      # single-node case. Exit non-zero so manual_if_absent reports MANUAL.
+      [ -n "$rule" ] || { echo "no collector configured"; exit 1; }
+      target=${rule##*@}
+      case "$target" in
+        *:*) port=${target##*:} ;;
+        *)   port=514 ;;
+      esac
+      if ss -tnH state established "( dport = :$port )" 2>/dev/null | grep -q .; then
+        echo established
+      else
+        echo "not established to $target"
+      fi
+    expect_output: "established"
+    manual_if_absent: true
+
+  - id: au-05-collector-receiving
+    description: A collector host is storing records received from other hosts
+    command: |
+      # Only meaningful on the collector. Elsewhere there is no collector
+      # config, so this reports MANUAL rather than a deviation.
+      [ -f /etc/rsyslog.d/10-nist-collector.conf ] || \
+        { echo "not a collector"; exit 1; }
+      dir=$(sed -n 's/^directory=//p' \
+              /etc/nist-800-171/log-collector-status 2>/dev/null)
+      dir=${dir:-/var/log/nist-remote}
+      # A record from some host other than this one is what proves the path.
+      found=$(find "$dir" -mindepth 2 -name '*.log' -size +0 \
+                ! -path "*/$(hostname -s)/*" 2>/dev/null | head -1)
+      [ -n "$found" ] && echo receiving || echo "no remote records in $dir"
+    expect_output: "receiving"
+    manual_if_absent: true
+
   - id: au-06-audit-tools-present
     description: Reduction and report generation tools are installed
     command: "for t in auditctl aureport ausearch augenrules; do command -v $t >/dev/null || echo missing-$t; done"

@@ -1,0 +1,76 @@
+---
+# Receive forwarded audit records (03.03.05c, correlation across
+# repositories) and protect them once received (03.03.08).
+#
+# This role runs *after* nist_800_171 on the same host: a collector holds
+# other systems' audit records, so it is a CUI host by any reading and gets
+# the full overlay first. This adds only the receiving half.
+#
+# Records land in /var/log/nist-remote/<hostname>/, which is on the separate
+# /var/log filesystem the kickstart creates, so a flood of forwarded records
+# cannot fill the root filesystem.
+
+- name: Ensure the remote record directory exists
+  ansible.builtin.file:
+    path: "{{ nist_remote_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    # 0700: forwarded records are audit information under 03.03.08a and must
+    # be no more readable here than they were on the host that sent them.
+    mode: "0700"
+  tags: ["03.03.05", "03.03.08"]
+
+- name: Configure rsyslog to receive forwarded records
+  ansible.builtin.template:
+    src: rsyslog-collector.conf.j2
+    dest: /etc/rsyslog.d/10-nist-collector.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "rsyslogd -N1 -f %s"
+  notify: restart rsyslog collector
+  tags: ["03.03.05"]
+
+- name: Rotate the received records at the audit retention ODP
+  ansible.builtin.template:
+    src: logrotate-collector.j2
+    dest: /etc/logrotate.d/nist-remote
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.03.05", "03.03.03"]
+
+- name: Allow the forwarding port from the enclave only
+  ansible.posix.firewalld:
+    port: "{{ nist_collector_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+    zone: "{{ nist_collector_zone }}"
+  tags: ["03.03.05", "03.13.01"]
+
+- name: Let SELinux bind rsyslog to the forwarding port
+  # syslogd_port_t already covers 514/tcp on a stock policy; this is here for
+  # the case where nist_collector_port has been changed to something else.
+  community.general.seport:
+    ports: "{{ nist_collector_port }}"
+    proto: tcp
+    setype: syslogd_port_t
+    state: present
+  failed_when: false
+  tags: ["03.03.05"]
+
+- name: Record what this host collects
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/log-collector-status"
+    content: |
+      # 03.03.05c Audit record correlation - receiving side
+      status=collector
+      port={{ nist_collector_port }}/tcp
+      directory={{ nist_remote_log_dir }}
+      retention_days={{ odp.audit_retention_days }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.03.05"]

@@ -1,0 +1,28 @@
+# 03.03.05c  Receive audit records forwarded by the CUI hosts.
+# Managed by Ansible (roles/nist_log_collector); edits are overwritten.
+
+module(load="imtcp"
+       MaxSessions="200")
+input(type="imtcp" port="{{ nist_collector_port }}")
+
+# One directory per sending host, so records stay attributable to the system
+# that produced them. %HOSTNAME% is taken from the record itself; the
+# template rejects path separators so a hostile hostname cannot escape the
+# directory.
+template(name="NistRemoteFile" type="string"
+         string="{{ nist_remote_log_dir }}/%HOSTNAME:::secpath-replace%/%PROGRAMNAME:::secpath-replace%.log")
+
+# 0600 root:root, matching the protection the records had on their origin
+# host (03.03.08a).
+$umask 0077
+$DirCreateMode 0700
+$FileCreateMode 0600
+$DirOwner root
+$DirGroup root
+$FileOwner root
+$FileGroup root
+
+if ($fromhost-ip != "127.0.0.1") then {
+    action(type="omfile" dynaFile="NistRemoteFile")
+    stop
+}

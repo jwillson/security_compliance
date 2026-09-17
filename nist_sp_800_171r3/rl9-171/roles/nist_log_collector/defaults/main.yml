@@ -1,0 +1,19 @@
+---
+# Implementation detail. Policy values (retention) come from the overlay's
+# odp: block, not from here.
+
+# Where forwarded records land. On the reference VM this is inside the
+# separate /var/log filesystem, so remote records cannot fill /.
+nist_remote_log_dir: /var/log/nist-remote
+
+# 514/tcp plain. The lab network is isolated (03.13.01), which is what makes
+# that acceptable there. On a real deployment use 6514 with TLS - rsyslog
+# needs gtls and a certificate pair, which this role does not provision.
+nist_collector_port: 514
+
+# firewalld zone the enclave arrives on.
+nist_collector_zone: public
+
+# Matches nist_800_171's default. Declared here too so this role stands on
+# its own in its own play; if you change one, change both.
+nist_conf_dir: /etc/nist-800-171

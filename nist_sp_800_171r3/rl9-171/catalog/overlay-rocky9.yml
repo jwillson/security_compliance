@@ -707,7 +707,8 @@ requirements:
       A human reviewing the output and reporting findings (statements a, b) is
       organizational. Forwarding requires a collector address to be set.
     checks: [au-05-review-timer, au-05-review-timer-enabled,
-             au-05-aureport-present, au-05-rsyslog-forwarding]
+             au-05-aureport-present, au-05-rsyslog-forwarding,
+             au-05-forward-established, au-05-collector-receiving]
 
   - id: "03.03.06"
     title: Audit Record Reduction and Report Generation

@@ -55,3 +55,26 @@
           Reboot required: {{ nist_reboot_required | default(false) }}.
           Run ./verify.sh to assess the host against all 97 requirements.
       tags: [always]
+
+
+# 03.03.05c asks for audit records to be correlated across repositories, which
+# needs somewhere to correlate them. The play above configures the forwarding
+# side on every CUI host; this configures the receiving side on whichever
+# host the inventory puts in log_hosts. With no such host the group is empty
+# and the play is skipped - and the assessor then reports the forwarding
+# check as MANUAL rather than passing it, because nothing was verified.
+#
+# A collector is hardened by the play above as well: it holds other systems'
+# audit records, so it is a CUI host. This only adds the receiving half.
+- name: Log collector for cross-repository correlation (03.03.05c)
+  hosts: log_hosts
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - catalog/overlay-rocky9.yml
+
+  roles:
+    - role: nist_log_collector
+
+  tags: ["03.03.05", "collector"]

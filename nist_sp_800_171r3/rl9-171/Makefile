@@ -5,7 +5,7 @@ PDF    := NIST.SP.800-171r3.pdf
 ISO_URL := https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
-.PHONY: help catalog secrets iso vm apply verify report clean destroy validate all
+.PHONY: help catalog secrets iso vm vm-log apply verify report clean destroy validate all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
@@ -16,6 +16,7 @@ help:
 	@echo "  make secrets     generate SSH key and credentials"
 	@echo "  make iso         download and verify the Rocky 9 boot ISO"
 	@echo "  make vm          build the hardened reference VM (unattended)"
+	@echo "  make vm-log      build the log collector, so 03.03.05c can be verified"
 	@echo "  make apply       apply the overlay via Ansible"
 	@echo "  make verify      assess all 97 requirements on the target"
 	@echo "  make report      open the newest HTML assessment report"
@@ -61,6 +62,12 @@ $(ISO):
 vm: secrets iso catalog
 	./vm/build-vm.sh
 
+# A single host cannot demonstrate audit-record forwarding: there is nowhere
+# to forward to, so the assessor reports 03.03.05c as MANUAL rather than
+# passing it. This builds the receiving end. Re-run `make apply` afterwards.
+vm-log: secrets iso catalog
+	./vm/build-vm.sh --role log
+
 apply: catalog
 	./apply.sh
 
@@ -74,6 +81,7 @@ report:
 
 destroy:
 	./vm/build-vm.sh --destroy
+	./vm/build-vm.sh --role log --destroy
 
 clean:
 	rm -rf reports/*.json reports/*.html inventory/hosts.yml
