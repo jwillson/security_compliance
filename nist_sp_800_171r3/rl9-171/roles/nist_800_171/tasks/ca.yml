@@ -1,0 +1,104 @@
+---
+# 03.12 SECURITY ASSESSMENT AND MONITORING
+
+# ===========================================================================
+# 03.12.01 Security Assessment
+# ===========================================================================
+# The auditor is copied to the host by verify.sh so that assessment can also
+# run offline on a schedule, independent of the control workstation.
+- name: "03.12.01 | Install the on-host assessment tool"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/audit/{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "nist-assess", dest: "{{ nist_bin_dir }}/nist-assess", mode: "0750" }
+    - { src: "checks.yml",  dest: "{{ nist_conf_dir }}/checks.yml", mode: "0640" }
+  tags: ["03.12.01"]
+
+- name: "03.12.01 | Publish the overlay and catalog the assessment reads"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/{{ item.src }}"
+    dest: "{{ nist_conf_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - { src: "catalog/overlay-rocky9.yml", dest: "overlay-rocky9.yml" }
+    - { src: "catalog/requirements.json",  dest: "requirements.json" }
+  tags: ["03.12.01", "03.04.01", "03.15.02"]
+
+- name: "03.12.01 | Schedule assessment at the ODP frequency"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: nist-assessment.service
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.12.01 security requirement assessment
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ nist_bin_dir }}/nist-assess --json {{ nist_report_dir }}/assessment-latest.json --quiet
+    - name: nist-assessment.timer
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 assessment schedule
+
+        [Timer]
+        OnCalendar={{ nist_assessment_schedule }}
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  notify: reload systemd
+  tags: ["03.12.01", "03.12.03"]
+
+- name: "03.12.01 | Enable the assessment timer"
+  ansible.builtin.systemd:
+    name: nist-assessment.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: ["03.12.01", "03.12.03"]
+
+# ===========================================================================
+# 03.12.02 Plan of Action and Milestones
+# ===========================================================================
+- name: "03.12.02 | Install the POA&M generator"
+  ansible.builtin.template:
+    src: generate-poam.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-generate-poam"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.12.02"]
+
+# ===========================================================================
+# 03.12.03 Continuous Monitoring
+# ===========================================================================
+# All four monitoring timers are enabled by their own families (03.04.01 AIDE,
+# 03.11.02 scanning, 03.12.01 assessment, 03.03.05 audit review). This records
+# the assembled strategy so the assessor can see it in one place.
+- name: "03.12.03 | Record the system-level continuous monitoring strategy"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/continuous-monitoring.conf"
+    content: |
+      # 03.12.03  System-level continuous monitoring strategy.
+      integrity_check=nist-aide-check.timer:{{ nist_aide_check_schedule }}
+      audit_review=nist-audit-review.timer:{{ nist_audit_review_schedule }}
+      vulnerability_scan=nist-vuln-scan.timer:{{ nist_vuln_scan_schedule }}
+      assessment=nist-assessment.timer:{{ nist_assessment_schedule }}
+      inventory=nist-inventory.timer:{{ nist_inventory_schedule }}
+      malware_scan=nist-malware-scan.timer:{{ nist_clamav_scan_schedule }}
+      results_dir={{ nist_report_dir }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.12.03"]

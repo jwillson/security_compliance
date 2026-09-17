@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 03.11.02  Vulnerability monitoring and scanning.
+#
+# Two complementary sources: OpenSCAP evaluates configuration against the SSG
+# baseline, and dnf reports outstanding security advisories (actual CVEs).
+set -uo pipefail
+. {{ nist_conf_dir }}/alerting.conf 2>/dev/null || ALERT_MAIL=root
+STAMP=$(date -u +%Y%m%d)
+DIR="{{ nist_report_dir }}"
+SSG=/usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml
+[ -f "$SSG" ] || SSG=/usr/share/xml/scap/ssg/content/ssg-rocky9-ds.xml
+
+# --- Configuration compliance (OpenSCAP) ------------------------------------
+if [ -f "$SSG" ] && command -v oscap >/dev/null 2>&1; then
+  oscap xccdf eval \
+    --profile "xccdf_org.ssgproject.content_profile_cui" \
+    --results "$DIR/oscap-results-$STAMP.xml" \
+    --report  "$DIR/oscap-report-$STAMP.html" \
+    "$SSG" > "$DIR/oscap-$STAMP.log" 2>&1 || true
+  chmod 0600 "$DIR"/oscap-*"$STAMP"* 2>/dev/null
+fi
+
+# --- Outstanding security advisories (03.11.02a/c) --------------------------
+ADV="$DIR/security-advisories-$STAMP.txt"
+{
+  echo "Outstanding security advisories - $(hostname) - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "NIST SP 800-171r3 03.11.02"
+  echo
+  dnf -q updateinfo list --security 2>/dev/null || echo "(none, or metadata unavailable)"
+  echo
+  echo "== Severity summary =="
+  dnf -q updateinfo summary --security 2>/dev/null || true
+} > "$ADV"
+chmod 0600 "$ADV"
+
+count=$(dnf -q updateinfo list --security 2>/dev/null | grep -c . || echo 0)
+if [ "$count" -gt 0 ]; then
+  logger -p authpriv.warning -t nist-800-171 \
+    "03.11.02 $count outstanding security advisories, see $ADV"
+else
+  logger -p authpriv.info -t nist-800-171 "03.11.02 no outstanding security advisories"
+fi
+echo "wrote $ADV"

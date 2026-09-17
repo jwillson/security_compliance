@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# 03.04.01b / 03.14.06  Scheduled file integrity check against the baseline.
+set -uo pipefail
+. {{ nist_conf_dir }}/alerting.conf 2>/dev/null || ALERT_MAIL=root
+OUT="{{ nist_report_dir }}/aide-check-$(date -u +%Y%m%d).txt"
+
+aide --check --config /etc/aide.conf > "$OUT" 2>&1
+rc=$?
+chmod 0600 "$OUT"
+
+# aide exits non-zero when it finds differences from the baseline.
+if [ $rc -ne 0 ]; then
+  logger -p authpriv.alert -t nist-800-171 \
+    "03.04.01/03.14.06 file integrity deviation detected (aide rc=$rc), see $OUT"
+  if command -v mail >/dev/null 2>&1; then
+    mail -s "[$(hostname)] NIST 800-171 integrity deviation" "$ALERT_MAIL" < "$OUT"
+  fi
+else
+  logger -p authpriv.info -t nist-800-171 "03.04.01 integrity check clean"
+fi
+exit 0

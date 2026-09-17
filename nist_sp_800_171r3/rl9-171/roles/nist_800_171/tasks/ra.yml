@@ -1,0 +1,88 @@
+---
+# 03.11 RISK ASSESSMENT
+
+# ===========================================================================
+# 03.11.02 Vulnerability Monitoring and Scanning
+# ===========================================================================
+- name: "03.11.02 | Install the vulnerability scanner and content"
+  ansible.builtin.dnf:
+    name:
+      - openscap-scanner
+      - scap-security-guide
+      - openscap-utils
+    state: present
+  tags: ["03.11.02"]
+
+- name: "03.11.02 | Install the scan driver"
+  ansible.builtin.template:
+    src: vuln-scan.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-vuln-scan"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.11.02"]
+
+- name: "03.11.02 | Schedule scanning at the ODP frequency"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: nist-vuln-scan.service
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.11.02 vulnerability scan
+
+        [Service]
+        Type=oneshot
+        Nice=19
+        ExecStart={{ nist_bin_dir }}/nist-vuln-scan
+    - name: nist-vuln-scan.timer
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 vulnerability scan schedule
+
+        [Timer]
+        OnCalendar={{ nist_vuln_scan_schedule }}
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  notify: reload systemd
+  tags: ["03.11.02"]
+
+- name: "03.11.02 | Enable the vulnerability scan timer"
+  ansible.builtin.systemd:
+    name: nist-vuln-scan.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: ["03.11.02", "03.12.03"]
+
+- name: "03.11.02 | Keep advisory metadata current so new CVEs enter scope"
+  ansible.builtin.command:
+    cmd: dnf -q makecache --refresh
+  changed_when: false
+  failed_when: false
+  tags: ["03.11.02"]
+
+- name: "03.11.02 | Check whether scan evidence already exists"
+  ansible.builtin.find:
+    paths: "{{ nist_report_dir }}"
+    patterns: "security-advisories-*.txt"
+  register: nist_scan_evidence
+  tags: ["03.11.02"]
+
+- name: "03.11.02 | Run an initial scan so evidence exists from day one"
+  # Subsequent scans are the timer's job; running one here on every apply
+  # would report a change forever and slow the run down.
+  ansible.builtin.command:
+    cmd: "{{ nist_bin_dir }}/nist-vuln-scan"
+  when: nist_scan_evidence.matched | default(0) == 0
+  changed_when: true
+  failed_when: false
+  async: 900
+  poll: 0
+  tags: ["03.11.02"]

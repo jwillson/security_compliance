@@ -1,0 +1,23 @@
+<!--
+  Isolated NAT network for the NIST 800-171r3 CUI lab.
+
+  Uses bridge virbr17, which the host's ufw policy already permits
+  ("nist-lab qemu guests"). Keeping the CUI VM off the shared `default`
+  network also matches 03.13.01 (boundary protection): lab traffic is
+  separated from whatever else uses the default bridge.
+-->
+<network>
+  <name>nist-lab</name>
+  <forward mode='nat'>
+    <nat>
+      <port start='1024' end='65535'/>
+    </nat>
+  </forward>
+  <bridge name='virbr17' stp='on' delay='0'/>
+  <domain name='nist-lab' localOnly='no'/>
+  <ip address='192.168.171.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.171.100' end='192.168.171.200'/>
+    </dhcp>
+  </ip>
+</network>

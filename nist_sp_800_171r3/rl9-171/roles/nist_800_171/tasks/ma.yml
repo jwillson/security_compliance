@@ -1,0 +1,53 @@
+---
+# 03.07 MAINTENANCE
+
+# ===========================================================================
+# 03.07.04 Maintenance Tools
+# ===========================================================================
+# Auditing of maintenance tool execution is part of the 03.03 rule set
+# (key=maintenance). Scanning of introduced media is provided by ClamAV
+# (03.14.02); removable media is blocked by default (03.08.07).
+- name: "03.07.04 | Record the maintenance tool control posture"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/maintenance.conf"
+    content: |
+      # 03.07.04a  Maintenance tool use is monitored via auditd key=maintenance.
+      # 03.07.04b  Media introduced for maintenance is scanned before use.
+      monitored_tools=/usr/bin/dnf,/usr/bin/rpm,/usr/bin/systemctl
+      audit_key=maintenance
+      media_scanner={{ 'clamav' if nist_clamav_enabled else '(none)' }}
+      removable_media=blocked
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.07.04"]
+
+# ===========================================================================
+# 03.07.05 Nonlocal Maintenance
+# ===========================================================================
+# Nonlocal maintenance runs over SSH, which ac.yml already configures for MFA
+# (03.05.03), replay resistance (03.05.04) and idle termination (03.13.09).
+- name: "03.07.05 | Confirm no cleartext remote maintenance path exists"
+  ansible.builtin.dnf:
+    name:
+      - telnet-server
+      - rsh-server
+      - vnc-server
+      - tigervnc-server
+    state: absent
+  tags: ["03.07.05"]
+
+- name: "03.07.05 | Record the nonlocal maintenance posture"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/nonlocal-maintenance.conf"
+    content: |
+      # 03.07.05  Nonlocal maintenance and diagnostic sessions.
+      transport=ssh
+      mfa={{ 'publickey+password' if nist_mfa_enforce_pubkey else 'not enforced' }}
+      replay_resistance=crypto-policy:{{ odp.crypto_policy }}
+      session_termination=ClientAliveInterval={{ odp.ssh_client_alive_interval }}
+      audit_key=session
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.07.05"]

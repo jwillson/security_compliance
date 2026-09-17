@@ -1,0 +1,56 @@
+# NIST SP 800-171r3 auditd configuration - managed by Ansible.
+#
+# 03.03.02  Audit record content
+# 03.03.03  Generation and retention
+# 03.03.04  Response to audit logging process failures
+# 03.14.08  Information retention
+
+local_events = yes
+write_logs = yes
+log_file = /var/log/audit/audit.log
+
+## 03.03.02a  ENRICHED resolves uid/gid/syscall names at write time, so the
+## record still identifies the subject after it leaves this host.
+log_format = ENRICHED
+
+## 03.03.02  Records carry the originating host so they stay attributable.
+name_format = hostname
+
+log_group = root
+freq = 50
+flush = INCREMENTAL_ASYNC
+
+## 03.03.03b / 03.14.08  Retention: {{ odp.audit_num_logs }} files of
+## {{ odp.audit_max_log_file_mb }} MB holds the {{ odp.audit_retention_days }}
+## day window. Rotate rather than overwrite so records are never lost silently.
+max_log_file = {{ odp.audit_max_log_file_mb }}
+num_logs = {{ odp.audit_num_logs }}
+max_log_file_action = ROTATE
+
+## 03.03.04a  Alert the audit administrator before space runs out.
+space_left = {{ odp.audit_space_left_mb }}
+space_left_action = SYSLOG
+admin_space_left = {{ odp.audit_admin_space_left_mb }}
+admin_space_left_action = SINGLE
+action_mail_acct = {{ nist_audit_mail_acct }}
+verify_email = no
+
+## 03.03.04b  Additional actions on outright failure: stop rather than run
+## unaudited. disk_error_action HALT is deliberate - a host that cannot write
+## its audit trail is not permitted to keep processing CUI.
+disk_full_action = SINGLE
+disk_error_action = SINGLE
+
+## 03.03.04  Kernel-side failure handling (`-f 2`, panic on failure) is set in
+## the rule set, not here - auditd.conf has no equivalent key.
+
+## Dispatcher queue. Sized so a burst of events is buffered rather than lost.
+q_depth = 1200
+overflow_action = SYSLOG
+max_restarts = 10
+plugin_dir = /etc/audit/plugins.d
+
+## This host is an audit *source*, not a collector, so the remote-listener
+## options (tcp_listen_queue, transport, krb5_principal, distribute_network)
+## are deliberately absent - auditd refuses to start on an unknown key, and
+## leaving the listener unconfigured is also the 03.04.06 outcome we want.

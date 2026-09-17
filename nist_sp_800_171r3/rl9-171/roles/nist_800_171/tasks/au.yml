@@ -1,0 +1,295 @@
+---
+# 03.03 AUDIT AND ACCOUNTABILITY
+
+# ===========================================================================
+# 03.03.01 Event Logging
+# ===========================================================================
+- name: "03.03.01 | Install the audit subsystem"
+  ansible.builtin.dnf:
+    name:
+      - audit
+      - audit-libs
+      - rsyslog
+    state: present
+  tags: ["03.03.01"]
+
+- name: "03.03.01 | Remove the stock placeholder rule file"
+  # augenrules concatenates /etc/audit/rules.d/* in sorted order, and the
+  # package's own `audit.rules` sorts AFTER our 99- file. Its `-f 1` therefore
+  # overrides the failure mode we set, and its presence makes the effective
+  # policy depend on filename collation. Our file is the authoritative one.
+  ansible.builtin.file:
+    path: /etc/audit/rules.d/audit.rules
+    state: absent
+  notify: regenerate audit rules
+  tags: ["03.03.01", "03.03.04"]
+
+- name: "03.03.01 | Check whether the boot arguments already enable auditing"
+  ansible.builtin.command:
+    cmd: grubby --info=ALL
+  register: nist_grubby_info
+  changed_when: false
+  check_mode: false
+  tags: ["03.03.01"]
+
+- name: "03.03.01 | Capture audit events from the start of boot"
+  # grubby always exits 0, so the current arguments are inspected first.
+  ansible.builtin.command:
+    cmd: >-
+      grubby --update-kernel=ALL
+      --args="audit=1 audit_backlog_limit=8192"
+  when: >-
+    'audit=1' not in nist_grubby_info.stdout or
+    'audit_backlog_limit=8192' not in nist_grubby_info.stdout
+  changed_when: true
+  tags: ["03.03.01"]
+
+# ===========================================================================
+# 03.03.02 Audit Record Content / 03.03.03 Generation / 03.03.04 Failures
+# ===========================================================================
+# The configuration is written before the service is started. auditd refuses to
+# start on an unrecognised key, so starting first would fail against whatever
+# configuration happened to be on disk from a previous run.
+- name: "03.03.02 | Configure auditd record content, retention, and failure response"
+  ansible.builtin.template:
+    src: auditd.conf.j2
+    dest: /etc/audit/auditd.conf
+    owner: root
+    group: root
+    mode: "0640"
+  register: nist_auditd_conf
+  tags: ["03.03.01", "03.03.02", "03.03.03", "03.03.04", "03.14.08"]
+
+- name: "03.03.01 | Clear any failed auditd state before starting"
+  # systemd refuses further start attempts after repeated rapid failures
+  # ("Start request repeated too quickly"), which would mask a now-valid config.
+  ansible.builtin.command:
+    cmd: systemctl reset-failed auditd.service
+  changed_when: false
+  failed_when: false
+  tags: ["03.03.01"]
+
+- name: "03.03.01 | Restart auditd if its configuration changed"
+  # auditd sets RefuseManualStop, so systemctl cannot restart it; its own
+  # service wrapper is the supported path.
+  ansible.builtin.command:
+    cmd: /usr/sbin/service auditd restart
+  when: nist_auditd_conf is changed
+  changed_when: true
+  failed_when: false
+  tags: ["03.03.01"]
+
+- name: "03.03.01 | Enable auditd and rsyslog"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - auditd
+    - rsyslog
+  tags: ["03.03.01"]
+
+# The rule set itself is deployed by ac.yml (tagged 03.01.07 and 03.03.01) so
+# it is written once and loaded atomically.
+
+- name: "03.03.03 | Retain rotated audit logs for the ODP period"
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/nist-audit
+    content: |
+      # 03.03.03b / 03.14.08  Retain audit records for
+      # {{ odp.audit_retention_days }} days.
+      /var/log/audit/audit.log {
+          rotate {{ odp.audit_num_logs }}
+          size {{ odp.audit_max_log_file_mb }}M
+          maxage {{ odp.audit_retention_days }}
+          missingok
+          notifempty
+          compress
+          delaycompress
+          create 0600 root root
+          sharedscripts
+          postrotate
+              /usr/bin/systemctl kill -s SIGUSR1 auditd.service 2>/dev/null || true
+          endscript
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.03.03", "03.14.08"]
+
+# ===========================================================================
+# 03.03.05 Audit Record Review, Analysis, and Reporting
+# ===========================================================================
+- name: "03.03.05 | Install the scheduled audit review report"
+  ansible.builtin.template:
+    src: audit-review.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-audit-review"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Schedule the audit review at the ODP frequency"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: nist-audit-review.service
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.03.05 audit record review
+        Documentation=file://{{ nist_conf_dir }}/overlay-rocky9.yml
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ nist_bin_dir }}/nist-audit-review
+    - name: nist-audit-review.timer
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.03.05 audit review schedule
+
+        [Timer]
+        OnCalendar={{ nist_audit_review_schedule }}
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  notify: reload systemd
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Enable the audit review timer"
+  ansible.builtin.systemd:
+    name: nist-audit-review.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: ["03.03.05", "03.12.03"]
+
+- name: "03.03.05 | Forward audit records to the correlation collector"
+  ansible.builtin.copy:
+    dest: /etc/rsyslog.d/90-nist-forward.conf
+    content: |
+      # 03.03.05c  Correlate audit records across repositories.
+      # Records are queued on disk so a collector outage does not lose them.
+      $ActionQueueType LinkedList
+      $ActionQueueFileName nistfwd
+      $ActionResumeRetryCount -1
+      $ActionQueueSaveOnShutdown on
+      *.* @@{{ nist_log_collector }}
+    owner: root
+    group: root
+    mode: "0600"
+  when: nist_log_collector | length > 0
+  notify: restart rsyslog
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Record that no collector is configured"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/log-forwarding-status"
+    content: |
+      # 03.03.05c Audit record correlation
+      # No collector is configured (nist_log_collector is empty), so records are
+      # retained locally only. Set nist_log_collector to the collector address
+      # to enable forwarding. The auditor reports this as a deviation.
+      status=local-only
+    owner: root
+    group: root
+    mode: "0644"
+  when: nist_log_collector | length == 0
+  tags: ["03.03.05"]
+
+# ===========================================================================
+# 03.03.07 Time Stamps
+# ===========================================================================
+- name: "03.03.07 | Install chrony"
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+  tags: ["03.03.07"]
+
+- name: "03.03.07 | Point the clock at authorized time sources"
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart chronyd
+  tags: ["03.03.07"]
+
+- name: "03.03.07 | Set the system clock to UTC"
+  community.general.timezone:
+    name: Etc/UTC
+  tags: ["03.03.07"]
+
+- name: "03.03.07 | Enable chronyd"
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+  tags: ["03.03.07"]
+
+# ===========================================================================
+# 03.03.06 Reduction / 03.03.08 Protection of Audit Information
+# ===========================================================================
+- name: "03.03.08 | Restrict the audit log directory to root"
+  ansible.builtin.file:
+    path: /var/log/audit
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  tags: ["03.03.08"]
+
+- name: "03.03.08 | Restrict the audit log files to root"
+  # Only loosen nothing: auditd sets rotated logs to 0400, which is stricter
+  # than our 0600 target. Forcing 0600 unconditionally would relax them, and
+  # would report a change on every run as auditd set them back.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for f in /var/log/audit/audit.log*; do
+        [ -f "$f" ] || continue
+        mode=$(stat -c %a "$f")
+        if [ "$mode" -gt 600 ]; then chmod 0600 "$f"; changed=1; fi
+        if [ "$(stat -c %U:%G "$f")" != "root:root" ]; then
+          chown root:root "$f"; changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_audit_log_perms
+  changed_when: "'changed=1' in nist_audit_log_perms.stdout"
+  tags: ["03.03.08"]
+
+- name: "03.03.08 | Protect the audit configuration and rule files"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - /etc/audit/auditd.conf
+    - /etc/audit/audit.rules
+  failed_when: false
+  tags: ["03.03.08"]
+
+- name: "03.03.08 | Protect the audit tools from modification"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /sbin/auditctl
+    - /sbin/auditd
+    - /sbin/ausearch
+    - /sbin/aureport
+    - /sbin/autrace
+    - /sbin/augenrules
+  failed_when: false
+  tags: ["03.03.06", "03.03.08"]

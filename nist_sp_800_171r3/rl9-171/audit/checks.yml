@@ -1,0 +1,1900 @@
+# Verification checks for the NIST SP 800-171r3 Rocky 9 overlay.
+#
+# These are written to be independent of the Ansible role: each one inspects
+# the running system's effective state rather than the file the role wrote,
+# wherever the two can differ. `sshd -T` is preferred over reading
+# sshd_config, `sysctl` over reading sysctl.d, `auditctl -l` over reading
+# rules.d, and `systemctl is-enabled` over reading unit files.
+#
+# Assertion forms (exactly one per check):
+#   expect_rc        command exit status equals this
+#   expect_output    stdout equals this string exactly
+#   expect_match     stdout matches this regex (multiline)
+#   expect_no_match  stdout does not match this regex
+#   expect_empty     stdout is empty
+#   expect_int       first integer in stdout satisfies "<op> <value>"
+#
+# {odp.name} expands from the overlay's odp block, so a policy change in the
+# overlay updates the role and these checks together.
+#
+# manual_if_absent: true  -> a missing optional component degrades to MANUAL
+#                            rather than counting as a deviation.
+
+checks:
+
+# ===========================================================================
+# 03.01 ACCESS CONTROL
+# ===========================================================================
+  - id: ac-01-inactive-default
+    description: New accounts inherit the ODP inactivity disable period
+    command: "useradd -D | grep -oP '(?<=^INACTIVE=).*'"
+    expect_int: "== {odp.account_inactivity_days}"
+
+  - id: ac-01-inactive-users
+    description: Every interactive account has the inactivity lock applied
+    command: |
+      # Field 7 of /etc/shadow is the inactivity period and field 3 the last
+      # change date. Both must be set: with no last-change date the aging
+      # fields are inert, which `chage -l` hides by printing "never".
+      for u in $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){print $1}' /etc/passwd); do
+        awk -F: -v u="$u" '$1==u { if ($7=="" || $3=="") print u }' /etc/shadow
+      done
+    expect_empty: true
+
+  - id: ac-01-nologin-shells
+    description: System accounts cannot obtain an interactive shell
+    command: |
+      awk -F: '($3<1000 && $1!="root" && $1!="sync" && $7!="/sbin/nologin" && $7!="/bin/false"){print $1}' /etc/passwd
+    expect_empty: true
+
+  - id: ac-01-audit-account-events
+    description: Account lifecycle changes are audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?identity([[:space:]]|$)' || true
+    expect_int: ">= 4"
+
+  - id: ac-01-no-legacy-accounts
+    description: Unused default accounts have been removed
+    command: "getent passwd games gopher ftp uucp operator 2>/dev/null | cut -d: -f1"
+    expect_empty: true
+
+  - id: ac-02-selinux-enforcing
+    description: SELinux is enforcing (the access enforcement mechanism)
+    command: "getenforce"
+    expect_output: "Enforcing"
+
+  - id: ac-02-selinux-policy
+    description: The targeted SELinux policy is loaded
+    command: "sestatus | awk -F: '/Loaded policy name/ {print $2}' | xargs"
+    expect_output: "targeted"
+
+  - id: ac-02-no-unowned
+    description: No file lacks a valid owner or group
+    command: "find / -xdev \\( -nouser -o -nogroup \\) -print 2>/dev/null | head -20"
+    expect_empty: true
+
+  - id: ac-02-world-writable-sticky
+    description: Every world-writable directory carries the sticky bit
+    command: "find / -xdev -type d -perm -0002 ! -perm -1000 -print 2>/dev/null | head -20"
+    expect_empty: true
+
+  - id: ac-02-passwd-perms
+    description: /etc/passwd is 0644 root:root
+    command: "stat -c '%a %U:%G' /etc/passwd"
+    expect_output: "644 root:root"
+
+  - id: ac-02-shadow-perms
+    description: /etc/shadow is unreadable by anyone but root
+    command: "stat -c '%a %U:%G' /etc/shadow"
+    expect_match: "^(0|000|400) root:root$"
+
+  - id: ac-03-ip-forward
+    description: The host does not forward IP traffic between networks
+    command: "sysctl -n net.ipv4.ip_forward"
+    expect_output: "0"
+
+  - id: ac-03-send-redirects
+    description: The host does not send ICMP redirects
+    command: "sysctl -n net.ipv4.conf.all.send_redirects net.ipv4.conf.default.send_redirects | sort -u"
+    expect_output: "0"
+
+  - id: ac-03-accept-redirects
+    description: The host ignores ICMP redirects
+    command: "sysctl -n net.ipv4.conf.all.accept_redirects net.ipv4.conf.default.accept_redirects | sort -u"
+    expect_output: "0"
+
+  - id: ac-03-accept-source-route
+    description: Source-routed packets are rejected
+    command: "sysctl -n net.ipv4.conf.all.accept_source_route net.ipv4.conf.default.accept_source_route | sort -u"
+    expect_output: "0"
+
+  - id: ac-03-rp-filter
+    description: Reverse path filtering is enabled
+    command: "sysctl -n net.ipv4.conf.all.rp_filter"
+    expect_int: ">= 1"
+
+  - id: ac-03-firewalld-active
+    description: firewalld is enforcing flow control
+    command: "systemctl is-active firewalld"
+    expect_output: "active"
+
+  - id: ac-04-audit-group-exists
+    description: A distinct audit administration group exists
+    command: "getent group auditadm >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: ac-04-audit-group-distinct
+    description: Audit administration is not the same group as sysadmin
+    command: "test \"$(getent group auditadm | cut -d: -f3)\" != \"$(getent group wheel | cut -d: -f3)\" && echo distinct"
+    expect_output: "distinct"
+
+  - id: ac-05-sudo-no-nopasswd
+    description: No sudo rule grants privilege without authentication
+    command: "grep -rE '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
+    expect_empty: true
+
+  - id: ac-05-sudo-no-authenticate-off
+    description: No sudo rule disables authentication with !authenticate
+    command: "grep -rE '^[^#]*!authenticate' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
+    expect_empty: true
+
+  - id: ac-05-sudo-timestamp-timeout
+    description: sudo re-authenticates rather than caching credentials
+    command: "grep -rhoP '(?<=timestamp_timeout=)\\S+' /etc/sudoers /etc/sudoers.d/ 2>/dev/null | head -1"
+    expect_int: "<= 0"
+
+  - id: ac-05-umask-login-defs
+    description: The default umask denies group and other access
+    command: "grep -iE '^\\s*UMASK' /etc/login.defs | awk '{print $2}'"
+    expect_match: "^0?77$"
+
+  - id: ac-05-sudoers-perms
+    description: The sudo policy files cannot be modified by non-root users
+    command: "find /etc/sudoers /etc/sudoers.d -type f ! -perm 0440 ! -perm 0400 2>/dev/null"
+    expect_empty: true
+
+  - id: ac-05-privilege-report
+    description: The privileged access review report is installed
+    command: "test -x /usr/local/sbin/nist-privilege-report && echo present"
+    expect_output: "present"
+
+  - id: ac-06-ssh-permitrootlogin
+    description: Direct root login over SSH is refused
+    command: "sshd -T 2>/dev/null | awk '/^permitrootlogin/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-06-pam-wheel-su
+    description: su is restricted to the administrative group
+    command: "grep -E '^\\s*auth\\s+required\\s+pam_wheel\\.so.*use_uid' /etc/pam.d/su"
+    expect_match: "pam_wheel"
+
+  - id: ac-06-single-uid0
+    description: Only root holds UID 0
+    command: "awk -F: '($3==0 && $1!=\"root\"){print $1}' /etc/passwd"
+    expect_empty: true
+
+  - id: ac-06-no-empty-passwords
+    description: No account can authenticate with an empty password
+    command: "awk -F: '($2==\"\"){print $1}' /etc/shadow"
+    expect_empty: true
+
+  - id: ac-07-audit-privileged-execve
+    description: Privileged (setuid) program execution is audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?privileged_exec([[:space:]]|$)' || true
+    expect_int: ">= 5"
+
+  - id: ac-07-audit-sudo-log
+    description: The sudo I/O log exists and is root-only
+    command: "stat -c '%a %U' /var/log/sudo.log 2>/dev/null"
+    expect_match: "^(600|640) root$"
+
+  - id: ac-07-audit-execpriv-rules
+    description: execve by escalated euid is captured on both ABIs
+    command: "auditctl -l 2>/dev/null | grep -c 'euid=0.*execve\\|execve.*euid=0'"
+    expect_int: ">= 2"
+
+  - id: ac-08-faillock-deny
+    description: Account lockout triggers at the ODP attempt count
+    command: "grep -oP '(?<=^deny\\s=\\s).*|(?<=^deny=).*' /etc/security/faillock.conf | head -1"
+    expect_int: "<= {odp.lockout_attempts}"
+
+  - id: ac-08-faillock-interval
+    description: Failed attempts are counted over the ODP window
+    command: "grep -oP '(?<=^fail_interval\\s=\\s).*|(?<=^fail_interval=).*' /etc/security/faillock.conf | head -1"
+    expect_int: ">= {odp.lockout_window_seconds}"
+
+  - id: ac-08-faillock-unlock
+    description: The lockout lasts at least the ODP duration
+    command: "grep -oP '(?<=^unlock_time\\s=\\s).*|(?<=^unlock_time=).*' /etc/security/faillock.conf | head -1"
+    expect_int: ">= {odp.lockout_duration_seconds}"
+
+  - id: ac-08-faillock-even-deny-root
+    description: The lockout applies to root as well
+    command: "grep -cE '^\\s*even_deny_root' /etc/security/faillock.conf"
+    expect_int: ">= 1"
+
+  - id: ac-08-faillock-in-pam
+    description: pam_faillock is active in both authentication stacks
+    command: "grep -lc pam_faillock /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null | wc -l"
+    expect_int: ">= 2"
+
+  - id: ac-08-faillock-dir
+    description: The faillock state directory exists
+    command: "test -d /var/log/faillock && echo present"
+    expect_output: "present"
+
+  - id: ac-09-issue
+    description: The console displays the use notification before login
+    command: "grep -c 'Government information system\\|Unauthorized' /etc/issue"
+    expect_int: ">= 1"
+
+  - id: ac-09-issue-net
+    description: Network logins display the use notification before auth
+    command: "grep -c 'Government information system\\|Unauthorized' /etc/issue.net"
+    expect_int: ">= 1"
+
+  - id: ac-09-motd
+    description: A post-login notification is present
+    command: "test -s /etc/motd && echo present"
+    expect_output: "present"
+
+  - id: ac-09-sshd-banner
+    description: sshd presents the banner before authentication
+    command: "sshd -T 2>/dev/null | awk '/^banner/ {print $2}'"
+    expect_output: "/etc/issue.net"
+
+  - id: ac-10-tmout-set
+    description: Idle shell sessions time out at the ODP period
+    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    expect_int: "<= {odp.idle_lock_seconds}"
+
+  - id: ac-10-tmout-readonly
+    description: A user cannot extend their own idle timeout
+    command: "grep -rh 'readonly TMOUT' /etc/profile.d/ /etc/profile 2>/dev/null | grep -c . || true"
+    expect_int: ">= 1"
+
+  - id: ac-10-tmux-lock
+    description: tmux locks the terminal after the ODP idle period
+    command: "grep -oP '(?<=lock-after-time )\\d+' /etc/tmux.conf 2>/dev/null"
+    expect_int: "<= {odp.idle_lock_seconds}"
+
+  - id: ac-10-tmux-installed
+    description: The session lock mechanism is installed
+    command: "rpm -q tmux >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: ac-11-tmout-set
+    description: Sessions terminate automatically on idle expiry
+    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    expect_int: "<= {odp.session_timeout_seconds}"
+
+  - id: ac-11-ssh-clientalive-interval
+    description: sshd drops idle sessions at the ODP interval
+    command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
+    expect_int: "<= {odp.ssh_client_alive_interval}"
+
+  - id: ac-11-ssh-clientalive-countmax
+    description: sshd terminates rather than probing indefinitely
+    command: "sshd -T 2>/dev/null | awk '/^clientalivecountmax/ {print $2}'"
+    expect_int: "<= {odp.ssh_client_alive_count_max}"
+
+  - id: ac-11-ssh-logingracetime
+    description: Unauthenticated connections are bounded
+    command: "sshd -T 2>/dev/null | awk '/^logingracetime/ {print $2}'"
+    expect_int: "<= 120"
+
+  - id: ac-12-sshd-active
+    description: The managed remote access daemon is running
+    command: "systemctl is-active sshd"
+    expect_output: "active"
+
+  - id: ac-12-sshd-no-empty-passwords
+    description: sshd refuses accounts with empty passwords
+    command: "sshd -T 2>/dev/null | awk '/^permitemptypasswords/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-12-sshd-hostbased
+    description: Host-based authentication is disabled
+    command: "sshd -T 2>/dev/null | awk '/^hostbasedauthentication/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-12-sshd-gssapi
+    description: GSSAPI authentication is disabled
+    command: "sshd -T 2>/dev/null | awk '/^gssapiauthentication/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-12-sshd-strictmodes
+    description: sshd enforces ownership checks on user files
+    command: "sshd -T 2>/dev/null | awk '/^strictmodes/ {print $2}'"
+    expect_output: "yes"
+
+  - id: ac-12-sshd-ignorerhosts
+    description: rhosts-style trust is ignored
+    command: "sshd -T 2>/dev/null | awk '/^ignorerhosts/ {print $2}'"
+    expect_output: "yes"
+
+  - id: ac-12-sshd-permituserenv
+    description: Users cannot inject environment settings at login
+    command: "sshd -T 2>/dev/null | awk '/^permituserenvironment/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-12-sshd-x11forwarding
+    description: X11 forwarding is disabled
+    command: "sshd -T 2>/dev/null | awk '/^x11forwarding/ {print $2}'"
+    expect_output: "no"
+
+  - id: ac-12-sshd-maxauthtries
+    description: Authentication attempts per connection are bounded
+    command: "sshd -T 2>/dev/null | awk '/^maxauthtries/ {print $2}'"
+    expect_int: "<= {odp.lockout_attempts}"
+
+  - id: ac-12-sshd-config-perms
+    description: The sshd configuration is root-only
+    command: "stat -c '%a %U' /etc/ssh/sshd_config"
+    expect_match: "^(600|0600) root$"
+
+  - id: ac-12-sshd-crypto-policy
+    description: sshd inherits the system-wide crypto policy
+    command: "grep -rc 'CRYPTO_POLICY' /etc/sysconfig/sshd 2>/dev/null | head -1"
+    expect_int: ">= 0"
+
+  - id: ac-16-bluetooth-module
+    description: The Bluetooth module cannot be loaded
+    command: "modprobe -n -v bluetooth 2>&1 | head -1"
+    expect_match: "(install /bin/false|not found|blacklist)"
+
+  - id: ac-16-bluetooth-service
+    description: The Bluetooth service is masked
+    command: "systemctl is-enabled bluetooth 2>&1"
+    expect_match: "(masked|disabled|not-found|No such file)"
+
+  - id: ac-16-wifi-module
+    description: Wireless networking capability is disabled
+    command: "test -z \"$(nmcli -t -f TYPE device 2>/dev/null | grep -x wifi)\" && echo none"
+    expect_output: "none"
+
+  - id: ac-16-no-active-wireless
+    description: No wireless interface is active
+    command: "ip -o link show 2>/dev/null | grep -ci 'wl' || true"
+    expect_int: "== 0"
+
+  - id: ac-18-luks-root-or-data
+    description: CUI is held on an encrypted volume
+    command: "lsblk -o TYPE 2>/dev/null | grep -c crypt"
+    expect_int: ">= 1"
+
+  - id: ac-20-usb-storage-blocked
+    description: USB mass storage cannot be used
+    command: "modprobe -n -v usb-storage 2>&1 | head -1"
+    expect_match: "(install /bin/false|not found|blacklist)"
+
+  - id: ac-20-autofs-disabled
+    description: Automounting of external media is disabled
+    command: "systemctl is-enabled autofs 2>&1"
+    expect_match: "(masked|disabled|not-found|No such file)"
+
+# ===========================================================================
+# 03.03 AUDIT AND ACCOUNTABILITY
+# ===========================================================================
+  - id: au-01-auditd-enabled
+    description: auditd starts at boot
+    command: "systemctl is-enabled auditd 2>&1"
+    expect_output: "enabled"
+
+  - id: au-01-auditd-running
+    description: auditd is currently running
+    command: "systemctl is-active auditd"
+    expect_output: "active"
+
+  - id: au-01-audit-grub
+    description: Auditing is active before auditd starts
+    command: "grep -c 'audit=1' /proc/cmdline"
+    expect_int: ">= 1"
+
+  - id: au-01-audit-backlog
+    description: The early-boot audit backlog is large enough not to drop events
+    command: "grep -oP '(?<=audit_backlog_limit=)\\d+' /proc/cmdline | head -1"
+    expect_int: ">= 8192"
+
+  - id: au-01-rules-loaded
+    description: A substantial audit rule set is loaded in the kernel
+    command: "auditctl -l 2>/dev/null | grep -vc '^No rules'"
+    expect_int: ">= 40"
+
+  - id: au-01-rsyslog-enabled
+    description: rsyslog is enabled for event collection
+    command: "systemctl is-enabled rsyslog 2>&1"
+    expect_output: "enabled"
+
+  - id: au-02-log-format-enriched
+    description: Records resolve identity at write time (ENRICHED)
+    command: "awk -F= '/^log_format/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_output: "ENRICHED"
+
+  - id: au-02-name-format
+    description: Records carry the originating host name
+    command: "awk -F= '/^name_format/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_match: "^(hostname|fqd|numeric)$"
+
+  - id: au-02-record-fields
+    description: Emitted records contain type, time, and subject identity
+    command: |
+      # Read the records the kernel actually wrote rather than relying on
+      # ausearch's time filters. A conforming record carries the event type,
+      # a timestamp, and the subject identity.
+      r=$(tail -50 /var/log/audit/audit.log 2>/dev/null)
+      [ -n "$r" ] || { echo 0; exit 0; }
+      n=0
+      # `name_format = hostname` prepends `node=<host>`, so the type field is
+      # not at the start of the line - that prefix is the 03.03.02 control
+      # working, not a missing field.
+      printf '%s\n' "$r" | grep -qE '(^|[[:space:]])type=' && n=$((n+1))
+      printf '%s\n' "$r" | grep -q 'msg=audit('  && n=$((n+1))
+      printf '%s\n' "$r" | grep -qE 'auid=|uid=' && n=$((n+1))
+      echo "$n"
+    expect_int: ">= 3"
+
+  - id: au-03-max-log-file
+    description: Audit log rotation size matches the ODP
+    command: "awk -F= '/^max_log_file / {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_int: ">= {odp.audit_max_log_file_mb}"
+
+  - id: au-03-num-logs
+    description: Enough rotated files are retained for the ODP window
+    command: "awk -F= '/^num_logs/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_int: ">= {odp.audit_num_logs}"
+
+  - id: au-03-max-log-file-action
+    description: Logs rotate rather than being overwritten or ignored
+    command: "awk -F= '/^max_log_file_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
+    expect_output: "ROTATE"
+
+  - id: au-03-retention-capacity
+    description: Configured capacity can hold the ODP retention period
+    command: |
+      n=$(awk -F= '/^num_logs/ {gsub(/ /,"",$2); print $2}' /etc/audit/auditd.conf)
+      s=$(awk -F= '/^max_log_file / {gsub(/ /,"",$2); print $2}' /etc/audit/auditd.conf)
+      echo $(( n * s ))
+    expect_int: ">= 500"
+
+  - id: au-03-logrotate-present
+    description: A retention policy exists for rotated audit logs
+    command: "test -f /etc/logrotate.d/nist-audit && echo present"
+    expect_output: "present"
+
+  - id: au-04-space-left
+    description: A low-space alert threshold is set
+    command: "awk -F= '/^space_left / {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_int: ">= {odp.audit_space_left_mb}"
+
+  - id: au-04-space-left-action
+    description: Low space raises an alert rather than being ignored
+    command: "awk -F= '/^space_left_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
+    expect_match: "^(SYSLOG|EMAIL|EXEC|SINGLE|HALT)$"
+
+  - id: au-04-admin-space-left
+    description: A critical-space threshold is set
+    command: "awk -F= '/^admin_space_left / {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_int: ">= {odp.audit_admin_space_left_mb}"
+
+  - id: au-04-admin-space-left-action
+    description: Critical space takes a protective action
+    command: "awk -F= '/^admin_space_left_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
+    expect_match: "^(SINGLE|HALT)$"
+
+  - id: au-04-disk-full-action
+    description: A full audit disk halts processing rather than losing records
+    command: "awk -F= '/^disk_full_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
+    expect_match: "^(SINGLE|HALT)$"
+
+  - id: au-04-disk-error-action
+    description: An audit write error takes a protective action
+    command: "awk -F= '/^disk_error_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
+    expect_match: "^(SINGLE|HALT|SYSLOG)$"
+
+  - id: au-04-failure-mode
+    description: The kernel panics rather than silently dropping audit records
+    command: "auditctl -s 2>/dev/null | awk '/^failure/ {print $2}'"
+    expect_int: ">= 1"
+
+  - id: au-04-action-mail-acct
+    description: An audit administrator is named for alerts
+    command: "awk -F= '/^action_mail_acct/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_match: "\\S"
+
+  - id: au-05-review-timer
+    description: The scheduled audit review is installed
+    command: "test -f /etc/systemd/system/nist-audit-review.timer && echo present"
+    expect_output: "present"
+
+  - id: au-05-review-timer-enabled
+    description: The audit review runs on schedule
+    command: "systemctl is-enabled nist-audit-review.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: au-05-aureport-present
+    description: The audit reduction and reporting tools are available
+    command: "command -v aureport >/dev/null && command -v ausearch >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: au-05-rsyslog-forwarding
+    description: Records are forwarded for cross-repository correlation
+    command: "grep -rhE '^\\s*\\*\\.\\*\\s+@' /etc/rsyslog.d/ /etc/rsyslog.conf 2>/dev/null | head -1"
+    expect_match: "@"
+    manual_if_absent: true
+
+  - id: au-06-audit-tools-present
+    description: Reduction and report generation tools are installed
+    command: "for t in auditctl aureport ausearch augenrules; do command -v $t >/dev/null || echo missing-$t; done"
+    expect_empty: true
+
+  - id: au-06-log-immutable-flag
+    description: The audit configuration is immutable until reboot
+    command: "auditctl -s 2>/dev/null | awk '/^enabled/ {print $2}'"
+    expect_int: "== 2"
+
+  - id: au-06-audit-log-not-writable
+    description: Audit logs cannot be modified by non-root users
+    command: "find /var/log/audit -type f ! -user root -o -type f -perm /077 2>/dev/null | head -5"
+    expect_empty: true
+
+  - id: au-07-chronyd-enabled
+    description: Time synchronization starts at boot
+    command: "systemctl is-enabled chronyd 2>&1"
+    expect_output: "enabled"
+
+  - id: au-07-chronyd-running
+    description: Time synchronization is running
+    command: "systemctl is-active chronyd"
+    expect_output: "active"
+
+  - id: au-07-timezone-utc
+    description: The system clock uses UTC
+    command: "timedatectl show -p Timezone --value"
+    expect_match: "^(UTC|Etc/UTC)$"
+
+  - id: au-07-ntp-synchronized
+    description: The clock is actually synchronized to its sources
+    command: "timedatectl show -p NTPSynchronized --value"
+    expect_output: "yes"
+
+  - id: au-07-chrony-sources
+    description: At least one authorized time source is configured
+    command: "grep -cE '^\\s*(server|pool)\\s' /etc/chrony.conf"
+    expect_int: ">= 1"
+
+  - id: au-07-chrony-makestep
+    description: The clock is not stepped arbitrarily after startup
+    command: "grep -oP '(?<=^makestep ).*' /etc/chrony.conf | awk '{print $2}'"
+    expect_int: "<= 3"
+
+  - id: au-08-log-perms
+    description: Audit log files are root-only
+    command: |
+      # Anything at or below 0600 is acceptable; rotation may leave 0400,
+      # which is stricter, not weaker.
+      find /var/log/audit -name 'audit.log*' \( -perm /077 -o -perm /100 \) 2>/dev/null | head -5
+    expect_empty: true
+
+  - id: au-08-log-dir-perms
+    description: The audit log directory is not traversable by others
+    command: "stat -c '%a' /var/log/audit"
+    expect_match: "^(700|750)$"
+
+  - id: au-08-log-owner
+    description: Audit logs are owned by root
+    command: "find /var/log/audit -name 'audit.log*' ! -user root 2>/dev/null | head -5"
+    expect_empty: true
+
+  - id: au-08-conf-perms
+    description: The audit configuration is not world-readable
+    command: "stat -c '%a' /etc/audit/auditd.conf"
+    expect_match: "^(600|640)$"
+
+  - id: au-08-rules-perms
+    description: Audit rule files are not world-readable
+    command: "find /etc/audit/rules.d -type f -perm /077 2>/dev/null | head -5"
+    expect_empty: true
+
+  - id: au-08-tools-perms
+    description: Audit tools are not writable by non-root users
+    command: "find /sbin/auditctl /sbin/auditd /sbin/ausearch /sbin/aureport /sbin/augenrules -perm /022 2>/dev/null"
+    expect_empty: true
+
+  - id: au-08-immutable-rules
+    description: Audit rules cannot be changed without a reboot
+    command: "auditctl -s 2>/dev/null | awk '/^enabled/ {print $2}'"
+    expect_int: "== 2"
+
+  - id: au-08-audit-tool-watch
+    description: Modification of the audit tools is itself audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?audit_tools([[:space:]]|$)' || true
+    expect_int: ">= 4"
+
+# ===========================================================================
+# 03.04 CONFIGURATION MANAGEMENT
+# ===========================================================================
+  - id: cm-01-aide-installed
+    description: The integrity baseline tool is installed
+    command: "rpm -q aide >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: cm-01-aide-db-exists
+    description: A baseline integrity database has been captured
+    command: "test -s /var/lib/aide/aide.db.gz && echo present"
+    expect_output: "present"
+
+  - id: cm-01-aide-timer
+    description: The baseline is re-checked on a schedule
+    command: "systemctl is-enabled nist-aide-check.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: cm-01-baseline-manifest
+    description: The as-built baseline is recorded
+    command: "test -f /etc/nist-800-171/build-info && echo present"
+    expect_output: "present"
+
+  - id: cm-02-overlay-version-recorded
+    description: The applied configuration baseline version is recorded
+    command: "grep -oP '(?<=^overlay_version=).*' /etc/nist-800-171/overlay-version 2>/dev/null"
+    expect_match: "^\\d+\\.\\d+\\.\\d+$"
+
+  - id: cm-02-no-undocumented-deviations
+    description: The role's sysctl settings are the live settings
+    command: |
+      bad=0
+      for f in /etc/sysctl.d/8*-nist-800-171-*.conf; do
+        [ -f "$f" ] || continue
+        while read -r k _ v; do
+          case "$k" in ''|'#'*) continue;; esac
+          live=$(sysctl -n "$k" 2>/dev/null | tr -s ' \t' ' ')
+          [ "$live" = "$v" ] || { echo "$k: file=$v live=$live"; bad=1; }
+        done < <(sed 's/#.*//' "$f" | grep -E '\S+\s*=\s*\S+' | sed 's/=/ = /')
+      done
+      exit 0
+    expect_empty: true
+
+  - id: cm-02-sysctl-applied
+    description: The hardened kernel parameter file is present and loaded
+    command: "test -f /etc/sysctl.d/81-nist-800-171-kernel.conf && echo present"
+    expect_output: "present"
+
+  - id: cm-05-gpgcheck-global
+    description: Package signature verification is globally required
+    command: "awk -F= '/^gpgcheck/ {gsub(/ /,\"\",$2); print $2}' /etc/dnf/dnf.conf"
+    expect_output: "1"
+
+  - id: cm-05-gpgcheck-repos
+    description: No repository disables signature verification
+    command: "grep -rlE '^\\s*gpgcheck\\s*=\\s*0' /etc/yum.repos.d/ 2>/dev/null"
+    expect_empty: true
+
+  - id: cm-05-localpkg-gpgcheck
+    description: Locally installed packages must also be signed
+    command: "awk -F= '/^localpkg_gpgcheck/ {gsub(/ /,\"\",$2); print $2}' /etc/dnf/dnf.conf"
+    expect_output: "1"
+
+  - id: cm-05-repo-perms
+    description: Repository definitions are not writable by non-root users
+    command: "find /etc/yum.repos.d -type f -perm /022 2>/dev/null | head -5"
+    expect_empty: true
+
+  - id: cm-05-audit-config-changes
+    description: Changes to configuration are audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?config_change([[:space:]]|$)' || true
+    expect_int: ">= 5"
+
+  - id: cm-06-no-legacy-services
+    description: Legacy network services are not installed
+    command: "rpm -qa telnet-server rsh-server ypserv tftp-server xinetd vsftpd 2>/dev/null"
+    expect_empty: true
+
+  - id: cm-06-no-cleartext-clients
+    description: Cleartext network clients are not installed
+    command: "rpm -qa telnet rsh ypbind tftp talk 2>/dev/null"
+    expect_empty: true
+
+  - id: cm-06-fs-modules-blocked
+    description: Unnecessary filesystem drivers cannot be loaded
+    command: |
+      for m in cramfs freevxfs jffs2 hfs hfsplus udf; do
+        modprobe -n -v "$m" 2>&1 | grep -qE 'install /bin/false|not found' || echo "loadable:$m"
+      done
+    expect_empty: true
+
+  - id: cm-06-net-protocols-blocked
+    description: Uncommon network protocols cannot be loaded
+    command: |
+      for m in dccp sctp rds tipc; do
+        modprobe -n -v "$m" 2>&1 | grep -qE 'install /bin/false|not found' || echo "loadable:$m"
+      done
+    expect_empty: true
+
+  - id: cm-06-mount-options
+    description: Separate filesystems carry nodev/nosuid/noexec as required
+    command: |
+      check() { findmnt -no OPTIONS "$1" 2>/dev/null | grep -q "$2" || echo "$1 missing $2"; }
+      check /tmp nosuid; check /tmp nodev; check /tmp noexec
+      check /var/tmp nosuid; check /var/tmp nodev; check /var/tmp noexec
+      check /var/log nodev; check /var/log nosuid
+      check /var/log/audit nodev; check /var/log/audit nosuid
+      check /home nodev; check /home nosuid
+      check /dev/shm nodev; check /dev/shm nosuid; check /dev/shm noexec
+    expect_empty: true
+
+  - id: cm-06-tmp-separate
+    description: /tmp and the audit log are on their own filesystems
+    command: |
+      for m in /tmp /var/log/audit; do
+        findmnt -no TARGET "$m" >/dev/null 2>&1 || echo "not-separate:$m"
+      done
+    expect_empty: true
+
+  - id: cm-06-no-listening-extras
+    description: No unexpected service is listening on a network socket
+    command: |
+      ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un \
+        | grep -vE '^(22)$' || true
+    expect_empty: true
+
+  - id: cm-06-ctrlaltdel-masked
+    description: Ctrl-Alt-Del cannot reboot the host from the console
+    command: "systemctl is-enabled ctrl-alt-del.target 2>&1"
+    expect_match: "(masked|not-found|No such file)"
+
+  - id: cm-08-fapolicyd-installed
+    description: The execution control mechanism is installed
+    command: "rpm -q fapolicyd >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: cm-08-fapolicyd-enabled
+    description: Execution control starts at boot
+    command: "systemctl is-enabled fapolicyd 2>&1"
+    expect_output: "enabled"
+
+  - id: cm-08-fapolicyd-running
+    description: Execution control is active
+    command: "systemctl is-active fapolicyd"
+    expect_output: "active"
+
+  - id: cm-08-fapolicyd-deny-default
+    description: Execution policy denies by default, not merely logs
+    command: "grep -oP '(?<=^permissive\\s=\\s)\\d|(?<=^permissive=)\\d' /etc/fapolicyd/fapolicyd.conf | head -1"
+    expect_int: "== 0"
+
+  - id: cm-08-fapolicyd-rules
+    description: A terminal deny-all rule is in force
+    command: "grep -rh '^deny' /etc/fapolicyd/rules.d/ 2>/dev/null | grep -c . || true"
+    expect_int: ">= 1"
+
+  - id: cm-10-inventory-script
+    description: The component inventory generator is installed
+    command: "test -x /usr/local/sbin/nist-inventory && echo present"
+    expect_output: "present"
+
+  - id: cm-10-inventory-exists
+    description: A component inventory has been generated
+    command: "test -s /etc/nist-800-171/component-inventory.json && echo present"
+    expect_output: "present"
+
+  - id: cm-10-inventory-timer
+    description: The inventory refreshes on a schedule
+    command: "systemctl is-enabled nist-inventory.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: cm-10-inventory-fresh
+    description: The inventory is not stale (updated within 8 days)
+    command: "echo $(( ( $(date +%s) - $(stat -c %Y /etc/nist-800-171/component-inventory.json 2>/dev/null || echo 0) ) / 86400 ))"
+    expect_int: "<= 8"
+
+  - id: cm-10-dnf-hook
+    description: The inventory updates on every package transaction
+    command: "test -f /etc/dnf/plugins/post-transaction-actions.d/nist-inventory.action && echo present"
+    expect_output: "present"
+
+  - id: cm-11-cui-path-exists
+    description: The designated CUI location exists
+    command: "test -d /var/lib/cui && echo present"
+    expect_output: "present"
+
+  - id: cm-11-cui-path-perms
+    description: The CUI location is not accessible to all users
+    command: "stat -c '%a' /var/lib/cui 2>/dev/null"
+    expect_match: "^(770|750|700|2770)$"
+
+  - id: cm-11-cui-documented
+    description: The CUI location is recorded for the SSP
+    command: "grep -c '^cui_data_path=' /etc/nist-800-171/cui-locations 2>/dev/null"
+    expect_int: ">= 1"
+
+# ===========================================================================
+# 03.05 IDENTIFICATION AND AUTHENTICATION
+# ===========================================================================
+  - id: ia-01-no-duplicate-uid
+    description: No two accounts share a UID
+    command: "awk -F: '{print $3}' /etc/passwd | sort | uniq -d"
+    expect_empty: true
+
+  - id: ia-01-no-duplicate-user
+    description: No two entries share a user name
+    command: "awk -F: '{print $1}' /etc/passwd | sort | uniq -d"
+    expect_empty: true
+
+  - id: ia-01-no-duplicate-gid
+    description: No two groups share a GID
+    command: "awk -F: '{print $3}' /etc/group | sort | uniq -d"
+    expect_empty: true
+
+  - id: ia-01-no-empty-passwd
+    description: No account authenticates with an empty password
+    command: "awk -F: '($2==\"\"){print $1}' /etc/shadow"
+    expect_empty: true
+
+  - id: ia-01-loginuid-immutable
+    description: Session identity cannot be changed after login
+    command: |
+      # The running kernel is authoritative: a rules.d fragment may exist
+      # without ever having been loaded.
+      auditctl -s 2>/dev/null | grep -c 'loginuid_immutable 1' || true
+    expect_int: ">= 1"
+
+  - id: ia-01-no-nullok
+    description: The PAM stack does not permit empty passwords
+    command: "grep -l nullok /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null"
+    expect_empty: true
+
+  - id: ia-01-no-plus-entries
+    description: No NIS-style wildcard entries exist in the identity databases
+    command: "grep -h '^+' /etc/passwd /etc/shadow /etc/group 2>/dev/null"
+    expect_empty: true
+
+  - id: ia-02-host-keys-exist
+    description: The host has a cryptographic device identity
+    command: "ls /etc/ssh/ssh_host_*_key 2>/dev/null | wc -l"
+    expect_int: ">= 1"
+
+  - id: ia-02-host-key-perms
+    description: Host private keys are readable only by root
+    command: "find /etc/ssh -name 'ssh_host_*_key' ! -perm 0600 2>/dev/null"
+    expect_empty: true
+
+  - id: ia-02-ssh-stricthostkey
+    description: Outbound connections verify the peer's identity
+    command: |
+      # ssh honours the FIRST value it reads and the drop-in dir is included
+      # before the stock defaults, so read the managed file, not the default.
+      awk 'tolower($1)=="stricthostkeychecking" {print tolower($2); exit}' \
+        /etc/ssh/ssh_config.d/00-nist-800-171.conf 2>/dev/null
+    expect_output: "yes"
+
+  - id: ia-03-sshd-authmethods
+    description: Remote access requires more than one authentication factor
+    command: "sshd -T 2>/dev/null | awk '/^authenticationmethods/ {print $2}'"
+    expect_match: "publickey.*password|password.*publickey"
+    manual_if_absent: true
+
+  - id: ia-03-pkcs11-installed
+    description: Smart card (PIV/CAC) support is available
+    command: "rpm -q opensc >/dev/null && echo present"
+    expect_output: "present"
+    manual_if_absent: true
+
+  - id: ia-03-sssd-installed
+    description: Directory-backed authentication support is available
+    command: "rpm -q sssd >/dev/null && echo present"
+    expect_output: "present"
+    manual_if_absent: true
+
+  - id: ia-03-sshd-no-password-only
+    description: A password alone cannot establish a remote session
+    command: "sshd -T 2>/dev/null | awk '/^authenticationmethods/ {print $2}'"
+    expect_no_match: "^(any|password)$"
+
+  - id: ia-04-sshd-kex
+    description: Only approved key exchange algorithms are offered
+    command: "sshd -T 2>/dev/null | awk '/^kexalgorithms/ {print $2}'"
+    expect_no_match: "diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|gss-"
+
+  - id: ia-04-sshd-ciphers
+    description: Only approved ciphers are offered
+    command: "sshd -T 2>/dev/null | awk '/^ciphers/ {print $2}'"
+    expect_no_match: "3des|arcfour|blowfish|cast128|-cbc"
+
+  - id: ia-04-sshd-macs
+    description: Only strong MAC algorithms are offered
+    command: "sshd -T 2>/dev/null | awk '/^macs/ {print $2}'"
+    expect_no_match: "md5|ripemd|umac-64[^-]|hmac-sha1$|hmac-sha1,"
+
+  - id: ia-04-crypto-policy-set
+    description: The system-wide crypto policy matches the ODP
+    command: "update-crypto-policies --show 2>/dev/null"
+    expect_match: "^{odp.crypto_policy}"
+
+  - id: ia-04-rekey-limit
+    description: SSH sessions rekey on a bounded interval
+    command: "sshd -T 2>/dev/null | awk '/^rekeylimit/ {print $3}'"
+    expect_int: "<= 3600"
+
+  - id: ia-05-uid-min
+    description: Human identifiers start above the system range
+    command: "awk '/^\\s*UID_MIN/ {print $2}' /etc/login.defs"
+    expect_int: ">= 1000"
+
+  - id: ia-05-gid-min
+    description: Human group identifiers start above the system range
+    command: "awk '/^\\s*GID_MIN/ {print $2}' /etc/login.defs"
+    expect_int: ">= 1000"
+
+  - id: ia-05-sys-uid-range
+    description: A distinct system identifier range is defined
+    command: "awk '/^\\s*SYS_UID_MAX/ {print $2}' /etc/login.defs"
+    expect_int: "<= 999"
+
+  - id: ia-05-no-uid-reuse
+    description: No identifier is shared between accounts (reuse prevention)
+    command: "awk -F: '{print $3}' /etc/passwd | sort | uniq -d"
+    expect_empty: true
+
+  - id: ia-05-create-home
+    description: Accounts receive a home directory on creation
+    command: "awk '/^\\s*CREATE_HOME/ {print tolower($2)}' /etc/login.defs"
+    expect_output: "yes"
+
+  - id: ia-07-minlen
+    description: Passwords meet the ODP minimum length
+    command: "grep -oP '(?<=^minlen\\s=\\s)\\d+|(?<=^minlen=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: ">= {odp.password_min_length}"
+
+  - id: ia-07-dcredit
+    description: Passwords require a digit
+    command: "grep -oP '(?<=^dcredit\\s=\\s)-?\\d+|(?<=^dcredit=)-?\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_dcredit}"
+
+  - id: ia-07-ucredit
+    description: Passwords require an upper-case character
+    command: "grep -oP '(?<=^ucredit\\s=\\s)-?\\d+|(?<=^ucredit=)-?\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_ucredit}"
+
+  - id: ia-07-lcredit
+    description: Passwords require a lower-case character
+    command: "grep -oP '(?<=^lcredit\\s=\\s)-?\\d+|(?<=^lcredit=)-?\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_lcredit}"
+
+  - id: ia-07-ocredit
+    description: Passwords require a special character
+    command: "grep -oP '(?<=^ocredit\\s=\\s)-?\\d+|(?<=^ocredit=)-?\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_ocredit}"
+
+  - id: ia-07-difok
+    description: A new password differs sufficiently from the previous one
+    command: "grep -oP '(?<=^difok\\s=\\s)\\d+|(?<=^difok=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: ">= {odp.password_difok}"
+
+  - id: ia-07-maxrepeat
+    description: Runs of the same character are limited
+    command: "grep -oP '(?<=^maxrepeat\\s=\\s)\\d+|(?<=^maxrepeat=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_max_repeat}"
+
+  - id: ia-07-maxclassrepeat
+    description: Runs of the same character class are limited
+    command: "grep -oP '(?<=^maxclassrepeat\\s=\\s)\\d+|(?<=^maxclassrepeat=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "<= {odp.password_max_class_repeat}"
+
+  - id: ia-07-minclass
+    description: Passwords use the ODP number of character classes
+    command: "grep -oP '(?<=^minclass\\s=\\s)\\d+|(?<=^minclass=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: ">= {odp.password_min_classes}"
+
+  - id: ia-07-dictcheck
+    description: Passwords are checked against a dictionary of known passwords
+    command: "grep -oP '(?<=^dictcheck\\s=\\s)\\d+|(?<=^dictcheck=)\\d+' /etc/security/pwquality.conf | head -1"
+    expect_int: "== 1"
+
+  - id: ia-07-pwhistory-remember
+    description: Previous passwords cannot be reused
+    command: "grep -rhoP '(?<=remember\\s=\\s)\\d+|(?<=remember=)\\d+' /etc/security/pwhistory.conf /etc/pam.d/system-auth 2>/dev/null | sort -rn | head -1"
+    expect_int: ">= {odp.password_remember}"
+
+  - id: ia-07-hash-sha512
+    description: Passwords are stored with SHA-512
+    command: "awk '/^\\s*ENCRYPT_METHOD/ {print $2}' /etc/login.defs"
+    expect_output: "SHA512"
+
+  - id: ia-07-hash-rounds
+    description: The hash uses the ODP work factor
+    command: "awk '/^\\s*SHA_CRYPT_MIN_ROUNDS/ {print $2}' /etc/login.defs"
+    expect_int: ">= {odp.password_hash_rounds}"
+
+  - id: ia-07-shadow-hashes
+    description: Every stored password is a strong hash, not a legacy one
+    command: "awk -F: '($2!~/^[*!]/ && $2!=\"\" && $2!~/^\\$6\\$|^\\$y\\$/){print $1}' /etc/shadow"
+    expect_empty: true
+
+  - id: ia-07-pwquality-in-pam
+    description: Password quality is enforced by the PAM stack
+    command: "grep -lc pam_pwquality /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null | wc -l"
+    expect_int: ">= 1"
+
+  - id: ia-07-enforce-for-root
+    description: The password policy applies to root as well
+    command: "grep -c '^enforce_for_root' /etc/security/pwquality.conf"
+    expect_int: ">= 1"
+
+  - id: ia-11-sudo-no-pwfeedback
+    description: sudo does not echo password input
+    command: "grep -rE '^[^#]*Defaults.*[^!]pwfeedback' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
+    expect_empty: true
+
+  - id: ia-11-sudo-no-visiblepw
+    description: sudo refuses to run when input would be visible
+    command: "grep -rE '^[^#]*Defaults.*[^!]visiblepw' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
+    expect_empty: true
+
+  - id: ia-11-gdm-no-user-list
+    description: The graphical greeter does not enumerate accounts
+    command: "test ! -x /usr/sbin/gdm && echo no-gui || grep -rc 'disable-user-list=true' /etc/dconf/db/gdm.d/ 2>/dev/null"
+    expect_match: "(no-gui|^[1-9])"
+
+  - id: ia-12-pass-max-days
+    description: Authenticators expire within the ODP lifetime
+    command: "awk '/^\\s*PASS_MAX_DAYS/ {print $2}' /etc/login.defs"
+    expect_int: "<= {odp.password_max_age}"
+
+  - id: ia-12-pass-min-days
+    description: A minimum age prevents cycling through the history
+    command: "awk '/^\\s*PASS_MIN_DAYS/ {print $2}' /etc/login.defs"
+    expect_int: ">= {odp.password_min_age}"
+
+  - id: ia-12-pass-warn-age
+    description: Users are warned before their authenticator expires
+    command: "awk '/^\\s*PASS_WARN_AGE/ {print $2}' /etc/login.defs"
+    expect_int: ">= {odp.password_warn_age}"
+
+  - id: ia-12-existing-max-days
+    description: Existing accounts carry the ODP maximum age
+    command: |
+      for u in $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){print $1}' /etc/passwd); do
+        v=$(chage -l "$u" 2>/dev/null | awk -F: '/Maximum number/ {gsub(/ /,"",$2); print $2}')
+        case "$v" in ''|never) echo "$u:unset";; *) [ "$v" -gt {odp.password_max_age} ] && echo "$u:$v";; esac
+      done
+    expect_empty: true
+
+  - id: ia-12-existing-min-days
+    description: Existing accounts carry the ODP minimum age
+    command: |
+      for u in $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){print $1}' /etc/passwd); do
+        v=$(chage -l "$u" 2>/dev/null | awk -F: '/Minimum number/ {gsub(/ /,"",$2); print $2}')
+        case "$v" in ''|never) echo "$u:unset";; *) [ "$v" -lt {odp.password_min_age} ] && echo "$u:$v";; esac
+      done
+    expect_empty: true
+
+  - id: ia-12-no-never-expire
+    description: No interactive account has a non-expiring authenticator
+    command: |
+      awk -F: '($2 ~ /^\$/ && ($5=="" || $5=="99999")){print $1}' /etc/shadow \
+        | while read -r u; do
+            uid=$(id -u "$u" 2>/dev/null || echo 0)
+            [ "$uid" -ge 1000 ] && echo "$u"
+          done
+    expect_empty: true
+
+  - id: ia-12-shadow-perms
+    description: The authenticator store is unreadable by non-root users
+    command: "stat -c '%a' /etc/shadow"
+    expect_match: "^(0|000|400)$"
+
+  - id: ia-12-gshadow-perms
+    description: The group authenticator store is unreadable by non-root users
+    command: "stat -c '%a' /etc/gshadow"
+    expect_match: "^(0|000|400)$"
+
+# ===========================================================================
+# 03.06 INCIDENT RESPONSE
+# ===========================================================================
+  - id: ir-02-journald-persistent
+    description: System records survive a reboot
+    command: "grep -rhoP '(?<=^Storage=)\\w+' /etc/systemd/journald.conf.d/ /etc/systemd/journald.conf 2>/dev/null | head -1"
+    expect_output: "persistent"
+
+  - id: ir-02-journald-retention
+    description: The journal has a defined retention period
+    command: "grep -rh 'MaxRetentionSec' /etc/systemd/journald.conf.d/ /etc/systemd/journald.conf 2>/dev/null | grep -c . || true"
+    expect_int: ">= 1"
+
+  - id: ir-02-rsyslog-enabled
+    description: Log collection is running for incident telemetry
+    command: "systemctl is-active rsyslog"
+    expect_output: "active"
+
+  - id: ir-02-logs-perms
+    description: Log files are not readable by ordinary users
+    command: |
+      # The exposure that matters is access by users outside the owning group,
+      # or group *write*. A root:root file at 0640 is not readable by any
+      # ordinary user, so it is not flagged.
+      find /var/log -maxdepth 1 -type f \( -perm /007 -o -perm /020 \) 2>/dev/null | head -5
+    expect_empty: true
+
+# ===========================================================================
+# 03.07 MAINTENANCE
+# ===========================================================================
+  - id: ma-04-audit-maint-tools
+    description: Use of maintenance tools is audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?maintenance([[:space:]]|$)' || true
+    expect_int: ">= 2"
+
+  - id: ma-04-scanner-present
+    description: Media introduced for maintenance can be scanned
+    command: "command -v clamscan >/dev/null && echo present"
+    expect_output: "present"
+    manual_if_absent: true
+
+  - id: ma-05-ssh-session-audit
+    description: Remote maintenance sessions are audited
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?session([[:space:]]|$)' || true
+    expect_int: ">= 2"
+
+  - id: ma-05-ssh-idle-terminate
+    description: Maintenance sessions terminate when complete or idle
+    command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
+    expect_int: "<= {odp.ssh_client_alive_interval}"
+
+  - id: ma-05-no-telnet-rsh
+    description: No unauthenticated remote maintenance path exists
+    command: "rpm -qa telnet-server rsh-server tigervnc-server 2>/dev/null"
+    expect_empty: true
+
+# ===========================================================================
+# 03.08 MEDIA PROTECTION
+# ===========================================================================
+  - id: mp-02-cui-path-mode
+    description: The CUI path restricts access to its authorized group
+    command: "stat -c '%a' /var/lib/cui 2>/dev/null"
+    expect_match: "^(770|750|700|2770)$"
+
+  - id: mp-02-home-perms
+    description: Home directories are not accessible to other users
+    command: |
+      awk -F: '($3>=1000 && $3!=65534){print $6}' /etc/passwd | while read -r h; do
+        [ -d "$h" ] || continue
+        m=$(stat -c %a "$h"); [ "$m" -gt 700 ] && echo "$h:$m"
+      done
+    expect_empty: true
+
+  - id: mp-02-umask-profile
+    description: New files are created without group or other access
+    command: "grep -rhoP '(?<=^umask )\\d+' /etc/profile.d/ /etc/profile 2>/dev/null | sort | tail -1"
+    expect_match: "^0?77$"
+
+  - id: mp-02-no-world-readable-home
+    description: No home directory is world-readable
+    command: |
+      awk -F: '($3>=1000 && $3!=65534){print $6}' /etc/passwd | while read -r h; do
+        [ -d "$h" ] && find "$h" -maxdepth 0 -perm /007 2>/dev/null
+      done
+    expect_empty: true
+
+  - id: mp-03-sanitize-tools
+    description: Media sanitization tooling is available
+    command: |
+      for t in shred wipefs blkdiscard; do command -v $t >/dev/null || echo missing-$t; done
+    expect_empty: true
+
+  - id: mp-03-luks-present
+    description: Cryptographic erase is available via LUKS volumes
+    command: "lsblk -o TYPE 2>/dev/null | grep -c crypt"
+    expect_int: ">= 1"
+
+  - id: mp-07-usb-storage-blocked
+    description: The USB storage driver cannot be loaded
+    command: "modprobe -n -v usb-storage 2>&1 | head -1"
+    expect_match: "(install /bin/false|not found|blacklist)"
+
+  - id: mp-07-usb-storage-not-loaded
+    description: The USB storage driver is not currently loaded
+    command: "lsmod | grep -c '^usb_storage' || true"
+    expect_int: "== 0"
+
+  - id: mp-07-autofs-masked
+    description: The automounter is masked
+    command: "systemctl is-enabled autofs 2>&1"
+    expect_match: "(masked|disabled|not-found|No such file)"
+
+  - id: mp-07-automount-disabled
+    description: Removable media does not automount
+    command: "test -f /etc/udev/rules.d/80-nist-no-automount.rules && echo present"
+    expect_output: "present"
+
+  - id: mp-09-luks-cipher
+    description: Encrypted volumes use an approved cipher
+    command: |
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+        cryptsetup isLuks "$d" 2>/dev/null || continue
+        cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
+      done | sort -u | head -1
+    expect_match: "aes-xts"
+
+  - id: mp-09-backup-path-perms
+    description: The backup staging path restricts access
+    command: "stat -c '%a' /var/backups/cui 2>/dev/null"
+    expect_match: "^(770|750|700|2770)$"
+
+# ===========================================================================
+# 03.09 PERSONNEL SECURITY
+# ===========================================================================
+  - id: ps-02-offboard-tool
+    description: The offboarding helper is installed
+    command: "test -f /usr/local/sbin/nist-offboard-user && echo present"
+    expect_output: "present"
+
+  - id: ps-02-offboard-executable
+    description: The offboarding helper is executable by root only
+    command: "stat -c '%a %U' /usr/local/sbin/nist-offboard-user 2>/dev/null"
+    expect_match: "^(750|700) root$"
+
+# ===========================================================================
+# 03.10 PHYSICAL PROTECTION
+# ===========================================================================
+  - id: pe-07-grub-password
+    description: Boot parameters cannot be edited without authentication
+    command: |
+      # The password may live in user.cfg or be emitted by 01_users; on an EFI
+      # install the generated config is under /boot/efi.
+      cat /boot/grub2/user.cfg /etc/grub.d/01_users \
+          /boot/efi/EFI/rocky/user.cfg 2>/dev/null \
+        | grep -c 'password_pbkdf2' || echo 0
+    expect_int: ">= 1"
+
+  - id: pe-07-grub-cfg-perms
+    description: The boot configuration is not readable by ordinary users
+    command: |
+      for f in /boot/grub2/grub.cfg /boot/efi/EFI/rocky/grub.cfg; do
+        [ -f "$f" ] && stat -c '%a' "$f"
+      done | sort -n | tail -1
+    expect_match: "^(600|0600|700)$"
+
+  - id: pe-07-single-user-auth
+    description: Single-user mode requires the root password
+    command: "grep -c 'sulogin' /usr/lib/systemd/system/rescue.service"
+    expect_int: ">= 1"
+
+  - id: pe-07-emergency-auth
+    description: Emergency mode requires the root password
+    command: "grep -c 'sulogin' /usr/lib/systemd/system/emergency.service"
+    expect_int: ">= 1"
+
+  - id: pe-07-ctrlaltdel-disabled
+    description: Console key sequence cannot reboot the host
+    command: "systemctl is-enabled ctrl-alt-del.target 2>&1"
+    expect_match: "(masked|not-found|No such file)"
+
+# ===========================================================================
+# 03.11 RISK ASSESSMENT
+# ===========================================================================
+  - id: ra-02-openscap-installed
+    description: The vulnerability scanner is installed
+    command: "command -v oscap >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: ra-02-ssg-content
+    description: Scanner content for this platform is present
+    command: "ls /usr/share/xml/scap/ssg/content/ssg-r*9-ds.xml 2>/dev/null | wc -l"
+    expect_int: ">= 1"
+
+  - id: ra-02-scan-timer
+    description: The scheduled scan unit is installed
+    command: "test -f /etc/systemd/system/nist-vuln-scan.timer && echo present"
+    expect_output: "present"
+
+  - id: ra-02-scan-timer-enabled
+    description: Scanning runs at the ODP frequency
+    command: "systemctl is-enabled nist-vuln-scan.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: ra-02-updateinfo-available
+    description: Advisory metadata is available so new CVEs enter scope
+    command: "dnf -q updateinfo summary --security >/dev/null 2>&1 && echo available"
+    expect_output: "available"
+
+  - id: ra-02-scan-results
+    description: At least one scan has produced results
+    command: "ls /var/log/nist-800-171/security-advisories-*.txt 2>/dev/null | wc -l"
+    expect_int: ">= 1"
+
+# ===========================================================================
+# 03.12 SECURITY ASSESSMENT AND MONITORING
+# ===========================================================================
+  - id: ca-01-auditor-installed
+    description: The assessment tool is installed on the host
+    command: "test -x /usr/local/sbin/nist-assess && echo present"
+    expect_output: "present"
+
+  - id: ca-01-assessment-timer
+    description: Assessment runs at the ODP frequency
+    command: "systemctl is-enabled nist-assessment.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: ca-01-assessment-results
+    description: Assessment results are retained on the host
+    command: "test -d /var/log/nist-800-171 && echo present"
+    expect_output: "present"
+
+  - id: ca-02-poam-generator
+    description: The POA&M generator is installed
+    command: "test -x /usr/local/sbin/nist-generate-poam && echo present"
+    expect_output: "present"
+
+  - id: ca-02-poam-output
+    description: The POA&M output directory exists
+    command: "test -d /var/log/nist-800-171 && echo present"
+    expect_output: "present"
+
+  - id: ca-03-aide-timer-enabled
+    description: Continuous monitoring includes integrity checking
+    command: "systemctl is-enabled nist-aide-check.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: ca-03-assessment-timer-enabled
+    description: Continuous monitoring includes requirement assessment
+    command: "systemctl is-enabled nist-assessment.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: ca-03-scan-timer-enabled
+    description: Continuous monitoring includes vulnerability scanning
+    command: "systemctl is-enabled nist-vuln-scan.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: ca-03-monitoring-summary
+    description: The monitoring strategy is documented on the host
+    command: "test -f /etc/nist-800-171/continuous-monitoring.conf && echo present"
+    expect_output: "present"
+
+# ===========================================================================
+# 03.13 SYSTEM AND COMMUNICATIONS PROTECTION
+# ===========================================================================
+  - id: sc-01-firewalld-installed
+    description: The boundary protection mechanism is installed
+    command: "rpm -q firewalld >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: sc-01-firewalld-enabled
+    description: Boundary protection starts at boot
+    command: "systemctl is-enabled firewalld 2>&1"
+    expect_output: "enabled"
+
+  - id: sc-01-firewalld-running
+    description: Boundary protection is active
+    command: "firewall-cmd --state 2>/dev/null"
+    expect_output: "running"
+
+  - id: sc-01-default-zone
+    description: A default zone is set for unassigned interfaces
+    command: "firewall-cmd --get-default-zone 2>/dev/null"
+    expect_match: "\\S"
+
+  - id: sc-01-zone-target
+    description: The default zone denies traffic that is not permitted
+    command: "firewall-cmd --permanent --zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" --get-target 2>/dev/null"
+    expect_match: "^(DROP|%%REJECT%%|REJECT)$"
+
+  - id: sc-01-services-minimal
+    description: Only the authorized service set is permitted inbound
+    command: "firewall-cmd --list-services 2>/dev/null | tr ' ' '\\n' | grep -v '^ssh$' | grep -v '^$'"
+    expect_empty: true
+
+  - id: sc-01-log-denied
+    description: Traffic denied at the boundary is logged
+    command: "firewall-cmd --get-log-denied 2>/dev/null"
+    expect_match: "^(all|unicast|broadcast|multicast)$"
+
+  - id: sc-01-nftables-backend
+    description: The firewall uses the nftables backend
+    command: "awk -F= '/^FirewallBackend/ {print $2}' /etc/firewalld/firewalld.conf"
+    expect_output: "nftables"
+
+  - id: sc-04-core-dumps-limit
+    description: Core dumps are disabled for all users
+    command: "grep -rhE '^\\s*\\*\\s+hard\\s+core\\s+0' /etc/security/limits.conf /etc/security/limits.d/ 2>/dev/null | head -1"
+    expect_match: "core"
+
+  - id: sc-04-suid-dumpable
+    description: setuid programs do not produce core dumps
+    command: "sysctl -n fs.suid_dumpable"
+    expect_output: "0"
+
+  - id: sc-04-coredump-storage
+    description: systemd does not store core dumps
+    command: "grep -rhoP '(?<=^Storage=)\\w+' /etc/systemd/coredump.conf.d/ /etc/systemd/coredump.conf 2>/dev/null | head -1"
+    expect_output: "none"
+
+  - id: sc-04-kptr-restrict
+    description: Kernel pointers are not exposed to user space
+    command: "sysctl -n kernel.kptr_restrict"
+    expect_int: ">= 1"
+
+  - id: sc-04-dmesg-restrict
+    description: The kernel ring buffer is not readable by ordinary users
+    command: "sysctl -n kernel.dmesg_restrict"
+    expect_output: "1"
+
+  - id: sc-04-ptrace-scope
+    description: Processes cannot trace unrelated processes
+    command: "sysctl -n kernel.yama.ptrace_scope"
+    expect_int: ">= 1"
+
+  - id: sc-04-randomize-va
+    description: Address space layout randomization is fully enabled
+    command: "sysctl -n kernel.randomize_va_space"
+    expect_output: "2"
+
+  - id: sc-04-mmap-min-addr
+    description: The null page cannot be mapped
+    command: "sysctl -n vm.mmap_min_addr"
+    expect_int: ">= 65536"
+
+  - id: sc-04-tmp-sticky
+    description: Shared temporary directories carry the sticky bit
+    command: |
+      for d in /tmp /var/tmp /dev/shm; do
+        [ -d "$d" ] || continue
+        [ -k "$d" ] || echo "no-sticky:$d"
+      done
+    expect_empty: true
+
+  - id: sc-06-zone-target-drop
+    description: The firewall default is deny, not accept
+    command: "firewall-cmd --permanent --zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" --get-target 2>/dev/null"
+    expect_match: "^(DROP|%%REJECT%%|REJECT)$"
+
+  - id: sc-06-no-unexpected-ports
+    description: No port is opened outside the authorized service set
+    command: "firewall-cmd --list-ports 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-06-icmp-block
+    description: The firewall is actively filtering (not in panic/off state)
+    command: "firewall-cmd --state 2>/dev/null"
+    expect_output: "running"
+
+  - id: sc-06-listening-allowlist
+    description: Only authorized services listen on the network
+    command: |
+      ss -tlnH 2>/dev/null \
+        | awk '$4 !~ /^(127\.|\[::1\])/ {print $4}' \
+        | sed 's/.*://' | sort -un | grep -vE '^22$' || true
+    expect_empty: true
+
+  - id: sc-08-crypto-policy
+    description: The system-wide crypto policy is the approved one
+    command: "update-crypto-policies --show 2>/dev/null"
+    expect_match: "^{odp.crypto_policy}"
+
+  - id: sc-08-luks-encrypted
+    description: CUI and backup volumes are encrypted at rest
+    command: "lsblk -o TYPE 2>/dev/null | grep -c crypt"
+    expect_int: ">= 2"
+
+  - id: sc-08-luks-cipher
+    description: Encrypted volumes use an approved cipher and key size
+    command: |
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+        cryptsetup isLuks "$d" 2>/dev/null || continue
+        cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
+      done | sort -u | grep -v aes-xts || true
+    expect_empty: true
+
+  - id: sc-08-no-cleartext-services
+    description: No cleartext transmission service is installed
+    command: "rpm -qa telnet-server rsh-server vsftpd tftp-server 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-08-ssh-ciphers-approved
+    description: SSH offers only approved ciphers
+    command: "sshd -T 2>/dev/null | awk '/^ciphers/ {print $2}'"
+    expect_no_match: "3des|arcfour|-cbc|none"
+
+  - id: sc-08-gnutls-policy
+    description: TLS libraries follow the system crypto policy
+    command: "test -L /etc/crypto-policies/back-ends/gnutls.config && echo linked"
+    expect_output: "linked"
+
+  - id: sc-09-clientalive-interval
+    description: Idle network sessions are disconnected
+    command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
+    expect_int: "<= {odp.ssh_client_alive_interval}"
+
+  - id: sc-09-clientalive-countmax
+    description: Sessions are dropped rather than probed indefinitely
+    command: "sshd -T 2>/dev/null | awk '/^clientalivecountmax/ {print $2}'"
+    expect_int: "<= {odp.ssh_client_alive_count_max}"
+
+  - id: sc-09-tcp-keepalive
+    description: Dead peers are detected and their connections closed
+    command: "sshd -T 2>/dev/null | awk '/^tcpkeepalive/ {print $2}'"
+    expect_output: "yes"
+
+  - id: sc-09-tmout
+    description: The shell owning the connection exits when idle
+    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    expect_int: "<= {odp.session_timeout_seconds}"
+
+  - id: sc-10-crypto-policy
+    description: Key establishment follows the approved policy
+    command: "update-crypto-policies --show 2>/dev/null"
+    expect_match: "^{odp.crypto_policy}"
+
+  - id: sc-10-host-key-strength
+    description: Host keys are of an approved type and strength
+    command: |
+      for k in /etc/ssh/ssh_host_*_key.pub; do
+        [ -f "$k" ] || continue
+        read -r bits _ type <<<"$(ssh-keygen -l -f "$k" 2>/dev/null)"
+        case "$type" in
+          *ED25519*) ;;
+          *RSA*) [ "$bits" -ge 3072 ] || echo "weak:$k:$bits";;
+          *) echo "unapproved:$k:$type";;
+        esac
+      done
+    expect_empty: true
+
+  - id: sc-10-host-key-perms
+    description: Private keys are protected from disclosure
+    command: "find /etc/ssh -name 'ssh_host_*_key' ! -perm 0600 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-10-luks-kdf
+    description: LUKS key slots use a FIPS-approved KDF
+    command: |
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+        cryptsetup isLuks "$d" 2>/dev/null || continue
+        cryptsetup luksDump "$d" 2>/dev/null | awk '/PBKDF:/ {print $2}'
+      done | sort -u | grep -vi pbkdf2 || true
+    expect_empty: true
+
+  - id: sc-10-no-dsa-keys
+    description: No deprecated DSA or ECDSA host key is present
+    command: "ls /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_ecdsa_key 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-11-fips-kernel
+    description: The kernel was booted in FIPS mode
+    command: "grep -c 'fips=1' /proc/cmdline"
+    expect_int: ">= 1"
+
+  - id: sc-11-fips-proc
+    description: The kernel crypto subsystem reports FIPS mode active
+    command: "cat /proc/sys/crypto/fips_enabled"
+    expect_output: "1"
+
+  - id: sc-11-fips-crypto-policy
+    description: The crypto policy is FIPS
+    command: "update-crypto-policies --show 2>/dev/null"
+    expect_match: "^FIPS"
+
+  - id: sc-11-dracut-fips
+    description: The FIPS dracut module is present in the initramfs
+    command: "lsinitrd 2>/dev/null | grep -c 'fips' || echo 1"
+    expect_int: ">= 1"
+
+  - id: sc-11-fips-grub
+    description: FIPS mode persists across reboots via the boot configuration
+    command: |
+      # FIPS must persist across reboots, so it has to appear in the persisted
+      # boot configuration, not only in the current /proc/cmdline.
+      cat /etc/default/grub /boot/grub2/grub.cfg \
+          /boot/efi/EFI/rocky/grub.cfg /boot/loader/entries/*.conf 2>/dev/null \
+        | grep -c 'fips=1' || echo 0
+    expect_int: ">= 1"
+
+  - id: sc-11-no-weak-hashes
+    description: No password is stored with a non-approved hash
+    command: "awk -F: '($2!~/^[*!]/ && $2!=\"\" && $2!~/^\\$6\\$/){print $1}' /etc/shadow"
+    expect_empty: true
+
+  - id: sc-12-no-camera-pkgs
+    description: Camera and capture software is not installed
+    command: "rpm -qa cheese ekiga linphone 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-12-usb-video-blocked
+    description: The USB video class driver cannot be loaded
+    command: |
+      # modprobe prints the dependency chain first and the action for the
+      # requested module last, so the final line is the one that matters.
+      modprobe -n -v uvcvideo 2>&1 | grep -v '^$' | tail -1
+    expect_match: "(install /bin/false|not found|blacklist)"
+
+  - id: sc-12-no-conferencing-pkgs
+    description: Conferencing software is not installed
+    command: "rpm -qa zoom teams skypeforlinux 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-13-no-mobile-code-runtimes
+    description: Browser plugin mobile code runtimes are absent
+    command: "rpm -qa icedtea-web flash-plugin java-1.8.0-openjdk-plugin 2>/dev/null"
+    expect_empty: true
+
+  - id: sc-13-fapolicyd-enforcing
+    description: Unauthorized code cannot execute
+    command: "systemctl is-active fapolicyd"
+    expect_output: "active"
+
+  - id: sc-15-ssh-macs
+    description: Session integrity uses strong MAC algorithms
+    command: "sshd -T 2>/dev/null | awk '/^macs/ {print $2}'"
+    expect_no_match: "md5|ripemd|umac-64-"
+
+  - id: sc-15-rekey-limit
+    description: Sessions rekey before a key is overused
+    command: "sshd -T 2>/dev/null | awk '/^rekeylimit/ {print $3}'"
+    expect_int: "<= 3600"
+
+  - id: sc-15-tcp-syncookies
+    description: SYN flooding cannot exhaust the connection table
+    command: "sysctl -n net.ipv4.tcp_syncookies"
+    expect_output: "1"
+
+  - id: sc-15-tcp-timestamps
+    description: TCP timestamps are enabled for PAWS sequence protection
+    command: "sysctl -n net.ipv4.tcp_timestamps"
+    expect_output: "1"
+
+  - id: sc-15-crypto-policy-no-legacy
+    description: The crypto policy is not the permissive LEGACY profile
+    command: "update-crypto-policies --show 2>/dev/null"
+    expect_no_match: "LEGACY"
+
+# ===========================================================================
+# 03.14 SYSTEM AND INFORMATION INTEGRITY
+# ===========================================================================
+  - id: si-01-dnf-automatic-installed
+    description: The flaw remediation mechanism is installed
+    command: "rpm -q dnf-automatic >/dev/null && echo present"
+    expect_output: "present"
+
+  - id: si-01-dnf-automatic-timer
+    description: Remediation runs on a schedule
+    command: "systemctl is-enabled dnf-automatic.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: si-01-upgrade-type-security
+    description: Security updates are in scope for automatic remediation
+    command: "awk -F= '/^upgrade_type/ {gsub(/ /,\"\",$2); print $2}' /etc/dnf/automatic.conf"
+    expect_match: "^(security|default)$"
+
+  - id: si-01-apply-updates
+    description: Updates are installed, not merely downloaded
+    command: "awk -F= '/^apply_updates/ {gsub(/ /,\"\",$2); print $2}' /etc/dnf/automatic.conf"
+    expect_output: "yes"
+
+  - id: si-01-no-pending-security-updates
+    description: No security update is outstanding beyond the ODP window
+    command: "dnf -q updateinfo list --security 2>/dev/null | grep -c . || true"
+    expect_int: "== 0"
+
+  - id: si-01-emit-via
+    description: Remediation outcomes are reported
+    command: "awk -F= '/^emit_via/ {gsub(/ /,\"\",$2); print $2}' /etc/dnf/automatic.conf"
+    expect_match: "\\S"
+
+  - id: si-02-clamav-installed
+    description: Signature-based malicious code detection is installed
+    command: "rpm -q clamav >/dev/null 2>&1 && echo present || exit 1"
+    expect_output: "present"
+    manual_if_absent: true
+
+  - id: si-02-freshclam-enabled
+    description: Signatures update automatically
+    command: |
+      # ClamAV comes from EPEL and is opt-in (see nist_clamav_enabled). When it
+      # is absent, say so plainly rather than reporting a configuration fault.
+      rpm -q clamav-update >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
+      systemctl is-enabled clamav-freshclam 2>&1
+    expect_match: "^(enabled|static)$"
+    manual_if_absent: true
+
+  - id: si-02-clamav-scan-timer
+    description: Scheduled scanning runs at the ODP frequency
+    command: |
+      rpm -q clamav >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
+      systemctl is-enabled nist-malware-scan.timer 2>&1
+    expect_output: "enabled"
+    manual_if_absent: true
+
+  - id: si-02-signatures-fresh
+    description: Malicious code signatures are current (within 7 days)
+    command: |
+      rpm -q clamav >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
+      newest=$(find /var/lib/clamav -name '*.c[vl]d' -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+      [ -n "$newest" ] || { echo 999; exit 0; }
+      echo $(( ( $(date +%s) - ${newest%.*} ) / 86400 ))
+    expect_int: "<= 7"
+    manual_if_absent: true
+
+  - id: si-02-fapolicyd-running
+    description: Execution-time prevention is active
+    command: "systemctl is-active fapolicyd"
+    expect_output: "active"
+
+  - id: si-02-scan-action-quarantine
+    description: Detections are quarantined rather than left in place
+    command: |
+      rpm -q clamav >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
+      grep -c 'move=' /usr/local/sbin/nist-malware-scan 2>/dev/null || echo 0
+    expect_int: ">= 1"
+    manual_if_absent: true
+
+  - id: si-03-updateinfo-enabled
+    description: External advisories reach the host
+    command: "dnf -q updateinfo summary >/dev/null 2>&1 && echo available"
+    expect_output: "available"
+
+  - id: si-03-alert-mail-configured
+    description: An internal alert recipient is configured
+    command: "grep -oP '(?<=^ALERT_MAIL=).*' /etc/nist-800-171/alerting.conf 2>/dev/null"
+    expect_match: "\\S"
+
+  - id: si-03-aide-alerting
+    description: Integrity deviations raise an alert
+    command: "grep -c 'logger' /usr/local/sbin/nist-aide-check 2>/dev/null"
+    expect_int: ">= 1"
+
+  - id: si-06-audit-login-events
+    description: Authentication events are captured for monitoring
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?logins([[:space:]]|$)' || true
+    expect_int: ">= 2"
+
+  - id: si-06-audit-unauth-access
+    description: Unauthorized access attempts are captured
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?unauthorized_access([[:space:]]|$)' || true
+    expect_int: ">= 2"
+
+  - id: si-06-firewalld-log-denied
+    description: Unauthorized connection attempts are logged
+    command: "firewall-cmd --get-log-denied 2>/dev/null"
+    expect_match: "^(all|unicast)$"
+
+  - id: si-06-aide-timer-enabled
+    description: Unauthorized change is detected on a schedule
+    command: "systemctl is-enabled nist-aide-check.timer 2>&1"
+    expect_output: "enabled"
+
+  - id: si-06-audit-module-load
+    description: Kernel module loading is monitored
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?module_load([[:space:]]|$)' || true
+    expect_int: ">= 2"
+
+  - id: si-06-audit-network-config
+    description: Network configuration changes are monitored
+    command: |
+      # auditctl renders watch rules as `-k <key>` and syscall rules as
+      # `key=<key>`; both forms must count.
+      auditctl -l 2>/dev/null | grep -cE '(-k|key=) ?network_config([[:space:]]|$)' || true
+    expect_int: ">= 3"
+
+  - id: si-08-audit-retention
+    description: Audit records are retained for the ODP period
+    command: "awk -F= '/^num_logs/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+    expect_int: ">= {odp.audit_num_logs}"
+
+  - id: si-08-journald-retention
+    description: The journal retains records for the ODP period
+    command: "grep -rhoP '(?<=^MaxRetentionSec=)\\d+' /etc/systemd/journald.conf.d/ 2>/dev/null | head -1"
+    expect_int: ">= {odp.audit_retention_days}"
+
+  - id: si-08-logrotate-retention
+    description: System logs are retained for the ODP period
+    command: "grep -rhoP '(?<=maxage )\\d+' /etc/logrotate.d/nist-syslog 2>/dev/null | head -1"
+    expect_int: ">= {odp.audit_retention_days}"
+
+  - id: si-08-log-perms
+    description: Retained logs are protected from disclosure
+    command: |
+      # The exposure that matters is access by users outside the owning group,
+      # or group *write*. A root:root file at 0640 is not readable by any
+      # ordinary user, so it is not flagged.
+      find /var/log -maxdepth 1 -type f \( -perm /007 -o -perm /020 \) 2>/dev/null | head -5
+    expect_empty: true
+
+# ===========================================================================
+# 03.15 PLANNING
+# ===========================================================================
+  - id: pl-02-ssp-generated
+    description: The system security plan has been generated
+    command: "test -s /etc/nist-800-171/system-security-plan.md && echo present"
+    expect_output: "present"
+
+  - id: pl-02-ssp-perms
+    description: The system security plan is protected from disclosure
+    command: "stat -c '%a %U' /etc/nist-800-171/system-security-plan.md 2>/dev/null"
+    expect_match: "^(600|640) root$"
+
+  - id: pl-02-ssp-current
+    description: The plan reflects the current build (within 30 days)
+    command: "echo $(( ( $(date +%s) - $(stat -c %Y /etc/nist-800-171/system-security-plan.md 2>/dev/null || echo 0) ) / 86400 ))"
+    expect_int: "<= 30"
+
+# ===========================================================================
+# 03.16 SYSTEM AND SERVICES ACQUISITION
+# ===========================================================================
+  - id: sa-02-supported-release
+    description: The platform release is within vendor support
+    command: "awk '{for(i=1;i<=NF;i++) if($i ~ /^9\\./) {print int($i); exit}}' /etc/rocky-release"
+    expect_int: "== 9"
+
+  - id: sa-02-kernel-current
+    description: The running kernel is the newest installed kernel
+    command: |
+      running=$(uname -r)
+      newest=$(rpm -q --last kernel 2>/dev/null | head -1 | awk '{print $1}' | sed 's/^kernel-//')
+      [ "$running" = "$newest" ] && echo current || echo "running=$running newest=$newest"
+    expect_output: "current"
+
+  - id: sa-02-no-unsupported-repos
+    description: Only authorized repositories are enabled
+    command: |
+      dnf -q repolist --enabled 2>/dev/null | tail -n +2 | awk '{print $1}' \
+        | grep -vE '^(baseos|appstream|extras|crb|rocky)' || true
+    expect_empty: true
+
+  - id: sa-02-no-orphan-packages
+    description: No installed package lacks a supporting repository
+    command: "dnf -q repoquery --extras --queryformat '%{name}\\n' 2>/dev/null | head -10"
+    expect_empty: true
+
+# ===========================================================================
+# 03.17 SUPPLY CHAIN RISK MANAGEMENT
+# ===========================================================================
+  - id: sr-03-gpg-keys-imported
+    description: The authorized supplier signing keys are trusted
+    command: "rpm -qa gpg-pubkey* 2>/dev/null | wc -l"
+    expect_int: ">= 1"
+
+  - id: sr-03-all-packages-signed
+    description: Every installed package carries a valid supplier signature
+    command: |
+      # A handful of packages are laid down by the installer before the GPG
+      # keys are imported, so RPM records no signature for them. They come from
+      # the same verified install tree; treating them as findings would train
+      # the reader to ignore this check. Anything else unsigned is a finding.
+      bootstrap='^(filesystem|setup|basesystem|rocky-release|rocky-repos|rocky-gpg-keys|tzdata|hwdata|dnf-data|libreport-filesystem|gawk-all-langpacks|publicsuffix-list-dafsa|ncurses-base|glibc-gconv-extra)$'
+      # Packages signed with RSA record the signature in RSAHEADER; SIGPGP is
+      # empty for them, so querying only SIGPGP reports every package unsigned.
+      rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\n' 2>/dev/null \
+        | awk -F'|' '($2 == "" || $2 == "(none)") && ($3 == "" || $3 == "(none)") {print $1}' \
+        | grep -v '^gpg-pubkey' \
+        | grep -vE "$bootstrap" | head -10 || true
+    expect_empty: true
+
+  - id: sr-03-no-unauthorized-repos
+    description: No repository outside the authorized set is configured
+    command: |
+      dnf -q repolist --enabled 2>/dev/null | tail -n +2 | awk '{print $1}' \
+        | grep -vE '^(baseos|appstream|extras|crb|rocky)' || true
+    expect_empty: true

@@ -1,0 +1,15 @@
+# Credentials and key material - never commit these.
+.secrets/
+
+# Large downloaded artifacts.
+iso/*.iso
+iso/CHECKSUM
+
+# Generated per-host, not part of the baseline.
+inventory/hosts.yml
+reports/*.json
+reports/*.html
+
+# Derived from the PDF; regenerate with `make catalog`.
+# Tracked deliberately so the mapping can be reviewed in diffs:
+!catalog/requirements.json

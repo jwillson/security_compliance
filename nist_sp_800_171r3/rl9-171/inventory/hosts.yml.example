@@ -1,0 +1,59 @@
+# Copy to inventory/hosts.yml and edit.
+#
+#   cp inventory/hosts.yml.example inventory/hosts.yml
+#   ./apply.sh --check --diff     # see what would change
+#   ./apply.sh                    # harden
+#   ./verify.sh                   # assess
+#
+# The role is not VM-specific. Anything in the `cui_hosts` group that is
+# Rocky Linux 9 and reachable over SSH with sudo can be hardened; the VM and
+# ISO make targets exist to build a reference machine, not as a prerequisite.
+#
+# vm/build-vm.sh overwrites inventory/hosts.yml with its own copy, which is
+# why that file is gitignored and this example is not.
+
+cui_hosts:
+  hosts:
+
+    # --- A host you already have -------------------------------------------
+    # Key-based login, sudo via a password you supply at run time
+    # (`./apply.sh --ask-become-pass`), or passwordless sudo.
+    server-01:
+      ansible_host: 10.0.0.10
+      ansible_user: admin
+      ansible_become: true
+      ansible_become_method: sudo
+
+    # --- A host that is already hardened -----------------------------------
+    # Once 03.05.03 is applied, sshd requires `publickey,password` and one
+    # factor is no longer enough. Supply the knowledge factor the same way
+    # the lab does — a file containing the password, and an askpass script
+    # that cats it — or run interactively with --ask-pass.
+    #
+    # server-02:
+    #   ansible_host: 10.0.0.11
+    #   ansible_user: admin
+    #   ansible_ssh_private_key_file: ~/.ssh/id_rsa_cui
+    #   ansible_become: true
+    #   ansible_become_method: sudo
+    #   ansible_become_password: "{{ lookup('env', 'NIST_BECOME_PASSWORD') }}"
+
+# Notes that will otherwise cost you an afternoon:
+#
+#   * FIPS mode (03.13.11) excludes ssh-ed25519 from
+#     PubkeyAcceptedAlgorithms. Use RSA >=3072 or ECDSA P-256/384. An ed25519
+#     key is rejected at preauth once the host is hardened.
+#
+#   * Host key checking stays on (see ansible.cfg). OpenSSH will not send a
+#     password to an unverified host, so disabling it would break
+#     authentication rather than relax it. lib/ssh-env.sh seeds known_hosts
+#     before connecting.
+#
+#   * Applying 03.13.10 removes the weak DSA/ECDSA host keys, so the host
+#     presents a different key afterwards. apply.sh re-records it on success;
+#     verify.sh never does, so an unexpected key change is still an error.
+#
+#   * Controls that cannot be retrofitted — a separate /var/log/audit
+#     filesystem, FIPS from first boot — will be reported as deviations by
+#     verify.sh rather than silently skipped. That is correct: they are real
+#     findings on a host that was not installed that way.

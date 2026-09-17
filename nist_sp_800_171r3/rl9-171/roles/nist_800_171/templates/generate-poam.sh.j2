@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# 03.12.02  Generate Plan of Action and Milestones items from the assessment.
+#
+# Every failing or partially-implemented requirement becomes a POA&M row with
+# the requirement ID, the observed deviation, and the date first observed.
+# Owners, dates and resources are assigned by management (statement not
+# automatable).
+set -uo pipefail
+RESULTS="{{ nist_report_dir }}/assessment-latest.json"
+OUT="{{ nist_report_dir }}/poam-$(date -u +%Y%m%d).csv"
+HIST="{{ nist_conf_dir }}/poam-first-observed.json"
+
+[ -f "$RESULTS" ] || { echo "no assessment results at $RESULTS - run nist-assess first" >&2; exit 1; }
+
+python3 - "$RESULTS" "$OUT" "$HIST" <<'PY'
+import csv, json, os, sys
+from datetime import date
+
+results_path, out_path, hist_path = sys.argv[1:4]
+data = json.load(open(results_path))
+hist = json.load(open(hist_path)) if os.path.exists(hist_path) else {}
+today = date.today().isoformat()
+
+rows = []
+for r in data.get("requirements", []):
+    if r.get("status") not in ("FAIL", "ERROR"):
+        hist.pop(r["id"], None)          # resolved: stop tracking
+        continue
+    first = hist.setdefault(r["id"], today)
+    failed = [c for c in r.get("checks", []) if c.get("status") in ("FAIL", "ERROR")]
+    weakness = "; ".join(c.get("description", c.get("id", "")) for c in failed) or r.get("title", "")
+    rows.append({
+        "POAM ID": f"{r['id']}-{first.replace('-','')}",
+        "Requirement": r["id"],
+        "Title": r.get("title", ""),
+        "Weakness": weakness[:500],
+        "Source": "Automated assessment (nist-assess)",
+        "First Observed": first,
+        "Status": "Open",
+        "Disposition": r.get("disposition", ""),
+        "Scheduled Completion": "",
+        "Responsible Party": "",
+        "Resources Required": "",
+        "Milestones": "",
+    })
+
+with open(out_path, "w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else
+                       ["POAM ID","Requirement","Title","Weakness","Source",
+                        "First Observed","Status","Disposition",
+                        "Scheduled Completion","Responsible Party",
+                        "Resources Required","Milestones"])
+    w.writeheader()
+    w.writerows(rows)
+
+json.dump(hist, open(hist_path, "w"), indent=2)
+print(f"{len(rows)} open POA&M item(s)")
+PY
+
+chmod 0600 "$OUT"
+echo "wrote $OUT"

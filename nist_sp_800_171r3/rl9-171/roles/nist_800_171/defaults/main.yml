@@ -1,0 +1,141 @@
+---
+# Role defaults. The ODP values live in catalog/overlay-rocky9.yml and are
+# loaded by site.yml; anything here is an implementation detail of how the
+# overlay is realised on Rocky 9, not a policy parameter.
+
+# --- Identity of the administrative and audit roles (03.01.04, 03.01.06) ---
+nist_admin_group: wheel
+nist_audit_admin_group: auditadm
+
+# --- Where CUI and its backups live (03.04.11, 03.08.09, 03.13.08) ---
+nist_cui_path: /var/lib/cui
+nist_cui_group: cuiusers
+nist_backup_path: /var/backups/cui
+nist_cui_lv_size: 2G
+nist_backup_lv_size: 1G
+nist_vg_name: vg_sys
+
+# --- Toolkit paths on the managed host ---
+nist_conf_dir: /etc/nist-800-171
+nist_lib_dir: /usr/local/lib/nist-800-171
+nist_bin_dir: /usr/local/sbin
+nist_report_dir: /var/log/nist-800-171
+
+# --- Where alerts and reports go (03.03.04, 03.03.05, 03.14.03) ---
+nist_audit_mail_acct: root
+nist_alert_mail: root
+# Set to a collector to enable rsyslog forwarding (03.03.05c). Empty disables it.
+nist_log_collector: ""
+
+# --- Scheduling (03.03.05, 03.11.02, 03.12.01, 03.12.03) ---
+nist_aide_check_schedule: "*-*-* 04:00:00"
+nist_audit_review_schedule: "*-*-* 05:00:00"
+nist_vuln_scan_schedule: "Sun *-*-* 02:00:00"
+nist_assessment_schedule: "*-*-* 06:00:00"
+nist_inventory_schedule: "daily"
+
+# --- 03.05.03 Multi-factor authentication ---
+# Requiring a public key in addition to a password locks out anyone who has not
+# enrolled a key. The build's automation account has one, so this is safe to
+# enable by default; set it false if operators still authenticate by password.
+nist_mfa_enforce_pubkey: true
+
+# --- 03.13.01 / 03.13.06 Boundary protection ---
+# The only services permitted inbound. Everything else is denied by default.
+nist_firewall_allowed_services:
+  - ssh
+nist_firewall_zone: public
+
+# --- 03.04.06 Least functionality ---
+# Kernel modules with no mission role that must not load.
+nist_blocked_filesystems:
+  - cramfs
+  - freevxfs
+  - jffs2
+  - hfs
+  - hfsplus
+  - squashfs
+  - udf
+nist_blocked_protocols:
+  - dccp
+  - sctp
+  - rds
+  - tipc
+nist_blocked_devices:
+  - usb-storage      # 03.01.20d, 03.08.07
+  - firewire-core
+  - bluetooth        # 03.01.16c
+  - btusb
+  - uvcvideo         # 03.13.12
+nist_masked_services:
+  - autofs
+  - avahi-daemon
+  - cups
+  - rpcbind
+  - nfs-server
+  - bluetooth
+  - kdump
+nist_forbidden_packages:
+  - telnet-server
+  - telnet
+  - rsh-server
+  - rsh
+  - ypserv
+  - ypbind
+  - tftp-server
+  - tftp
+  - talk-server
+  - talk
+  - xinetd
+  - vsftpd
+  - sendmail
+  - nis
+
+# --- 03.14.02 Malicious code protection ---
+# ClamAV is NOT in the Rocky 9 base repositories; it comes from EPEL. Enabling
+# it therefore adds a repository outside the authorized set, which 03.17.03
+# (supply chain) and 03.16.02 (supported components) both care about. That is a
+# real trade-off, so it is opt-in and explicit rather than silent:
+#
+#   nist_clamav_enabled: true   -> also set nist_enable_epel: true
+#
+# With ClamAV absent, 03.14.02 is still partly met by fapolicyd, which prevents
+# unauthorized code from executing at all. The assessor reports the
+# signature-scanning checks as MANUAL, not PASS, so the gap stays visible.
+nist_clamav_enabled: false
+nist_enable_epel: false
+nist_clamav_scan_schedule: "*-*-* 03:00:00"
+
+# --- 03.04.08 Authorized software ---
+# fapolicyd denies execution by default. Enabling it on a host whose workload is
+# not yet profiled can break applications, so it is opt-in per host but on by
+# default for the reference build.
+nist_fapolicyd_enabled: true
+nist_fapolicyd_permissive: false
+
+# --- 03.10.07 Boot path protection ---
+nist_set_grub_password: true
+
+# --- 03.16.02 Supported components ---
+nist_supported_minor_version: "9.8"
+
+# Internal: set by tasks that need a reboot to take effect.
+nist_reboot_required: false
+
+# --- 03.03.07 Authorized time sources ---
+# Replace with your organization's authorized internal time servers. Public
+# pool servers are a deviation in most CUI environments.
+nist_time_sources:
+  - 0.rocky.pool.ntp.org
+  - 1.rocky.pool.ntp.org
+  - 2.rocky.pool.ntp.org
+
+# --- 03.04.06 Mount option hardening ---
+# The kickstart already sets these at install time; this list re-asserts them
+# so the role is also correct on a host it did not build. Leave empty to skip.
+nist_mount_hardening:
+  - { path: /home,          src: /dev/mapper/vg_sys-lv_home,     fstype: xfs, opts: "defaults,nodev,nosuid" }
+  - { path: /tmp,           src: /dev/mapper/vg_sys-lv_tmp,      fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
+  - { path: /var/tmp,       src: /dev/mapper/vg_sys-lv_vartmp,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
+  - { path: /var/log,       src: /dev/mapper/vg_sys-lv_varlog,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
+  - { path: /var/log/audit, src: /dev/mapper/vg_sys-lv_varaudit, fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# 03.01.05c  Privileged access review report.
+#
+# Produces the evidence a reviewer needs to validate that assigned privileges
+# are still required. Run on the ODP review frequency.
+set -euo pipefail
+OUT="{{ nist_report_dir }}/privilege-review-$(date -u +%Y%m%d).txt"
+
+{
+  echo "Privileged access review - $(hostname) - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "NIST SP 800-171r3 03.01.05c / 03.01.06a"
+  echo
+
+  echo "== Accounts with UID 0 =="
+  awk -F: '($3 == 0) {print "  " $1}' /etc/passwd
+  echo
+
+  echo "== Members of the administrative group ({{ nist_admin_group }}) =="
+  getent group {{ nist_admin_group }} | awk -F: '{print $4}' | tr ',' '\n' | sed 's/^/  /'
+  echo
+
+  echo "== Members of the audit administration group ({{ nist_audit_admin_group }}) =="
+  getent group {{ nist_audit_admin_group }} | awk -F: '{print $4}' | tr ',' '\n' | sed 's/^/  /'
+  echo
+
+  echo "== Effective sudo rules =="
+  for u in $(awk -F: '($3 >= 1000 && $3 != 65534) {print $1}' /etc/passwd); do
+    rules=$(sudo -lU "$u" 2>/dev/null | sed -n '/may run/,$p' | tail -n +2)
+    [ -n "$rules" ] && { echo "  $u:"; echo "$rules" | sed 's/^/    /'; }
+  done
+  echo
+
+  echo "== Interactive accounts and last login =="
+  lastlog | head -50 | sed 's/^/  /'
+  echo
+
+  echo "== setuid/setgid binaries =="
+  find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -printf '  %M %u %g %p\n' 2>/dev/null | sort
+} > "$OUT"
+
+chmod 0600 "$OUT"
+echo "wrote $OUT"

@@ -1,0 +1,1223 @@
+# NIST SP 800-171r3 -> Rocky Linux 9 overlay
+#
+# Maps every active requirement in the r3 catalog to what a Rocky Linux 9 host
+# can actually enforce. This file is the authoritative mapping; the Ansible role
+# implements it and the auditor verifies it.
+#
+# disposition:
+#   technical      - the host enforces the requirement in full. A failing check
+#                    is a real finding.
+#   partial        - the host enforces part of it; the rest is organizational.
+#                    `host_scope` says what is enforced, `residual` what is not.
+#   organizational - nothing on the host satisfies this. Policy, process,
+#                    personnel, or physical controls. The role emits an SSP stub
+#                    instead of a configuration change.
+#
+# Every non-organizational requirement names the Ansible task file that applies
+# it and the auditor check IDs that verify it. Check IDs are resolved against
+# audit/checks.yml, which is written independently of the role.
+
+meta:
+  name: nist-800-171r3-rocky9
+  version: "1.0.0"
+  baseline: NIST SP 800-171r3 (May 2024)
+  platform: Rocky Linux 9
+  catalog: catalog/requirements.json
+
+# ---------------------------------------------------------------------------
+# Organization-defined parameters (ODPs).
+#
+# 800-171r3 leaves these to the organization. The values below are defensible
+# defaults drawn from the DoD CUI baseline and the SSG RHEL9 CUI profile. Change
+# them here; the role and the auditor both read these, so they never drift.
+# ---------------------------------------------------------------------------
+odp:
+  # 03.01.01f - disable accounts inactive for this many days
+  account_inactivity_days: 35
+  # 03.01.08a/b - consecutive failures, counting window, lockout duration
+  lockout_attempts: 3
+  lockout_window_seconds: 900
+  lockout_duration_seconds: 900        # 0 = until admin release
+  # 03.01.10a / 03.01.11 / 03.13.09 - idle timeouts (seconds)
+  idle_lock_seconds: 900
+  session_timeout_seconds: 900
+  ssh_client_alive_interval: 600
+  ssh_client_alive_count_max: 0
+  # 03.05.07f - password composition
+  password_min_length: 14
+  password_min_classes: 4
+  password_dcredit: -1
+  password_ucredit: -1
+  password_lcredit: -1
+  password_ocredit: -1
+  password_difok: 8
+  password_max_repeat: 3
+  password_max_class_repeat: 4
+  password_remember: 24
+  password_hash_rounds: 100000
+  # 03.05.12e - authenticator lifetime (days)
+  password_max_age: 60
+  password_min_age: 1
+  password_warn_age: 7
+  # 03.03.03b - audit record retention
+  audit_retention_days: 90
+  audit_max_log_file_mb: 50
+  audit_num_logs: 20
+  # 03.14.01b - install security updates within this window
+  patch_window_days: 30
+  # 03.03.04 - free space thresholds (MB) that trigger alerts
+  audit_space_left_mb: 500
+  audit_admin_space_left_mb: 250
+  # 03.13.11 / 03.13.15 - system-wide crypto policy
+  crypto_policy: "FIPS"
+  # 03.01.09 - system use notification text lives in
+  # roles/nist_800_171/templates/banner.j2
+
+requirements:
+
+# ===========================================================================
+# 03.01 ACCESS CONTROL
+# ===========================================================================
+  - id: "03.01.01"
+    title: Account Management
+    disposition: partial
+    tasks: tasks/ac.yml
+    host_scope: >
+      Enforces the mechanical parts: automatic disable of accounts inactive
+      beyond the ODP window (useradd INACTIVE + per-account INACTIVE), expiry
+      enforcement, removal of unused default system accounts, a shell of
+      /sbin/nologin on non-login accounts, and auditd rules that monitor account
+      use and account lifecycle events (statement e, f.1, f.2).
+    residual: >
+      Statements a-d, f.3-f.5, g, h are organizational: defining allowed account
+      types, authorizing users, specifying role membership, notifying account
+      managers, and the behavioural logout policy. Record these in the SSP.
+    checks: [ac-01-inactive-default, ac-01-inactive-users, ac-01-nologin-shells,
+             ac-01-audit-account-events, ac-01-no-legacy-accounts]
+
+  - id: "03.01.02"
+    title: Access Enforcement
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      SELinux in enforcing mode with the targeted policy is the access
+      enforcement mechanism, backed by correct DAC permissions on system files,
+      no world-writable files without the sticky bit, and no unowned files.
+    checks: [ac-02-selinux-enforcing, ac-02-selinux-policy, ac-02-no-unowned,
+             ac-02-world-writable-sticky, ac-02-passwd-perms, ac-02-shadow-perms]
+
+  - id: "03.01.03"
+    title: Information Flow Enforcement
+    disposition: partial
+    tasks: tasks/ac.yml
+    host_scope: >
+      Host-level flow control via firewalld zones with an explicit default,
+      disabled IP forwarding and source routing, rejection of ICMP redirects,
+      and reverse-path filtering so the host cannot act as an uncontrolled
+      transit point between networks.
+    residual: >
+      Enterprise flow enforcement between enclaves (guards, proxies, CDS) is an
+      architecture concern outside a single host.
+    checks: [ac-03-ip-forward, ac-03-send-redirects, ac-03-accept-redirects,
+             ac-03-accept-source-route, ac-03-rp-filter, ac-03-firewalld-active]
+
+  - id: "03.01.04"
+    title: Separation of Duties
+    disposition: partial
+    tasks: tasks/ac.yml
+    host_scope: >
+      Provides the enforcement primitives: a distinct audit-administration group
+      that is separate from the general sysadmin group, so that the ability to
+      manage audit data is not automatically granted with root-equivalent
+      access (supports 03.03.08b).
+    residual: >
+      Identifying which duties require separation, and assigning people to those
+      roles, is organizational.
+    checks: [ac-04-audit-group-exists, ac-04-audit-group-distinct]
+
+  - id: "03.01.05"
+    title: Least Privilege
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      sudo requires authentication (no NOPASSWD, no !authenticate), sudo is
+      restricted to an explicit administrative group rather than ALL, re-auth is
+      required per session (timestamp_timeout), and the default umask denies
+      group/other write. Privilege review is supported by a generated report of
+      every account holding privileged access.
+    residual: >
+      The periodic review itself (statement c) is a process; the role installs
+      the report that feeds it.
+    checks: [ac-05-sudo-no-nopasswd, ac-05-sudo-no-authenticate-off,
+             ac-05-sudo-timestamp-timeout, ac-05-umask-login-defs,
+             ac-05-sudoers-perms, ac-05-privilege-report]
+
+  - id: "03.01.06"
+    title: Least Privilege - Privileged Accounts
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      Direct root login is denied over SSH and restricted on local consoles; su
+      is restricted to members of the wheel group via pam_wheel; no account
+      other than root carries UID 0; and privileged accounts are enumerated to a
+      named administrative group.
+    checks: [ac-06-ssh-permitrootlogin, ac-06-pam-wheel-su, ac-06-single-uid0,
+             ac-06-no-empty-passwords]
+
+  - id: "03.01.07"
+    title: Least Privilege - Privileged Functions
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      Non-privileged users cannot execute privileged functions (enforced by
+      SELinux + DAC + sudo policy), and every privileged execution is logged:
+      auditd rules record all setuid/setgid program execution, all sudo and su
+      invocations, and all execve by uid 0 origins.
+    checks: [ac-07-audit-privileged-execve, ac-07-audit-sudo-log,
+             ac-07-audit-execpriv-rules]
+
+  - id: "03.01.08"
+    title: Unsuccessful Logon Attempts
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      pam_faillock enforces the ODP limit of consecutive invalid attempts within
+      the ODP window and locks the account for the ODP duration. Applied to both
+      the system-auth and password-auth stacks via authselect so it survives
+      profile regeneration, and applied to root as well (even_deny_root).
+    checks: [ac-08-faillock-deny, ac-08-faillock-interval,
+             ac-08-faillock-unlock, ac-08-faillock-even-deny-root,
+             ac-08-faillock-in-pam, ac-08-faillock-dir]
+
+  - id: "03.01.09"
+    title: System Use Notification
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      The approved use notification is displayed before authentication on every
+      access path: local console (/etc/issue), network (/etc/issue.net with
+      sshd Banner), and post-login (/etc/motd).
+    checks: [ac-09-issue, ac-09-issue-net, ac-09-motd, ac-09-sshd-banner]
+
+  - id: "03.01.10"
+    title: Device Lock
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      Idle sessions lock after the ODP period. On a text-mode host this is
+      enforced by tmux lock-after-time plus an immutable TMOUT, and the lock
+      requires re-authentication. Graphical lock settings are applied via dconf
+      when a desktop is present.
+    residual: >
+      Statement c (concealing the display with a publicly viewable image) only
+      applies where a graphical session exists.
+    checks: [ac-10-tmout-set, ac-10-tmout-readonly, ac-10-tmux-lock,
+             ac-10-tmux-installed]
+
+  - id: "03.01.11"
+    title: Session Termination
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      Sessions terminate automatically on the ODP trigger (idle expiry): shell
+      TMOUT terminates idle login shells, and sshd ClientAliveInterval with
+      ClientAliveCountMax 0 terminates idle network sessions.
+    checks: [ac-11-tmout-set, ac-11-ssh-clientalive-interval,
+             ac-11-ssh-clientalive-countmax, ac-11-ssh-logingracetime]
+
+  - id: "03.01.12"
+    title: Remote Access
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      SSH is the sole authorized remote access path and is routed through a
+      managed control point: firewalld restricts which interfaces/sources may
+      reach it, the daemon is hardened (no root login, no empty passwords, no
+      host-based or GSSAPI auth, no agent/TCP forwarding, strict modes, FIPS
+      ciphers), and privileged remote execution is logged.
+    residual: >
+      Documenting the usage restrictions and authorizing each access type
+      (statements a, b) is organizational; the enforced configuration is the
+      evidence.
+    checks: [ac-12-sshd-active, ac-12-sshd-no-empty-passwords,
+             ac-12-sshd-hostbased, ac-12-sshd-gssapi, ac-12-sshd-strictmodes,
+             ac-12-sshd-ignorerhosts, ac-12-sshd-permituserenv,
+             ac-12-sshd-x11forwarding, ac-12-sshd-maxauthtries,
+             ac-12-sshd-config-perms, ac-12-sshd-crypto-policy]
+
+  - id: "03.01.16"
+    title: Wireless Access
+    disposition: technical
+    tasks: tasks/ac.yml
+    host_scope: >
+      Wireless capabilities not intended for use are disabled prior to
+      deployment: Bluetooth and 802.11 kernel modules are blacklisted and
+      blocked from loading, and the Bluetooth service is masked.
+    checks: [ac-16-bluetooth-module, ac-16-bluetooth-service, ac-16-wifi-module,
+             ac-16-no-active-wireless]
+
+  - id: "03.01.18"
+    title: Access Control for Mobile Devices
+    disposition: partial
+    tasks: tasks/ac.yml
+    host_scope: >
+      Where this host is itself the mobile device, statement c is met by
+      full-disk encryption (LUKS) established at install and verified here.
+    residual: >
+      Usage restrictions and connection authorization for other mobile devices
+      (statements a, b) are organizational and enforced by MDM, not by this host.
+    checks: [ac-18-luks-root-or-data]
+
+  - id: "03.01.20"
+    title: Use of External Systems
+    disposition: partial
+    tasks: tasks/ac.yml
+    host_scope: >
+      Statement d is enforced: use of organization-controlled portable storage
+      is restricted by blocking the USB mass-storage driver, so CUI cannot be
+      moved to removable media from this host without an explicit exception.
+    residual: >
+      Authorizing external systems and retaining connection agreements
+      (statements a-c) is organizational.
+    checks: [ac-20-usb-storage-blocked, ac-20-autofs-disabled]
+
+  - id: "03.01.22"
+    title: Publicly Accessible Content
+    disposition: organizational
+    rationale: >
+      Training authorized individuals and reviewing published content for CUI
+      are human processes. This host publishes no public content.
+
+# ===========================================================================
+# 03.02 AWARENESS AND TRAINING
+# ===========================================================================
+  - id: "03.02.01"
+    title: Literacy Training and Awareness
+    disposition: organizational
+    rationale: Personnel training program. No host enforcement exists.
+
+  - id: "03.02.02"
+    title: Role-Based Training
+    disposition: organizational
+    rationale: Personnel training program. No host enforcement exists.
+
+# ===========================================================================
+# 03.03 AUDIT AND ACCOUNTABILITY
+# ===========================================================================
+  - id: "03.03.01"
+    title: Event Logging
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      auditd is enabled and started at boot, audit=1 is set on the kernel
+      command line so events are captured before auditd starts, and the selected
+      event types are expressed as a versioned rule set covering the
+      identification, access control, privilege, and file integrity events the
+      ODP names.
+    checks: [au-01-auditd-enabled, au-01-auditd-running, au-01-audit-grub,
+             au-01-audit-backlog, au-01-rules-loaded, au-01-rsyslog-enabled]
+
+  - id: "03.03.02"
+    title: Audit Record Content
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      auditd records carry event type, timestamp, host, source, outcome, and
+      subject identity by default; the configuration pins that by setting
+      log_format to ENRICHED (resolving uid/gid/syscall at write time) and
+      name_format to hostname so records remain attributable off-box.
+    checks: [au-02-log-format-enriched, au-02-name-format, au-02-record-fields]
+
+  - id: "03.03.03"
+    title: Audit Record Generation
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      Records are generated for every selected event type (the loaded rule set),
+      and retention is enforced for the ODP period through max_log_file,
+      num_logs, and max_log_file_action=rotate sized to hold the retention
+      window without loss.
+    checks: [au-03-max-log-file, au-03-num-logs, au-03-max-log-file-action,
+             au-03-retention-capacity, au-03-logrotate-present]
+
+  - id: "03.03.04"
+    title: Response to Audit Logging Process Failures
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      On audit logging failure the host alerts and acts: space_left_action and
+      admin_space_left_action notify the audit administrator via syslog/email at
+      the ODP thresholds, disk_full_action and disk_error_action halt or switch
+      to single-user mode, and failure_mode=2 panics rather than silently
+      dropping records.
+    checks: [au-04-space-left, au-04-space-left-action, au-04-admin-space-left,
+             au-04-admin-space-left-action, au-04-disk-full-action,
+             au-04-disk-error-action, au-04-failure-mode, au-04-action-mail-acct]
+
+  - id: "03.03.05"
+    title: Audit Record Review, Analysis, and Reporting
+    disposition: partial
+    tasks: tasks/au.yml
+    host_scope: >
+      Provides the review capability and schedules it: a systemd timer runs an
+      aureport/ausearch summary at the ODP frequency and writes it where the
+      audit administrator collects it, and rsyslog forwarding is configured so
+      records can be correlated across repositories (statement c).
+    residual: >
+      A human reviewing the output and reporting findings (statements a, b) is
+      organizational. Forwarding requires a collector address to be set.
+    checks: [au-05-review-timer, au-05-review-timer-enabled,
+             au-05-aureport-present, au-05-rsyslog-forwarding]
+
+  - id: "03.03.06"
+    title: Audit Record Reduction and Report Generation
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      aureport and ausearch provide reduction and report generation without
+      altering the source records; the on-disk logs are append-only to the
+      audit daemon and are never rewritten by the reporting path, preserving
+      original content and time ordering.
+    checks: [au-06-audit-tools-present, au-06-log-immutable-flag,
+             au-06-audit-log-not-writable]
+
+  - id: "03.03.07"
+    title: Time Stamps
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      chronyd is enabled and synchronized to authorized time sources, the
+      system clock is set to UTC, and audit timestamps therefore carry a fixed
+      UTC reference at sub-second granularity.
+    checks: [au-07-chronyd-enabled, au-07-chronyd-running, au-07-timezone-utc,
+             au-07-ntp-synchronized, au-07-chrony-sources,
+             au-07-chrony-makestep]
+
+  - id: "03.03.08"
+    title: Protection of Audit Information
+    disposition: technical
+    tasks: tasks/au.yml
+    host_scope: >
+      Audit logs are mode 0600 root-owned in a directory no non-privileged user
+      can traverse, the audit configuration and rule files are 0640/0600, the
+      audit tools themselves are protected and their modification is audited,
+      and the rule set is made immutable (-e 2) so rules cannot be changed
+      without a reboot. Management of audit functionality is limited to the
+      audit administration group from 03.01.04.
+    checks: [au-08-log-perms, au-08-log-dir-perms, au-08-log-owner,
+             au-08-conf-perms, au-08-rules-perms, au-08-tools-perms,
+             au-08-immutable-rules, au-08-audit-tool-watch]
+
+# ===========================================================================
+# 03.04 CONFIGURATION MANAGEMENT
+# ===========================================================================
+  - id: "03.04.01"
+    title: Baseline Configuration
+    disposition: partial
+    tasks: tasks/cm.yml
+    host_scope: >
+      This overlay is the baseline configuration, and it is under version
+      control. On the host, AIDE captures the as-built state of every baseline
+      file into an integrity database, and a component manifest records the
+      exact package set, kernel, and configuration digest at build time.
+    residual: >
+      Reviewing and updating the baseline at the ODP frequency (statement b) is
+      a process; the manifest and AIDE database are the artifacts it consumes.
+    checks: [cm-01-aide-installed, cm-01-aide-db-exists, cm-01-aide-timer,
+             cm-01-baseline-manifest]
+
+  - id: "03.04.02"
+    title: Configuration Settings
+    disposition: technical
+    tasks: tasks/cm.yml
+    host_scope: >
+      The documented configuration settings are exactly the settings this
+      overlay applies, in the most restrictive mode consistent with operation.
+      They are machine-checkable: the auditor reproduces every setting and
+      reports deviations, which is the enforcement of statement b.
+    checks: [cm-02-overlay-version-recorded, cm-02-no-undocumented-deviations,
+             cm-02-sysctl-applied]
+
+  - id: "03.04.03"
+    title: Configuration Change Control
+    disposition: organizational
+    rationale: >
+      Defining configuration-controlled change types and approving changes is a
+      governance process. The overlay being in version control supports it, but
+      no host setting enforces it.
+
+  - id: "03.04.04"
+    title: Impact Analyses
+    disposition: organizational
+    rationale: >
+      Pre-change security impact analysis is an analytical process. The
+      auditor's post-change re-run satisfies the verification half of statement
+      b operationally but does not implement the requirement.
+
+  - id: "03.04.05"
+    title: Access Restrictions for Change
+    disposition: technical
+    tasks: tasks/cm.yml
+    host_scope: >
+      Logical access restrictions on change are enforced: package installation
+      requires root, GPG signature verification is mandatory for all repos and
+      for local packages, repo definitions and the dnf configuration are
+      root-owned and not group/world writable, and all changes to them are
+      audited.
+    checks: [cm-05-gpgcheck-global, cm-05-gpgcheck-repos, cm-05-localpkg-gpgcheck,
+             cm-05-repo-perms, cm-05-audit-config-changes]
+
+  - id: "03.04.06"
+    title: Least Functionality
+    disposition: technical
+    tasks: tasks/cm.yml
+    host_scope: >
+      Only mission-essential capability is present: unnecessary services are
+      masked, legacy and cleartext network services are absent, uncommon
+      filesystem and network protocol modules cannot load, GUI/print/mail
+      listeners are off, and separate mount points carry nodev/nosuid/noexec so
+      unnecessary execution paths are closed.
+    checks: [cm-06-no-legacy-services, cm-06-no-cleartext-clients,
+             cm-06-fs-modules-blocked, cm-06-net-protocols-blocked,
+             cm-06-mount-options, cm-06-tmp-separate, cm-06-no-listening-extras,
+             cm-06-ctrlaltdel-masked]
+
+  - id: "03.04.08"
+    title: Authorized Software - Allow by Exception
+    disposition: technical
+    tasks: tasks/cm.yml
+    host_scope: >
+      fapolicyd enforces a deny-all, allow-by-exception execution policy, with
+      the allow set derived from the RPM database so only software installed
+      from signed, authorized packages may execute. The authorized list is
+      regenerated whenever the package set changes.
+    checks: [cm-08-fapolicyd-installed, cm-08-fapolicyd-enabled,
+             cm-08-fapolicyd-running, cm-08-fapolicyd-deny-default,
+             cm-08-fapolicyd-rules]
+
+  - id: "03.04.10"
+    title: System Component Inventory
+    disposition: technical
+    tasks: tasks/cm.yml
+    host_scope: >
+      A component inventory is generated and refreshed on a timer: installed
+      packages with versions and signatures, kernel and firmware versions,
+      network interfaces and addresses, block devices, and listening services.
+      The dnf transaction hook updates it on every install or removal, which is
+      statement c.
+    checks: [cm-10-inventory-script, cm-10-inventory-exists, cm-10-inventory-timer,
+             cm-10-inventory-fresh, cm-10-dnf-hook]
+
+  - id: "03.04.11"
+    title: Information Location
+    disposition: partial
+    tasks: tasks/cm.yml
+    host_scope: >
+      The designated CUI data location is created as a distinct, labelled,
+      encrypted, access-restricted filesystem path, and its location is
+      recorded in the component manifest so "where CUI lives" is documented and
+      machine-readable rather than tribal knowledge.
+    residual: >
+      Identifying all CUI across the enterprise is a data-governance activity.
+    checks: [cm-11-cui-path-exists, cm-11-cui-path-perms, cm-11-cui-documented]
+
+  - id: "03.04.12"
+    title: System and Component Configuration for High-Risk Areas
+    disposition: organizational
+    rationale: >
+      Travel configurations and post-travel handling are a device-issuance
+      process. The hardened image is an input to that process, not the control.
+
+# ===========================================================================
+# 03.05 IDENTIFICATION AND AUTHENTICATION
+# ===========================================================================
+  - id: "03.05.01"
+    title: User Identification and Authentication
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      Every user is uniquely identified: no duplicate UIDs, GIDs, usernames, or
+      groups; no account has an empty password; no shared or anonymous login
+      paths exist; and the identity is bound to every process through the audit
+      loginuid, which is made immutable so a session's identity cannot be
+      changed after login.
+    checks: [ia-01-no-duplicate-uid, ia-01-no-duplicate-user,
+             ia-01-no-duplicate-gid, ia-01-no-empty-passwd,
+             ia-01-loginuid-immutable, ia-01-no-nullok, ia-01-no-plus-entries]
+
+  - id: "03.05.02"
+    title: Device Identification and Authentication
+    disposition: partial
+    tasks: tasks/ia.yml
+    host_scope: >
+      For the connections this host establishes, devices are authenticated
+      cryptographically: SSH host keys are present with protected permissions
+      and host key checking is enforced for outbound connections, so peer
+      identity is verified before a session is established.
+    residual: >
+      Network-level device authentication (802.1X, MAC allow-listing) is an
+      infrastructure control.
+    checks: [ia-02-host-keys-exist, ia-02-host-key-perms,
+             ia-02-ssh-stricthostkey]
+
+  - id: "03.05.03"
+    title: Multi-Factor Authentication
+    disposition: partial
+    tasks: tasks/ia.yml
+    host_scope: >
+      The host is configured to require two factors for remote access: sshd
+      AuthenticationMethods requires a possession factor (public key) in
+      addition to a knowledge factor, pam_pkcs11/sssd smart-card support is
+      installed and the PAM stack is prepared for PIV/CAC, and password-only
+      SSH authentication is refused.
+    residual: >
+      Issuing and binding the second factor (PIV/CAC credentials, or an OTP
+      provider) requires enterprise identity infrastructure. Enable
+      `mfa_enforce_pubkey` once operators hold keys, or the host will lock out.
+    checks: [ia-03-sshd-authmethods, ia-03-pkcs11-installed,
+             ia-03-sssd-installed, ia-03-sshd-no-password-only]
+
+  - id: "03.05.04"
+    title: Replay-Resistant Authentication
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      All authenticated access paths use replay-resistant mechanisms: SSH
+      transport with FIPS-approved KEX, cipher, and MAC algorithms provides
+      per-session nonces and rekeying, and the system-wide crypto policy
+      forbids the legacy algorithms that lack replay resistance.
+    checks: [ia-04-sshd-kex, ia-04-sshd-ciphers, ia-04-sshd-macs,
+             ia-04-crypto-policy-set, ia-04-rekey-limit]
+
+  - id: "03.05.05"
+    title: Identifier Management
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      Identifier assignment is constrained and reuse is prevented: UID_MIN/
+      GID_MIN separate human from system identifiers, identifiers are never
+      recycled (UID reuse is blocked by retaining the account record), and
+      individual identifiers are unique per person.
+    residual: >
+      Authorization to assign an identifier (statement a) is organizational.
+    checks: [ia-05-uid-min, ia-05-gid-min, ia-05-sys-uid-range,
+             ia-05-no-uid-reuse, ia-05-create-home]
+
+  - id: "03.05.07"
+    title: Password Management
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      pam_pwquality enforces the ODP composition rules (length, four character
+      classes, difok, repeat limits, dictionary and username checks) against a
+      compromised-password wordlist; pam_pwhistory prevents reuse; passwords are
+      stored as SHA-512 with the ODP round count in shadow only; and passwords
+      traverse only cryptographically protected channels because every
+      remote-access path is SSH/TLS under the FIPS policy.
+    checks: [ia-07-minlen, ia-07-dcredit, ia-07-ucredit, ia-07-lcredit,
+             ia-07-ocredit, ia-07-difok, ia-07-maxrepeat, ia-07-maxclassrepeat,
+             ia-07-minclass, ia-07-dictcheck, ia-07-pwhistory-remember,
+             ia-07-hash-sha512, ia-07-hash-rounds, ia-07-shadow-hashes,
+             ia-07-pwquality-in-pam, ia-07-enforce-for-root]
+
+  - id: "03.05.11"
+    title: Authentication Feedback
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      Authentication input is never echoed: sudo password feedback is off,
+      the login stack does not display characters, and SSH does not reveal
+      whether a username exists through differential banners.
+    checks: [ia-11-sudo-no-pwfeedback, ia-11-sudo-no-visiblepw,
+             ia-11-gdm-no-user-list]
+
+  - id: "03.05.12"
+    title: Authenticator Management
+    disposition: technical
+    tasks: tasks/ia.yml
+    host_scope: >
+      Authenticator lifetime is enforced (PASS_MAX_DAYS, PASS_MIN_DAYS,
+      PASS_WARN_AGE at the ODP values, applied to existing accounts as well as
+      defaults), default authenticators cannot persist (accounts created without
+      a password are locked, and the installer's root password is expired at
+      first boot), and authenticator content is protected by shadow file
+      permissions and the FIPS hash policy.
+    residual: >
+      Identity proofing at issuance and the administrative procedures for lost
+      or revoked authenticators (statements a, c) are organizational.
+    checks: [ia-12-pass-max-days, ia-12-pass-min-days, ia-12-pass-warn-age,
+             ia-12-existing-max-days, ia-12-existing-min-days,
+             ia-12-no-never-expire, ia-12-shadow-perms, ia-12-gshadow-perms]
+
+# ===========================================================================
+# 03.06 INCIDENT RESPONSE
+# ===========================================================================
+  - id: "03.06.01"
+    title: Incident Handling
+    disposition: organizational
+    rationale: >
+      An incident-handling capability is an organizational function. The host
+      contributes detection telemetry (auditd, AIDE, rsyslog) but implements no
+      part of the capability itself.
+
+  - id: "03.06.02"
+    title: Incident Monitoring, Reporting, and Response Assistance
+    disposition: partial
+    tasks: tasks/ir.yml
+    host_scope: >
+      Supplies the monitoring substrate that incident tracking depends on:
+      persistent journald storage with a defined retention, rsyslog forwarding
+      to the collector, and AIDE change alerts routed to the responder mailbox.
+    residual: >
+      Tracking, documenting, and reporting incidents, and providing a support
+      resource, are organizational.
+    checks: [ir-02-journald-persistent, ir-02-journald-retention,
+             ir-02-rsyslog-enabled, ir-02-logs-perms]
+
+  - id: "03.06.03"
+    title: Incident Response Testing
+    disposition: organizational
+    rationale: Exercise program. No host enforcement exists.
+
+  - id: "03.06.04"
+    title: Incident Response Training
+    disposition: organizational
+    rationale: Personnel training program. No host enforcement exists.
+
+  - id: "03.06.05"
+    title: Incident Response Plan
+    disposition: organizational
+    rationale: Plan development and distribution. No host enforcement exists.
+
+# ===========================================================================
+# 03.07 MAINTENANCE
+# ===========================================================================
+  - id: "03.07.04"
+    title: Maintenance Tools
+    disposition: partial
+    tasks: tasks/ma.yml
+    host_scope: >
+      Use of maintenance tools is controlled and monitored on the host: auditd
+      watches execution of diagnostic and maintenance binaries, and media
+      introduced for maintenance is scanned before use because removable media
+      is blocked by default (03.01.20) and on-demand scanning is installed.
+    residual: >
+      Approving tools and handling equipment removal (statements a, c) are
+      organizational.
+    checks: [ma-04-audit-maint-tools, ma-04-scanner-present]
+
+  - id: "03.07.05"
+    title: Nonlocal Maintenance
+    disposition: technical
+    tasks: tasks/ma.yml
+    host_scope: >
+      Nonlocal maintenance occurs only over SSH with multi-factor and
+      replay-resistant authentication (03.05.03, 03.05.04), sessions terminate
+      on completion or idle expiry via ClientAlive and TMOUT, and each session
+      is audited from establishment to teardown.
+    residual: Approving and monitoring the activity (statement a) is a process.
+    checks: [ma-05-ssh-session-audit, ma-05-ssh-idle-terminate,
+             ma-05-no-telnet-rsh]
+
+  - id: "03.07.06"
+    title: Maintenance Personnel
+    disposition: organizational
+    rationale: Authorization, escorting, and supervision of personnel.
+
+# ===========================================================================
+# 03.08 MEDIA PROTECTION
+# ===========================================================================
+  - id: "03.08.01"
+    title: Media Storage
+    disposition: organizational
+    rationale: Physical control and secure storage of media.
+
+  - id: "03.08.02"
+    title: Media Access
+    disposition: technical
+    tasks: tasks/mp.yml
+    host_scope: >
+      Access to CUI on system media is restricted to authorized roles by
+      filesystem enforcement: the CUI path is group-restricted and mode 0770 or
+      tighter, its parent path is not world-traversable, home directories are
+      0700, and default file creation for all users denies group and other.
+    checks: [mp-02-cui-path-mode, mp-02-home-perms, mp-02-umask-profile,
+             mp-02-no-world-readable-home]
+
+  - id: "03.08.03"
+    title: Media Sanitization
+    disposition: partial
+    tasks: tasks/mp.yml
+    host_scope: >
+      Sanitization capability is present and usable (shred, wipefs, blkdiscard,
+      nvme-cli for cryptographic erase), and crypto-erase is always available
+      because CUI volumes are LUKS-encrypted, so destroying the key sanitizes
+      the media.
+    residual: >
+      Performing and documenting sanitization prior to disposal is a process.
+    checks: [mp-03-sanitize-tools, mp-03-luks-present]
+
+  - id: "03.08.04"
+    title: Media Marking
+    disposition: organizational
+    rationale: Physical and document marking of media.
+
+  - id: "03.08.05"
+    title: Media Transport
+    disposition: organizational
+    rationale: Custody and accountability of media in transit.
+
+  - id: "03.08.07"
+    title: Media Use
+    disposition: technical
+    tasks: tasks/mp.yml
+    host_scope: >
+      Use of the prohibited media types in the ODP is blocked outright: the
+      usb-storage driver is prevented from loading, and automounting of
+      removable media is disabled, so no removable media (with or without an
+      identifiable owner) can be used without an authorized exception.
+    checks: [mp-07-usb-storage-blocked, mp-07-usb-storage-not-loaded,
+             mp-07-autofs-masked, mp-07-automount-disabled]
+
+  - id: "03.08.09"
+    title: System Backup - Cryptographic Protection
+    disposition: partial
+    tasks: tasks/mp.yml
+    host_scope: >
+      The host side is enforced: the backup staging location is a LUKS volume
+      using a FIPS-approved cipher, so backup content is encrypted at rest
+      before it leaves the host, and the backup path is access-restricted.
+    residual: >
+      Off-host backup storage, rotation, and restoration testing are handled by
+      the enterprise backup service.
+    checks: [mp-09-luks-cipher, mp-09-backup-path-perms]
+
+# ===========================================================================
+# 03.09 PERSONNEL SECURITY
+# ===========================================================================
+  - id: "03.09.01"
+    title: Personnel Screening
+    disposition: organizational
+    rationale: Background screening and rescreening of individuals.
+
+  - id: "03.09.02"
+    title: Personnel Termination and Transfer
+    disposition: partial
+    tasks: tasks/ps.yml
+    host_scope: >
+      Provides the mechanism that makes the ODP disable window achievable: an
+      offboarding helper that locks the account, expires it, revokes SSH
+      authorized keys and Kerberos credentials, and terminates live sessions in
+      a single auditable action.
+    residual: >
+      Triggering offboarding on an HR event, and retrieving physical property,
+      are organizational.
+    checks: [ps-02-offboard-tool, ps-02-offboard-executable]
+
+# ===========================================================================
+# 03.10 PHYSICAL PROTECTION
+# ===========================================================================
+  - id: "03.10.01"
+    title: Physical Access Authorizations
+    disposition: organizational
+    rationale: Facility access list management.
+
+  - id: "03.10.02"
+    title: Monitoring Physical Access
+    disposition: organizational
+    rationale: Facility monitoring and physical access log review.
+
+  - id: "03.10.06"
+    title: Alternate Work Site
+    disposition: organizational
+    rationale: >
+      Determining permitted alternate work sites is a policy decision. The
+      hardened configuration is what gets deployed to them.
+
+  - id: "03.10.07"
+    title: Physical Access Control
+    disposition: partial
+    tasks: tasks/pe.yml
+    host_scope: >
+      The host-enforceable residue of physical access control is boot-path
+      protection: a GRUB superuser password prevents console modification of
+      boot parameters, single-user and emergency targets require the root
+      password, and Ctrl-Alt-Del reboot is disabled so console presence alone
+      does not grant control.
+    residual: >
+      Entry/exit enforcement, visitor escorting, key control, and output device
+      control are facility controls.
+    checks: [pe-07-grub-password, pe-07-grub-cfg-perms, pe-07-single-user-auth,
+             pe-07-emergency-auth, pe-07-ctrlaltdel-disabled]
+
+  - id: "03.10.08"
+    title: Access Control for Transmission
+    disposition: organizational
+    rationale: Physical protection of distribution and transmission lines.
+
+# ===========================================================================
+# 03.11 RISK ASSESSMENT
+# ===========================================================================
+  - id: "03.11.01"
+    title: Risk Assessment
+    disposition: organizational
+    rationale: Organizational risk assessment activity and its update cycle.
+
+  - id: "03.11.02"
+    title: Vulnerability Monitoring and Scanning
+    disposition: technical
+    tasks: tasks/ra.yml
+    host_scope: >
+      The host scans itself at the ODP frequency: a systemd timer runs an
+      OpenSCAP evaluation against the SSG content plus a dnf security-advisory
+      check, writes results where the assessor collects them, and the advisory
+      metadata is refreshed so newly published vulnerabilities enter scope
+      automatically (statement c).
+    checks: [ra-02-openscap-installed, ra-02-ssg-content, ra-02-scan-timer,
+             ra-02-scan-timer-enabled, ra-02-updateinfo-available,
+             ra-02-scan-results]
+
+  - id: "03.11.04"
+    title: Risk Response
+    disposition: organizational
+    rationale: >
+      Deciding how to respond to assessment findings is a risk-management
+      decision. The scanner produces the findings; the response is governance.
+
+# ===========================================================================
+# 03.12 SECURITY ASSESSMENT AND MONITORING
+# ===========================================================================
+  - id: "03.12.01"
+    title: Security Assessment
+    disposition: partial
+    tasks: tasks/ca.yml
+    host_scope: >
+      The auditor in this toolkit is the assessment mechanism: it evaluates
+      every requirement in this overlay against the running host and produces a
+      dated, per-requirement pass/fail record with evidence. It is installed on
+      the host and scheduled at the ODP frequency.
+    residual: >
+      Assessing the environment of operation, and the independence of the
+      assessor, are organizational.
+    checks: [ca-01-auditor-installed, ca-01-assessment-timer,
+             ca-01-assessment-results]
+
+  - id: "03.12.02"
+    title: Plan of Action and Milestones
+    disposition: partial
+    tasks: tasks/ca.yml
+    host_scope: >
+      Generates the POA&M input automatically: every failed or partially
+      implemented requirement from the most recent assessment is emitted as a
+      structured POA&M item with the requirement ID, the observed deviation, and
+      the date first observed.
+    residual: >
+      Assigning owners, remediation dates, and resources is a management
+      activity.
+    checks: [ca-02-poam-generator, ca-02-poam-output]
+
+  - id: "03.12.03"
+    title: Continuous Monitoring
+    disposition: partial
+    tasks: tasks/ca.yml
+    host_scope: >
+      Implements the system-level half of the strategy: scheduled AIDE
+      integrity checks, scheduled compliance assessment, scheduled vulnerability
+      scanning, and continuous audit collection, each on a timer with results
+      forwarded off-host.
+    residual: Defining the organizational monitoring strategy is governance.
+    checks: [ca-03-aide-timer-enabled, ca-03-assessment-timer-enabled,
+             ca-03-scan-timer-enabled, ca-03-monitoring-summary]
+
+  - id: "03.12.05"
+    title: Information Exchange
+    disposition: organizational
+    rationale: Interconnection and exchange agreements between systems.
+
+# ===========================================================================
+# 03.13 SYSTEM AND COMMUNICATIONS PROTECTION
+# ===========================================================================
+  - id: "03.13.01"
+    title: Boundary Protection
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      firewalld is the managed interface for this host: it is enabled and
+      running, every interface is bound to a zone with a restrictive target,
+      only explicitly authorized services are permitted inbound, and dropped
+      traffic at the boundary is logged for monitoring.
+    checks: [sc-01-firewalld-installed, sc-01-firewalld-enabled,
+             sc-01-firewalld-running, sc-01-default-zone,
+             sc-01-zone-target, sc-01-services-minimal, sc-01-log-denied,
+             sc-01-nftables-backend]
+
+  - id: "03.13.04"
+    title: Information in Shared System Resources
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      Residual information cannot leak between subjects: core dumps are
+      disabled for all users and for setuid programs, kernel address exposure is
+      restricted (kptr_restrict, dmesg_restrict), ptrace is confined to
+      descendants, ASLR is enabled, mmap_min_addr prevents null-page mapping,
+      and shared temporary directories carry the sticky bit.
+    checks: [sc-04-core-dumps-limit, sc-04-suid-dumpable, sc-04-coredump-storage,
+             sc-04-kptr-restrict, sc-04-dmesg-restrict, sc-04-ptrace-scope,
+             sc-04-randomize-va, sc-04-mmap-min-addr, sc-04-tmp-sticky]
+
+  - id: "03.13.06"
+    title: Network Communications - Deny by Default - Allow by Exception
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      The firewall default is deny in both directions of interest: the default
+      zone target is DROP (not default/ACCEPT), no unexpected ports are open,
+      and only explicitly added services constitute the exception set.
+    checks: [sc-06-zone-target-drop, sc-06-no-unexpected-ports,
+             sc-06-icmp-block, sc-06-listening-allowlist]
+
+  - id: "03.13.08"
+    title: Transmission and Storage Confidentiality
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      CUI is encrypted in transit and at rest: all remote access is SSH under
+      the FIPS crypto policy with approved ciphers, cleartext protocols are
+      absent, and the CUI and backup filesystems are LUKS2 volumes using an
+      approved cipher with the key never stored in cleartext on the device.
+    checks: [sc-08-crypto-policy, sc-08-luks-encrypted, sc-08-luks-cipher,
+             sc-08-no-cleartext-services, sc-08-ssh-ciphers-approved,
+             sc-08-gnutls-policy]
+
+  - id: "03.13.09"
+    title: Network Disconnect
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      Network connections terminate at session end or after the ODP idle
+      period: sshd ClientAliveInterval/ClientAliveCountMax drop idle sessions,
+      TCP keepalive detects dead peers, and TMOUT ends the shell that owns the
+      connection.
+    checks: [sc-09-clientalive-interval, sc-09-clientalive-countmax,
+             sc-09-tcp-keepalive, sc-09-tmout]
+
+  - id: "03.13.10"
+    title: Cryptographic Key Establishment and Management
+    disposition: partial
+    tasks: tasks/sc.yml
+    host_scope: >
+      Key generation, storage, and access on the host follow the ODP: the
+      system-wide crypto policy constrains key establishment to approved
+      algorithms and key sizes, SSH host and user keys are generated at approved
+      strength with 0600 permissions, and the LUKS key slots use an approved KDF.
+    residual: >
+      Enterprise key lifecycle (escrow, rotation schedule, destruction records)
+      is a KMS function.
+    checks: [sc-10-crypto-policy, sc-10-host-key-strength, sc-10-host-key-perms,
+             sc-10-luks-kdf, sc-10-no-dsa-keys]
+
+  - id: "03.13.11"
+    title: Cryptographic Protection
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      The ODP type of cryptography is FIPS 140-3 validated modules. FIPS mode is
+      enabled in the kernel and in userspace (fips=1 on the kernel command line,
+      /proc/sys/crypto/fips_enabled = 1, crypto-policies set to FIPS), so every
+      library that protects CUI uses validated implementations.
+    checks: [sc-11-fips-kernel, sc-11-fips-proc, sc-11-fips-crypto-policy,
+             sc-11-dracut-fips, sc-11-fips-grub, sc-11-no-weak-hashes]
+
+  - id: "03.13.12"
+    title: Collaborative Computing Devices and Applications
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      Remote activation is prohibited by removing the capability: camera,
+      microphone, and conferencing packages are absent, and the USB video and
+      audio class drivers are blocked from loading, so no collaborative device
+      can be activated remotely.
+    checks: [sc-12-no-camera-pkgs, sc-12-usb-video-blocked,
+             sc-12-no-conferencing-pkgs]
+
+  - id: "03.13.13"
+    title: Mobile Code
+    disposition: partial
+    tasks: tasks/sc.yml
+    host_scope: >
+      Unacceptable mobile code technologies are not installed and cannot
+      execute: browser plugin runtimes are absent, and fapolicyd (03.04.08)
+      denies execution of any interpreter or binary not originating from an
+      authorized package, which is the enforcement half of statement b.
+    residual: Defining acceptable mobile code (statement a) is policy.
+    checks: [sc-13-no-mobile-code-runtimes, sc-13-fapolicyd-enforcing]
+
+  - id: "03.13.15"
+    title: Session Authenticity
+    disposition: technical
+    tasks: tasks/sc.yml
+    host_scope: >
+      Session authenticity is protected cryptographically: SSH sessions are
+      integrity-protected with approved MACs and rekey on a bounded interval,
+      the crypto policy forbids algorithms without integrity guarantees, and TCP
+      sequence randomization plus SYN cookies resist session injection.
+    checks: [sc-15-ssh-macs, sc-15-rekey-limit, sc-15-tcp-syncookies,
+             sc-15-tcp-timestamps, sc-15-crypto-policy-no-legacy]
+
+# ===========================================================================
+# 03.14 SYSTEM AND INFORMATION INTEGRITY
+# ===========================================================================
+  - id: "03.14.01"
+    title: Flaw Remediation
+    disposition: technical
+    tasks: tasks/si.yml
+    host_scope: >
+      Flaws are identified and corrected automatically within the ODP window:
+      dnf-automatic is enabled in security-only mode with apply_updates, running
+      on a timer well inside the ODP patch window, and its outcome is logged and
+      reported so remediation is evidenced.
+    checks: [si-01-dnf-automatic-installed, si-01-dnf-automatic-timer,
+             si-01-upgrade-type-security, si-01-apply-updates,
+             si-01-no-pending-security-updates, si-01-emit-via]
+
+  - id: "03.14.02"
+    title: Malicious Code Protection
+    disposition: technical
+    tasks: tasks/si.yml
+    host_scope: >
+      Two complementary mechanisms: fapolicyd blocks execution of any
+      unauthorized binary at the point of execution (prevention), and ClamAV
+      provides signature-based detection with on-access scanning of files from
+      external sources plus a scheduled full scan at the ODP frequency, with
+      freshclam keeping signatures current and detections quarantined.
+    checks: [si-02-clamav-installed, si-02-freshclam-enabled,
+             si-02-clamav-scan-timer, si-02-signatures-fresh,
+             si-02-fapolicyd-running, si-02-scan-action-quarantine]
+
+  - id: "03.14.03"
+    title: Security Alerts, Advisories, and Directives
+    disposition: partial
+    tasks: tasks/si.yml
+    host_scope: >
+      The host receives and acts on external advisories mechanically: the Rocky
+      errata/updateinfo feed is enabled and refreshed so advisories reach the
+      system, and internal alerts are generated from AIDE, auditd, and the
+      assessment timer to the configured responder mailbox.
+    residual: >
+      Subscribing to and disseminating advisories organization-wide is a process.
+    checks: [si-03-updateinfo-enabled, si-03-alert-mail-configured,
+             si-03-aide-alerting]
+
+  - id: "03.14.06"
+    title: System Monitoring
+    disposition: technical
+    tasks: tasks/si.yml
+    host_scope: >
+      The system is monitored for attacks, unauthorized connections, and
+      unauthorized use: auditd rules capture authentication failures, privilege
+      escalation, and unauthorized file access; firewalld logs denied inbound
+      traffic; AIDE detects unauthorized change; and both inbound and outbound
+      traffic are subject to the logged deny-by-default policy.
+    checks: [si-06-audit-login-events, si-06-audit-unauth-access,
+             si-06-firewalld-log-denied, si-06-aide-timer-enabled,
+             si-06-audit-module-load, si-06-audit-network-config]
+
+  - id: "03.14.08"
+    title: Information Management and Retention
+    disposition: partial
+    tasks: tasks/si.yml
+    host_scope: >
+      Retention of the system's own records is enforced to the ODP: audit logs
+      are retained for the retention period without loss, journald has a bounded
+      persistent retention, and logrotate keeps system logs for the same window
+      with restrictive permissions.
+    residual: >
+      Retention of CUI content itself is governed by records-management policy.
+    checks: [si-08-audit-retention, si-08-journald-retention,
+             si-08-logrotate-retention, si-08-log-perms]
+
+# ===========================================================================
+# 03.15 PLANNING
+# ===========================================================================
+  - id: "03.15.01"
+    title: Policy and Procedures
+    disposition: organizational
+    rationale: >
+      Policy development and dissemination. The role emits an SSP stub
+      documenting the technical procedures it implements, as an input.
+
+  - id: "03.15.02"
+    title: System Security Plan
+    disposition: partial
+    tasks: tasks/pl.yml
+    host_scope: >
+      Generates the machine-derivable portions of the SSP directly from the
+      host: constituent components (from the 03.04.10 inventory), the
+      operational environment, the safeguards in place (this overlay, with the
+      assessed status of each requirement), and the CUI location from 03.04.11.
+    residual: >
+      Threat description, role assignment, and approval are authored by the
+      system owner.
+    checks: [pl-02-ssp-generated, pl-02-ssp-perms, pl-02-ssp-current]
+
+  - id: "03.15.03"
+    title: Rules of Behavior
+    disposition: organizational
+    rationale: >
+      Rules of behavior and acknowledgement are a personnel process. The login
+      banner from 03.01.09 presents them but does not implement the requirement.
+
+# ===========================================================================
+# 03.16 SYSTEM AND SERVICES ACQUISITION
+# ===========================================================================
+  - id: "03.16.01"
+    title: Security Engineering Principles
+    disposition: organizational
+    rationale: >
+      Engineering principles applied during design. This overlay is an
+      application of least privilege and defense in depth but does not
+      implement the requirement.
+
+  - id: "03.16.02"
+    title: Unsupported System Components
+    disposition: technical
+    tasks: tasks/sa.yml
+    host_scope: >
+      The host verifies it is running a vendor-supported release: the Rocky
+      major version is within its support lifecycle, the running kernel matches
+      the latest installed kernel, and no package originates from a repository
+      that is end-of-life or from outside the authorized repository set.
+    checks: [sa-02-supported-release, sa-02-kernel-current,
+             sa-02-no-unsupported-repos, sa-02-no-orphan-packages]
+
+  - id: "03.16.03"
+    title: External System Services
+    disposition: organizational
+    rationale: Provider requirements, roles, and ongoing compliance monitoring.
+
+# ===========================================================================
+# 03.17 SUPPLY CHAIN RISK MANAGEMENT
+# ===========================================================================
+  - id: "03.17.01"
+    title: Supply Chain Risk Management Plan
+    disposition: organizational
+    rationale: SCRM plan development, review, and protection.
+
+  - id: "03.17.02"
+    title: Acquisition Strategies, Tools, and Methods
+    disposition: organizational
+    rationale: Acquisition and procurement practice.
+
+  - id: "03.17.03"
+    title: Supply Chain Requirements and Processes
+    disposition: partial
+    tasks: tasks/sr.yml
+    host_scope: >
+      Enforces the host-verifiable supply chain control: every installed package
+      must carry a valid signature from an authorized Rocky GPG key, the
+      authorized key set is pinned, and unsigned or foreign-signed packages are
+      detected and reported.
+    residual: >
+      Supplier assessment and contractual flow-down are procurement processes.
+    checks: [sr-03-gpg-keys-imported, sr-03-all-packages-signed,
+             sr-03-no-unauthorized-repos]

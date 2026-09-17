@@ -1,0 +1,90 @@
+---
+# 03.10 PHYSICAL PROTECTION
+#
+# Only the boot path is host-enforceable (03.10.07). Everything else in this
+# family is a facility control.
+
+- name: "03.10.07 | Stage the GRUB superuser password"
+  ansible.builtin.copy:
+    content: "{{ lookup('file', playbook_dir + '/.secrets/admin_password') | trim }}"
+    dest: /root/.grub-pw
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: nist_set_grub_password
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Set a GRUB superuser password"
+  # 03.10.07a  Console presence alone must not grant control of the system.
+  # Normal boot entries stay unrestricted so the host still boots unattended;
+  # editing an entry or reaching the GRUB shell requires the password.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      # Rewriting the file every run would regenerate the PBKDF2 salt, so the
+      # content would differ each time and drift detection would be useless.
+      if [ -f /etc/grub.d/01_users ] && grep -q password_pbkdf2 /etc/grub.d/01_users; then
+        echo "already-set"
+        exit 0
+      fi
+      pw=$(cat /root/.grub-pw)
+      hash=$(printf '%s\n%s\n' "$pw" "$pw" | grub2-mkpasswd-pbkdf2 | \
+             awk '/grub.pbkdf2/ {print $NF}')
+      [ -n "$hash" ] || exit 1
+      cat > /etc/grub.d/01_users <<USERS
+      #!/bin/sh
+      cat <<'EOFGRUB'
+      set superusers="grubadmin"
+      password_pbkdf2 grubadmin $hash
+      EOFGRUB
+      USERS
+      chmod 0755 /etc/grub.d/01_users
+      # Keep automatic boot working: mark generated entries unrestricted.
+      if ! grep -q '^GRUB_DISABLE_RECOVERY' /etc/default/grub; then
+        echo 'GRUB_DISABLE_RECOVERY="true"' >> /etc/default/grub
+      fi
+      sed -i '/^GRUB_ENABLE_BLSCFG/d' /etc/default/grub
+      echo 'GRUB_ENABLE_BLSCFG=true' >> /etc/default/grub
+      echo changed=1
+    executable: /bin/bash
+  when: nist_set_grub_password
+  register: nist_grub_pw
+  changed_when: "'changed=1' in nist_grub_pw.stdout"
+  notify: update grub config
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Mark boot menu entries unrestricted so boot stays unattended"
+  ansible.builtin.lineinfile:
+    path: /etc/grub.d/10_linux
+    regexp: '^\s*CLASS="--class gnu-linux'
+    line: 'CLASS="--class gnu-linux --class gnu --class os --unrestricted"'
+    backrefs: false
+  when: nist_set_grub_password
+  failed_when: false
+  notify: update grub config
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Protect the GRUB configuration files"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - /boot/grub2/grub.cfg
+    - /boot/grub2/user.cfg
+  failed_when: false
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Require authentication for single-user and emergency mode"
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: '^\s*ExecStart='
+    line: "ExecStart=-/usr/lib/systemd/systemd-sulogin-shell {{ 'rescue' if 'rescue' in item else 'emergency' }}"
+    create: false
+  loop:
+    - /usr/lib/systemd/system/rescue.service
+    - /usr/lib/systemd/system/emergency.service
+  failed_when: false
+  tags: ["03.10.07"]

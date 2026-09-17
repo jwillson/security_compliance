@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 03.09.02a  Personnel termination: disable access within the ODP window.
+#
+#   nist-offboard-user <username>
+#
+# Performs every host-side revocation in one auditable action: lock the
+# account, expire it, revoke authenticators, and terminate live sessions.
+set -euo pipefail
+
+USER_TO_REMOVE="${1:-}"
+[ -n "$USER_TO_REMOVE" ] || { echo "usage: $0 <username>" >&2; exit 2; }
+id "$USER_TO_REMOVE" >/dev/null 2>&1 || { echo "error: no such user" >&2; exit 2; }
+
+echo "Offboarding $USER_TO_REMOVE (NIST 800-171r3 03.09.02a)"
+logger -p authpriv.notice -t nist-800-171 \
+  "03.09.02 offboarding $USER_TO_REMOVE by ${SUDO_USER:-$USER}"
+
+# a.1  Disable system access.
+passwd -l "$USER_TO_REMOVE"
+usermod --expiredate 1 "$USER_TO_REMOVE"
+usermod --shell /sbin/nologin "$USER_TO_REMOVE"
+echo "  [done] account locked, expired, shell removed"
+
+# a.2  Terminate or revoke authenticators and credentials.
+HOME_DIR=$(getent passwd "$USER_TO_REMOVE" | cut -d: -f6)
+if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR/.ssh" ]; then
+  mv "$HOME_DIR/.ssh/authorized_keys" \
+     "$HOME_DIR/.ssh/authorized_keys.revoked-$(date -u +%Y%m%d)" 2>/dev/null || true
+  echo "  [done] ssh authorized_keys revoked"
+fi
+command -v kdestroy >/dev/null 2>&1 && kdestroy -A -p "$USER_TO_REMOVE" 2>/dev/null || true
+crontab -r -u "$USER_TO_REMOVE" 2>/dev/null && echo "  [done] cron jobs removed" || true
+
+# Terminate live sessions so access ends now, not at next logout.
+pkill -KILL -u "$USER_TO_REMOVE" 2>/dev/null || true
+loginctl terminate-user "$USER_TO_REMOVE" 2>/dev/null || true
+echo "  [done] active sessions terminated"
+
+echo
+echo "Host-side revocation complete. Still required by 03.09.02a:"
+echo "  - retrieve security-related system property (a.3)"
+echo "  - revoke enterprise credentials (directory, VPN, PIV/CAC)"
+echo "  - record the action in the offboarding log"

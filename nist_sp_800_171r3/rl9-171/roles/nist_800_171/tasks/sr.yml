@@ -1,0 +1,44 @@
+---
+# 03.17 SUPPLY CHAIN RISK MANAGEMENT
+
+# ===========================================================================
+# 03.17.03 Supply Chain Requirements and Processes
+# ===========================================================================
+- name: "03.17.03 | Import the authorized Rocky signing keys"
+  ansible.builtin.rpm_key:
+    key: "{{ item }}"
+    state: present
+  loop:
+    - /etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+  failed_when: false
+  tags: ["03.17.03"]
+
+- name: "03.17.03 | Find packages that are unsigned or foreign-signed"
+  # 03.17.03b  Every component must trace to an authorized supplier. An
+  # unsigned package has no verifiable provenance.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      rpm -qa --queryformat '%{NAME} %{SIGPGP:pgpsig}\n' \
+        | awk '$2 == "(none)" || $2 == "" {print $1}' \
+        | grep -v '^gpg-pubkey' || true
+    executable: /bin/bash
+  register: nist_unsigned
+  changed_when: false
+  check_mode: false
+  tags: ["03.17.03"]
+
+- name: "03.17.03 | Record the supply chain verification result"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/supply-chain-status"
+    content: |
+      # 03.17.03b  Provenance of installed components.
+      authorized_keys=RPM-GPG-KEY-Rocky-9
+      gpgcheck=enforced
+      localpkg_gpgcheck=enforced
+      unsigned_package_count={{ nist_unsigned.stdout_lines | length }}
+      unsigned_packages={{ nist_unsigned.stdout_lines | join(',') if nist_unsigned.stdout_lines else '(none)' }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.17.03"]

@@ -1,0 +1,31 @@
+---
+# 03.06 INCIDENT RESPONSE
+#
+# Only 03.06.02 has a host-enforceable component. The journald retention and
+# log permissions it needs are applied with 03.14.08 in si.yml; this file adds
+# the pieces specific to incident monitoring.
+
+- name: "03.06.02 | Ensure the journal directory exists and is persistent"
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2750"
+  notify: restart journald
+  tags: ["03.06.02"]
+
+- name: "03.06.02 | Record the incident reporting path"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/incident-reporting.conf"
+    content: |
+      # 03.06.02b/c  Where suspected incidents are reported.
+      # The host generates the telemetry; reporting to the organizational
+      # incident response capability and to external authorities is a process.
+      incident_mail={{ nist_alert_mail }}
+      log_collector={{ nist_log_collector | default('(none configured)', true) }}
+      telemetry=auditd,journald,aide,clamav,firewalld
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.06.02"]

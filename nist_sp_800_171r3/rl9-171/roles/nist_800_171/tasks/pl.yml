@@ -1,0 +1,34 @@
+---
+# 03.15 PLANNING
+
+# ===========================================================================
+# 03.15.02 System Security Plan
+# ===========================================================================
+- name: "03.15.02 | Install the SSP generator"
+  ansible.builtin.template:
+    src: generate-ssp.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-generate-ssp"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.15.02"]
+
+- name: "03.15.02 | Generate the machine-derivable portions of the SSP"
+  # A regenerated document, not a configuration change - see the note on the
+  # inventory generator in cm.yml.
+  ansible.builtin.command:
+    cmd: "{{ nist_bin_dir }}/nist-generate-ssp"
+  changed_when: false
+  failed_when: false
+  tags: ["03.15.02"]
+
+- name: "03.15.02 | Protect the system security plan"
+  # 03.15.02c  The SSP describes the safeguards in place and is itself
+  # sensitive; it is readable only by root.
+  ansible.builtin.file:
+    path: "{{ nist_conf_dir }}/system-security-plan.md"
+    owner: root
+    group: root
+    mode: "0600"
+  failed_when: false
+  tags: ["03.15.02"]

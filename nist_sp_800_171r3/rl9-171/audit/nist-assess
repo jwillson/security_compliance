@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""
+nist-assess - assess a Rocky Linux 9 host against NIST SP 800-171r3.
+
+This is the verification half of the toolkit and is written independently of
+the Ansible role: it never reads the role's variables or its task files, and it
+never trusts a "changed=0" result. It inspects the running system directly and
+reports what it observes.
+
+Each requirement's status is derived from its checks:
+
+  PASS            every check passed
+  FAIL            at least one check failed - a real deviation
+  ERROR           a check could not be evaluated (missing tool, permission)
+  NOT_APPLICABLE  no host control exists (organizational requirements)
+  MANUAL          host enforces part of it; the rest needs human evidence
+
+A PASS is only ever claimed for something actually observed on the host.
+
+Usage:
+    nist-assess                          assess everything, human-readable
+    nist-assess --json results.json      machine-readable output
+    nist-assess --html report.html       standalone HTML report
+    nist-assess --family 03.03           one family
+    nist-assess --requirement 03.05.07   one requirement
+    nist-assess --failed-only            show only deviations
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Search path for the catalog/overlay/checks, so the tool works both from the
+# repo on a control workstation and from /etc/nist-800-171 on a managed host.
+SEARCH_DIRS = [
+    Path(__file__).resolve().parent,
+    Path(__file__).resolve().parent.parent,
+    Path(__file__).resolve().parent.parent / "catalog",
+    Path("/etc/nist-800-171"),
+]
+
+STATUS_ORDER = ["FAIL", "ERROR", "MANUAL", "NOT_APPLICABLE", "PASS"]
+
+COLOR = {
+    "PASS": "\033[32m", "FAIL": "\033[31m", "ERROR": "\033[35m",
+    "MANUAL": "\033[33m", "NOT_APPLICABLE": "\033[90m",
+    "RESET": "\033[0m", "BOLD": "\033[1m", "DIM": "\033[2m",
+}
+
+
+def find(name: str) -> Path | None:
+    for d in SEARCH_DIRS:
+        p = d / name
+        if p.is_file():
+            return p
+    return None
+
+
+def load_yaml(path: Path):
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("error: PyYAML is required (dnf install python3-pyyaml)")
+    with path.open() as fh:
+        return yaml.safe_load(fh)
+
+
+# ---------------------------------------------------------------------------
+# Check execution
+# ---------------------------------------------------------------------------
+
+class Runner:
+    """Executes a check definition against the local system."""
+
+    def __init__(self, odp: dict, verbose: bool = False):
+        self.odp = odp
+        self.verbose = verbose
+        self._cache: dict[str, tuple[int, str, str]] = {}
+
+    def shell(self, cmd: str) -> tuple[int, str, str]:
+        """Run a command, caching identical invocations within one assessment."""
+        if cmd in self._cache:
+            return self._cache[cmd]
+        try:
+            p = subprocess.run(
+                ["/bin/bash", "-o", "pipefail", "-c", cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+            result = (p.returncode, p.stdout.strip(), p.stderr.strip())
+        except subprocess.TimeoutExpired:
+            result = (124, "", "timed out after 120s")
+        except Exception as exc:                       # noqa: BLE001
+            result = (125, "", str(exc))
+        self._cache[cmd] = result
+        return result
+
+    def expand(self, text: str) -> str:
+        """Substitute {odp.name} references so checks read the same policy
+        values the role applied."""
+        def sub(m):
+            key = m.group(1)
+            if key not in self.odp:
+                raise KeyError(f"unknown ODP '{key}'")
+            return str(self.odp[key])
+        return re.sub(r"\{odp\.([a-z0-9_]+)\}", sub, text)
+
+    def run(self, check: dict) -> dict:
+        """Evaluate one check and return its result record."""
+        cid = check["id"]
+        out = {
+            "id": cid,
+            "description": check.get("description", ""),
+            "status": "ERROR",
+            "evidence": "",
+            "expected": "",
+        }
+
+        try:
+            cmd = self.expand(check["command"])
+        except KeyError as exc:
+            out["evidence"] = f"check definition error: {exc}"
+            return out
+
+        rc, stdout, stderr = self.shell(cmd)
+        observed = stdout
+
+        # A check declares exactly one assertion form.
+        if "expect_rc" in check:
+            expected = int(check["expect_rc"])
+            out["expected"] = f"exit status {expected}"
+            out["evidence"] = observed or stderr or f"(exit {rc})"
+            out["status"] = "PASS" if rc == expected else "FAIL"
+
+        elif "expect_output" in check:
+            expected = self.expand(str(check["expect_output"]))
+            out["expected"] = f"output == {expected!r}"
+            out["evidence"] = observed or stderr or "(no output)"
+            out["status"] = "PASS" if observed == expected else "FAIL"
+
+        elif "expect_match" in check:
+            pattern = self.expand(str(check["expect_match"]))
+            out["expected"] = f"output matches /{pattern}/"
+            out["evidence"] = observed or stderr or "(no output)"
+            out["status"] = "PASS" if re.search(pattern, observed, re.M) else "FAIL"
+
+        elif "expect_no_match" in check:
+            pattern = self.expand(str(check["expect_no_match"]))
+            out["expected"] = f"output does not match /{pattern}/"
+            out["evidence"] = observed or "(no output)"
+            out["status"] = "FAIL" if re.search(pattern, observed, re.M) else "PASS"
+
+        elif "expect_empty" in check:
+            out["expected"] = "no output"
+            out["evidence"] = observed or "(empty)"
+            out["status"] = "PASS" if not observed else "FAIL"
+
+        elif "expect_int" in check:
+            spec = self.expand(str(check["expect_int"]))
+            out["expected"] = f"value {spec}"
+            out["evidence"] = observed or "(no output)"
+            found = re.search(r"-?\d+", observed)
+            if found is None:
+                # The setting is absent, or the file it lives in does not
+                # exist. That is a deviation from the baseline, not a fault in
+                # the assessor, so report it as one.
+                out["status"] = "FAIL"
+                out["evidence"] = (
+                    f"no value found - setting absent or unreadable"
+                    f"{(': ' + stderr) if stderr else ''}"
+                )
+            else:
+                try:
+                    value = int(found.group())
+                    op, _, rhs = spec.partition(" ")
+                    rhs_val = int(rhs)
+                    ok = {
+                        "==": value == rhs_val, "!=": value != rhs_val,
+                        "<=": value <= rhs_val, ">=": value >= rhs_val,
+                        "<": value < rhs_val,   ">": value > rhs_val,
+                    }[op]
+                    out["status"] = "PASS" if ok else "FAIL"
+                except (KeyError, ValueError) as exc:
+                    out["status"] = "ERROR"
+                    out["evidence"] = f"malformed assertion {spec!r}: {exc}"
+        else:
+            out["evidence"] = "check defines no assertion"
+
+        # A check may declare that the component it inspects is optional. When
+        # such a check exits non-zero the component is absent rather than
+        # misconfigured, so it degrades to MANUAL - something a human must
+        # confirm by other means - instead of being reported as a deviation.
+        # The distinction matters: a FAIL should always mean "this host is
+        # wrong", never "this tool could not look".
+        if out["status"] in ("FAIL", "ERROR") and check.get("manual_if_absent") and rc != 0:
+            out["status"] = "MANUAL"
+            out["evidence"] = (
+                f"not assessed automatically: {observed or stderr or 'component not present'}"
+            )
+
+        if self.verbose:
+            print(f"    {cid}: {out['status']}  [{cmd}]", file=sys.stderr)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Assessment
+# ---------------------------------------------------------------------------
+
+def assess(overlay, catalog, checks_by_id, args) -> dict:
+    odp = overlay.get("odp", {})
+    runner = Runner(odp, verbose=args.verbose)
+    titles = {r["id"]: r["title"] for r in catalog["requirements"]}
+
+    selected = []
+    for req in overlay["requirements"]:
+        if args.requirement and req["id"] != args.requirement:
+            continue
+        if args.family and not req["id"].startswith(args.family):
+            continue
+        selected.append(req)
+
+    if not selected:
+        sys.exit("error: no requirements matched the selection")
+
+    results = []
+    for req in selected:
+        entry = {
+            "id": req["id"],
+            "title": titles.get(req["id"], req.get("title", "")),
+            "disposition": req["disposition"],
+            "checks": [],
+        }
+
+        if req["disposition"] == "organizational":
+            entry["status"] = "NOT_APPLICABLE"
+            entry["note"] = " ".join((req.get("rationale") or "").split())
+            results.append(entry)
+            continue
+
+        entry["host_scope"] = " ".join((req.get("host_scope") or "").split())
+        if req.get("residual"):
+            entry["residual"] = " ".join(req["residual"].split())
+
+        missing = []
+        for cid in req.get("checks", []):
+            spec = checks_by_id.get(cid)
+            if spec is None:
+                missing.append(cid)
+                entry["checks"].append({
+                    "id": cid, "status": "ERROR",
+                    "description": "(undefined)",
+                    "evidence": "no definition in checks.yml",
+                    "expected": "",
+                })
+                continue
+            entry["checks"].append(runner.run(spec))
+
+        statuses = {c["status"] for c in entry["checks"]}
+        if "FAIL" in statuses:
+            entry["status"] = "FAIL"
+        elif "ERROR" in statuses:
+            entry["status"] = "ERROR"
+        elif "MANUAL" in statuses:
+            entry["status"] = "MANUAL"
+        elif req["disposition"] == "partial":
+            # Every host-side check passed, but the requirement is only
+            # partially satisfiable on a host. Never report that as PASS.
+            entry["status"] = "MANUAL"
+        else:
+            entry["status"] = "PASS"
+
+        if missing:
+            entry["undefined_checks"] = missing
+        results.append(entry)
+
+    summary = {
+        "pass": sum(1 for r in results if r["status"] == "PASS"),
+        "fail": sum(1 for r in results if r["status"] == "FAIL"),
+        "error": sum(1 for r in results if r["status"] == "ERROR"),
+        "manual": sum(1 for r in results if r["status"] == "MANUAL"),
+        "not_applicable": sum(1 for r in results if r["status"] == "NOT_APPLICABLE"),
+        "total": len(results),
+    }
+    summary["checks_run"] = sum(len(r["checks"]) for r in results)
+    summary["checks_failed"] = sum(
+        1 for r in results for c in r["checks"] if c["status"] == "FAIL"
+    )
+
+    rc, host, _ = runner.shell("hostname -f 2>/dev/null || hostname")
+    _, release, _ = runner.shell("cat /etc/rocky-release 2>/dev/null")
+    _, kernel, _ = runner.shell("uname -r")
+    _, applied, _ = runner.shell(
+        "awk -F= '/^overlay_version=/{print $2}' /etc/nist-800-171/overlay-version 2>/dev/null")
+
+    return {
+        "assessment": {
+            "baseline": overlay["meta"]["baseline"],
+            "overlay": overlay["meta"]["name"],
+            "overlay_version": overlay["meta"]["version"],
+            "overlay_version_applied": applied or "(not recorded)",
+            "assessed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "host": host,
+            "release": release,
+            "kernel": kernel,
+            "scope": args.requirement or args.family or "all requirements",
+        },
+        "summary": summary,
+        "requirements": results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+def print_text(data, failed_only: bool, use_color: bool) -> None:
+    def c(key: str) -> str:
+        return COLOR[key] if use_color else ""
+
+    a, s = data["assessment"], data["summary"]
+    print(f"\n{c('BOLD')}NIST SP 800-171r3 assessment{c('RESET')}")
+    print(f"  host      {a['host']}  ({a['release']}, kernel {a['kernel']})")
+    print(f"  overlay   {a['overlay']} {a['overlay_version']} "
+          f"(applied: {a['overlay_version_applied']})")
+    print(f"  assessed  {a['assessed_at']}")
+    print(f"  scope     {a['scope']}\n")
+
+    family = None
+    for r in data["requirements"]:
+        if failed_only and r["status"] not in ("FAIL", "ERROR"):
+            continue
+        fam = r["id"][:5]
+        if fam != family:
+            family = fam
+            print(f"{c('BOLD')}{c('DIM')}  {fam}{c('RESET')}")
+        mark = {"PASS": "PASS", "FAIL": "FAIL", "ERROR": "ERR ",
+                "MANUAL": "PART", "NOT_APPLICABLE": "n/a "}[r["status"]]
+        print(f"  {c(r['status'])}{mark}{c('RESET')}  {r['id']}  {r['title']}")
+
+        for chk in r["checks"]:
+            if chk["status"] == "PASS" and not failed_only:
+                continue
+            if chk["status"] in ("FAIL", "ERROR", "MANUAL"):
+                print(f"          {c(chk['status'])}{chk['status']:<6}{c('RESET')}"
+                      f" {chk['id']}: {chk['description']}")
+                print(f"                 expected: {chk['expected']}")
+                ev = chk["evidence"].replace("\n", "\n                           ")
+                print(f"                 observed: {ev[:400]}")
+
+    print(f"\n{c('BOLD')}Summary{c('RESET')}")
+    print(f"  {c('PASS')}{s['pass']:>3} satisfied{c('RESET')}          "
+          "(technical requirements fully enforced and verified)")
+    print(f"  {c('MANUAL')}{s['manual']:>3} partially satisfied{c('RESET')}"
+          "  (host controls verified; organizational evidence still required)")
+    print(f"  {c('FAIL')}{s['fail']:>3} not satisfied{c('RESET')}      "
+          "(deviation - see detail above)")
+    if s["error"]:
+        print(f"  {c('ERROR')}{s['error']:>3} could not assess{c('RESET')}")
+    print(f"  {c('NOT_APPLICABLE')}{s['not_applicable']:>3} organizational{c('RESET')}"
+          "     (no host control exists; policy/process/physical)")
+    print(f"  {'':>3} {'-' * 40}")
+    print(f"  {s['total']:>3} requirements assessed, "
+          f"{s['checks_run']} checks run, {s['checks_failed']} failed\n")
+
+    if s["fail"] or s["error"]:
+        print(f"{c('FAIL')}Host is NOT compliant with the technical baseline.{c('RESET')}\n")
+    else:
+        print(f"{c('PASS')}All host-enforceable requirements are satisfied.{c('RESET')}")
+        print("Organizational requirements still need documented evidence; see\n"
+              "/etc/nist-800-171/organizational-requirements.md\n")
+
+
+def write_html(data, path: Path) -> None:
+    a, s = data["assessment"], data["summary"]
+    rows = []
+    for r in data["requirements"]:
+        detail = ""
+        bad = [c for c in r["checks"] if c["status"] in ("FAIL", "ERROR", "MANUAL")]
+        if bad:
+            items = "".join(
+                f"<li><code>{c['id']}</code> &mdash; {esc(c['description'])}"
+                f"<br><span class='exp'>expected: {esc(c['expected'])}</span>"
+                f"<br><span class='obs'>observed: {esc(c['evidence'][:300])}</span></li>"
+                for c in bad)
+            detail = f"<ul class='checks'>{items}</ul>"
+        note = ""
+        if r.get("residual"):
+            note = f"<div class='residual'><b>Residual:</b> {esc(r['residual'])}</div>"
+        elif r.get("note"):
+            note = f"<div class='residual'>{esc(r['note'])}</div>"
+        rows.append(
+            f"<tr class='{r['status']}'><td class='id'>{r['id']}</td>"
+            f"<td>{esc(r['title'])}{note}{detail}</td>"
+            f"<td class='st'>{r['status'].replace('_',' ')}</td>"
+            f"<td>{r['disposition']}</td></tr>")
+
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>NIST SP 800-171r3 assessment &mdash; {esc(a['host'])}</title>
+<style>
+ :root {{ color-scheme: light dark; }}
+ body {{ font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem;
+        background: #fbfbfa; color: #1a1a1a; }}
+ @media (prefers-color-scheme: dark) {{
+   body {{ background: #16161a; color: #e8e8ea; }}
+   table {{ background: #1e1e24; }}
+   th {{ background: #26262e !important; }}
+   td {{ border-color: #33333d !important; }}
+ }}
+ h1 {{ font-size: 1.4rem; margin: 0 0 .25rem; }}
+ .meta {{ color: #666; margin-bottom: 1.5rem; font-size: .85rem; }}
+ .cards {{ display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }}
+ .card {{ border-radius: 8px; padding: .75rem 1.1rem; min-width: 7rem;
+          border: 1px solid #0002; }}
+ .card b {{ display: block; font-size: 1.7rem; line-height: 1; }}
+ .card span {{ font-size: .75rem; opacity: .75; }}
+ .c-pass {{ background: #dcf5e3; }} .c-fail {{ background: #fadbdb; }}
+ .c-man  {{ background: #fdf0d5; }} .c-na   {{ background: #ececef; }}
+ @media (prefers-color-scheme: dark) {{
+   .c-pass {{ background: #143823; }} .c-fail {{ background: #401c1c; }}
+   .c-man  {{ background: #3b3117; }} .c-na   {{ background: #26262e; }}
+ }}
+ table {{ border-collapse: collapse; width: 100%; background: #fff;
+          border-radius: 8px; overflow: hidden; }}
+ th, td {{ text-align: left; padding: .55rem .7rem; border-bottom: 1px solid #e6e6e9;
+           vertical-align: top; }}
+ th {{ background: #f2f2f4; font-size: .78rem; text-transform: uppercase;
+       letter-spacing: .04em; }}
+ td.id {{ font-family: ui-monospace, monospace; white-space: nowrap; }}
+ td.st {{ font-weight: 600; font-size: .8rem; white-space: nowrap; }}
+ tr.PASS td.st {{ color: #1c7a3e; }} tr.FAIL td.st {{ color: #b81f1f; }}
+ tr.ERROR td.st {{ color: #8a2be2; }} tr.MANUAL td.st {{ color: #9a6800; }}
+ tr.NOT_APPLICABLE {{ opacity: .6; }}
+ .residual {{ font-size: .8rem; opacity: .8; margin-top: .3rem; }}
+ ul.checks {{ margin: .4rem 0 0; padding-left: 1.1rem; font-size: .8rem; }}
+ ul.checks li {{ margin-bottom: .35rem; }}
+ .exp {{ opacity: .7; }} .obs {{ color: #b81f1f; }}
+ @media (max-width: 600px) {{ body {{ padding: 1rem; }} }}
+</style></head><body>
+<h1>NIST SP 800-171r3 assessment</h1>
+<div class="meta">
+  <b>{esc(a['host'])}</b> &mdash; {esc(a['release'])}, kernel {esc(a['kernel'])}<br>
+  Overlay {esc(a['overlay'])} {esc(a['overlay_version'])}
+  (applied: {esc(a['overlay_version_applied'])}) &middot;
+  assessed {esc(a['assessed_at'])} &middot; scope: {esc(a['scope'])}
+</div>
+<div class="cards">
+  <div class="card c-pass"><b>{s['pass']}</b><span>satisfied</span></div>
+  <div class="card c-man"><b>{s['manual']}</b><span>partially satisfied</span></div>
+  <div class="card c-fail"><b>{s['fail'] + s['error']}</b><span>not satisfied</span></div>
+  <div class="card c-na"><b>{s['not_applicable']}</b><span>organizational</span></div>
+</div>
+<table>
+ <thead><tr><th>Requirement</th><th>Title / findings</th><th>Status</th><th>Disposition</th></tr></thead>
+ <tbody>{''.join(rows)}</tbody>
+</table>
+<p class="meta">{s['checks_run']} checks executed, {s['checks_failed']} failed.
+A &ldquo;partially satisfied&rdquo; requirement means every host-enforceable control
+was verified, but the requirement also depends on organizational evidence.</p>
+</body></html>"""
+    path.write_text(html)
+
+
+def esc(t: str) -> str:
+    return (str(t).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", type=Path, help="write machine-readable results")
+    ap.add_argument("--html", type=Path, help="write a standalone HTML report")
+    ap.add_argument("--family", help="assess one family, e.g. 03.03")
+    ap.add_argument("--requirement", help="assess one requirement, e.g. 03.05.07")
+    ap.add_argument("--failed-only", action="store_true",
+                    help="show only requirements with deviations")
+    ap.add_argument("--quiet", action="store_true", help="suppress the text report")
+    ap.add_argument("--verbose", action="store_true", help="trace each check")
+    ap.add_argument("--checks", type=Path, help="path to checks.yml")
+    ap.add_argument("--overlay", type=Path, help="path to overlay-rocky9.yml")
+    ap.add_argument("--catalog", type=Path, help="path to requirements.json")
+    args = ap.parse_args()
+
+    overlay_p = args.overlay or find("overlay-rocky9.yml")
+    catalog_p = args.catalog or find("requirements.json")
+    checks_p = args.checks or find("checks.yml")
+    for name, p in (("overlay-rocky9.yml", overlay_p),
+                    ("requirements.json", catalog_p),
+                    ("checks.yml", checks_p)):
+        if p is None:
+            sys.exit(f"error: could not locate {name} in {[str(d) for d in SEARCH_DIRS]}")
+
+    overlay = load_yaml(overlay_p)
+    catalog = json.loads(catalog_p.read_text())
+    checks_doc = load_yaml(checks_p)
+    checks_by_id = {c["id"]: c for c in checks_doc["checks"]}
+
+    if os.geteuid() != 0:
+        print("warning: not running as root; checks that read protected files "
+              "will report ERROR\n", file=sys.stderr)
+
+    data = assess(overlay, catalog, checks_by_id, args)
+
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps(data, indent=2) + "\n")
+        os.chmod(args.json, 0o600)
+    if args.html:
+        args.html.parent.mkdir(parents=True, exist_ok=True)
+        write_html(data, args.html)
+        os.chmod(args.html, 0o600)
+    if not args.quiet:
+        print_text(data, args.failed_only, sys.stdout.isatty())
+
+    s = data["summary"]
+    return 1 if (s["fail"] or s["error"]) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

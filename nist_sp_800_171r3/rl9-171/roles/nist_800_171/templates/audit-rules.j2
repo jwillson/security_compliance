@@ -1,0 +1,160 @@
+## NIST SP 800-171r3 audit policy for Rocky Linux 9
+## Managed by Ansible - edits are overwritten on the next run.
+##
+## 03.03.01  Event Logging          - the selected event types
+## 03.03.03  Audit Record Generation - records for every selected type
+## 03.01.07b Log the execution of privileged functions
+## 03.14.06  System Monitoring       - attacks, unauthorized connections and use
+##
+## The final `-e 2` makes the policy immutable until reboot (03.03.08a).
+
+## Reset to a known state so the loaded policy always matches this file.
+-D
+
+## Buffer sized for a busy host; too small a buffer silently drops records.
+-b 8192
+
+## 03.03.04 Response to audit logging process failures.
+## 2 = panic. The host stops rather than continuing without an audit trail.
+-f 2
+
+## Do not audit our own audit daemon or the rule loader (avoids recursion).
+-a never,exit -F arch=b64 -S all -F exe=/sbin/auditd
+-a never,exit -F arch=b32 -S all -F exe=/sbin/auditd
+
+## ---------------------------------------------------------------------------
+## 03.01.01e  Monitor the use of system accounts
+## 03.05.05   Identifier management
+## Changes to the identity stores are the record of account lifecycle events.
+## ---------------------------------------------------------------------------
+-w /etc/passwd     -p wa -k identity
+-w /etc/shadow     -p wa -k identity
+-w /etc/group      -p wa -k identity
+-w /etc/gshadow    -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+-w /etc/sudoers    -p wa -k identity
+-w /etc/sudoers.d/ -p wa -k identity
+-w /usr/sbin/useradd  -p x -k account_lifecycle
+-w /usr/sbin/userdel  -p x -k account_lifecycle
+-w /usr/sbin/usermod  -p x -k account_lifecycle
+-w /usr/sbin/groupadd -p x -k account_lifecycle
+-w /usr/sbin/groupdel -p x -k account_lifecycle
+-w /usr/sbin/groupmod -p x -k account_lifecycle
+
+## ---------------------------------------------------------------------------
+## 03.01.07b  Log the execution of privileged functions
+## Every setuid/setgid binary run by a real user, plus the escalation tools.
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -C euid!=uid -F euid=0 -F auid>=1000 -F auid!=unset -S execve -k privileged_exec
+-a always,exit -F arch=b32 -C euid!=uid -F euid=0 -F auid>=1000 -F auid!=unset -S execve -k privileged_exec
+-w /usr/bin/sudo   -p x -k privileged_exec
+-w /usr/bin/su     -p x -k privileged_exec
+-w /usr/bin/newgrp -p x -k privileged_exec
+-w /usr/bin/chsh   -p x -k privileged_exec
+-w /usr/bin/chfn   -p x -k privileged_exec
+-w /usr/bin/gpasswd -p x -k privileged_exec
+-w /usr/bin/passwd  -p x -k privileged_exec
+-w /usr/bin/pkexec  -p x -k privileged_exec
+-w /usr/bin/umount  -p x -k privileged_exec
+-w /usr/bin/mount   -p x -k privileged_exec
+-w /usr/bin/crontab -p x -k privileged_exec
+-w /usr/sbin/unix_chkpwd -p x -k privileged_exec
+-w /usr/sbin/postdrop    -p x -k privileged_exec
+-w /usr/sbin/postqueue   -p x -k privileged_exec
+-w /usr/sbin/userhelper  -p x -k privileged_exec
+-w /usr/libexec/openssh/ssh-keysign -p x -k privileged_exec
+-w /var/log/sudo.log -p wa -k privileged_exec
+
+## ---------------------------------------------------------------------------
+## 03.14.06a  Detect attacks and indicators of potential attacks
+## Failed access attempts across the whole syscall surface.
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S open,openat,openat2,creat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k unauthorized_access
+-a always,exit -F arch=b32 -S open,openat,openat2,creat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k unauthorized_access
+-a always,exit -F arch=b64 -S open,openat,openat2,creat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k unauthorized_access
+-a always,exit -F arch=b32 -S open,openat,openat2,creat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k unauthorized_access
+
+## Authentication outcomes (03.01.08, 03.14.06b).
+-w /var/log/lastlog  -p wa -k logins
+-w /var/run/faillock -p wa -k logins
+-w /var/log/tallylog -p wa -k logins
+-w /var/log/faillock -p wa -k logins
+
+## ---------------------------------------------------------------------------
+## 03.14.06a.2  Unauthorized connections / 03.01.03 information flow
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k network_config
+-a always,exit -F arch=b32 -S sethostname,setdomainname -k network_config
+-w /etc/hosts       -p wa -k network_config
+-w /etc/sysconfig/network -p wa -k network_config
+-w /etc/NetworkManager/ -p wa -k network_config
+-w /etc/issue        -p wa -k network_config
+-w /etc/issue.net    -p wa -k network_config
+-w /etc/firewalld/   -p wa -k network_config
+
+## ---------------------------------------------------------------------------
+## 03.04.05  Access restrictions for change / 03.04.02 configuration settings
+## ---------------------------------------------------------------------------
+-w /etc/selinux/     -p wa -k mac_policy
+-w /usr/share/selinux/ -p wa -k mac_policy
+-w /etc/yum.repos.d/ -p wa -k config_change
+-w /etc/dnf/         -p wa -k config_change
+-w /etc/ssh/sshd_config -p wa -k config_change
+-w /etc/ssh/sshd_config.d/ -p wa -k config_change
+-w /etc/pam.d/       -p wa -k config_change
+-w /etc/security/    -p wa -k config_change
+-w /etc/login.defs   -p wa -k config_change
+-w /etc/systemd/     -p wa -k config_change
+-w /etc/crypto-policies/ -p wa -k config_change
+-w /etc/fapolicyd/   -p wa -k config_change
+-w {{ nist_conf_dir }}/ -p wa -k config_change
+
+## ---------------------------------------------------------------------------
+## 03.03.08a  Protect audit information and tools from modification
+## ---------------------------------------------------------------------------
+-w /etc/audit/       -p wa -k audit_config
+-w /etc/audit/rules.d/ -p wa -k audit_config
+-w /sbin/auditctl    -p x -k audit_tools
+-w /sbin/auditd      -p x -k audit_tools
+-w /sbin/ausearch    -p x -k audit_tools
+-w /sbin/aureport    -p x -k audit_tools
+-w /sbin/augenrules  -p x -k audit_tools
+-w /sbin/autrace     -p x -k audit_tools
+-w /var/log/audit/   -p wa -k audit_logs
+
+## ---------------------------------------------------------------------------
+## 03.14.06  Kernel module loading - a primary persistence and attack vector
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -F auid>=1000 -F auid!=unset -k module_load
+-a always,exit -F arch=b32 -S init_module,finit_module,delete_module -F auid>=1000 -F auid!=unset -k module_load
+-w /usr/bin/kmod -p x -k module_load
+-w /etc/modprobe.d/ -p wa -k module_load
+
+## ---------------------------------------------------------------------------
+## 03.08.02 / 03.04.11  Access to CUI and changes to its permissions
+## ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=1000 -F auid!=unset -k perm_mod
+-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat,setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=1000 -F auid!=unset -k perm_mod
+-a always,exit -F arch=b64 -S chown,fchown,fchownat,lchown -F auid>=1000 -F auid!=unset -k perm_mod
+-a always,exit -F arch=b32 -S chown,fchown,fchownat,lchown -F auid>=1000 -F auid!=unset -k perm_mod
+-w {{ nist_cui_path }} -p rwa -k cui_access
+
+## 03.08.03  File deletion, which sanitization and exfiltration both involve.
+-a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat -F auid>=1000 -F auid!=unset -k delete
+-a always,exit -F arch=b32 -S unlink,unlinkat,rename,renameat -F auid>=1000 -F auid!=unset -k delete
+
+## 03.07.04  Maintenance tool use.
+-w /usr/bin/dnf     -p x -k maintenance
+-w /usr/bin/rpm     -p x -k maintenance
+-w /usr/bin/systemctl -p x -k maintenance
+
+## 03.01.11  Session initiation and termination records.
+-w /var/run/utmp  -p wa -k session
+-w /var/log/wtmp  -p wa -k session
+-w /var/log/btmp  -p wa -k session
+
+## ---------------------------------------------------------------------------
+## 03.03.08a  Make the policy immutable. Rules cannot be changed without a
+## reboot, so an intruder cannot quietly disable auditing. MUST stay last.
+## ---------------------------------------------------------------------------
+-e 2

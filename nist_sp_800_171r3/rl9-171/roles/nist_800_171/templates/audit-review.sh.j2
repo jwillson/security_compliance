@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# 03.03.05a  Scheduled review and analysis of audit records.
+#
+# Summarises the period since the last run for the audit administrator. This
+# produces the analysis; a human still performs the review (03.03.05a/b).
+set -euo pipefail
+SINCE="${1:-yesterday}"
+OUT="{{ nist_report_dir }}/audit-review-$(date -u +%Y%m%d).txt"
+
+{
+  echo "Audit record review - $(hostname) - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "NIST SP 800-171r3 03.03.05 | period: since $SINCE"
+  echo
+
+  echo "== Summary =="
+  aureport --start "$SINCE" --summary 2>/dev/null || echo "  (no records)"
+  echo
+
+  echo "== Authentication failures (03.01.08) =="
+  aureport --start "$SINCE" --auth --failed --summary 2>/dev/null || true
+  echo
+
+  echo "== Privileged command execution (03.01.07b) =="
+  ausearch --start "$SINCE" -k privileged_exec --format csv 2>/dev/null | head -100 || true
+  echo
+
+  echo "== Unauthorized access attempts (03.14.06) =="
+  ausearch --start "$SINCE" -k unauthorized_access --format csv 2>/dev/null | head -100 || true
+  echo
+
+  echo "== Account and identity changes (03.01.01e) =="
+  ausearch --start "$SINCE" -k identity --format csv 2>/dev/null | head -100 || true
+  echo
+
+  echo "== Kernel module activity (03.14.06) =="
+  ausearch --start "$SINCE" -k module_load --format csv 2>/dev/null | head -50 || true
+  echo
+
+  echo "== Anomalies =="
+  aureport --start "$SINCE" --anomaly 2>/dev/null || true
+} > "$OUT"
+
+chmod 0600 "$OUT"
+logger -p authpriv.notice -t nist-audit-review "audit review written to $OUT"
+echo "wrote $OUT"

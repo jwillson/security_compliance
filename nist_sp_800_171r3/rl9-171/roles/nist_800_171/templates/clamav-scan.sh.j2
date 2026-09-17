@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# 03.14.02c  Scheduled malicious code scan.
+#
+# Detections are moved to quarantine rather than deleted, so the artifact is
+# preserved for incident analysis (03.06.02a).
+set -uo pipefail
+. {{ nist_conf_dir }}/alerting.conf 2>/dev/null || ALERT_MAIL=root
+OUT="{{ nist_report_dir }}/malware-scan-$(date -u +%Y%m%d).txt"
+QUARANTINE=/var/lib/nist-quarantine
+
+command -v clamscan >/dev/null 2>&1 || { echo "clamscan not installed"; exit 0; }
+
+clamscan --recursive --infected \
+         --move="$QUARANTINE" \
+         --exclude-dir='^/(proc|sys|dev|run)' \
+         --exclude-dir="^$QUARANTINE" \
+         / > "$OUT" 2>&1
+rc=$?
+chmod 0600 "$OUT"
+
+# clamscan: 0 = clean, 1 = infected, 2 = error.
+if [ $rc -eq 1 ]; then
+  logger -p authpriv.alert -t nist-800-171 \
+    "03.14.02 malicious code detected and quarantined, see $OUT"
+  command -v mail >/dev/null 2>&1 && \
+    mail -s "[$(hostname)] NIST 800-171 malicious code detected" "$ALERT_MAIL" < "$OUT"
+elif [ $rc -eq 0 ]; then
+  logger -p authpriv.info -t nist-800-171 "03.14.02 scan clean"
+fi
+exit 0

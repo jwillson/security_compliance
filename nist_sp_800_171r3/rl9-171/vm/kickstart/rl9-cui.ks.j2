@@ -1,0 +1,160 @@
+# Rocky Linux 9 - NIST SP 800-171r3 CUI reference build
+#
+# This kickstart establishes the install-time controls that cannot be applied
+# afterwards. Everything else is handled by the Ansible role.
+#
+#   03.04.06  separate mount points with nodev/nosuid/noexec
+#   03.13.11  FIPS 140-3 mode enabled from first boot
+#   03.03.03  /var/log/audit on its own filesystem so audit cannot be starved
+#   03.04.06  minimal package set - no GUI, no legacy services
+#   03.01.06  root login locked; access via a named admin account + sudo
+#
+# Placeholders (@@NAME@@) are substituted by vm/build-vm.sh.
+
+text
+eula --agreed
+firstboot --disable
+lang en_US.UTF-8
+keyboard --vckeymap=us --xlayouts='us'
+timezone Etc/UTC --utc
+
+# --- Installation source -----------------------------------------------------
+url --url="@@MIRROR@@/BaseOS/x86_64/os/"
+repo --name="appstream" --baseurl="@@MIRROR@@/AppStream/x86_64/os/"
+
+# --- Network -----------------------------------------------------------------
+network --bootproto=dhcp --device=link --activate --hostname=@@HOSTNAME@@
+firewall --enabled --service=ssh
+
+# --- Identity ----------------------------------------------------------------
+# 03.01.06: no direct root login. A named account carries privilege via sudo.
+rootpw --lock
+user --name=@@ADMIN_USER@@ --groups=wheel --iscrypted --password='@@ADMIN_HASH@@' --gecos="CUI system administrator"
+sshkey --username=@@ADMIN_USER@@ "@@SSH_PUBKEY@@"
+
+# 03.01.02: SELinux is the access enforcement mechanism and is never permissive.
+selinux --enforcing
+
+# --- Disk layout -------------------------------------------------------------
+# 03.04.06d / 03.03.03: separate filesystems let us apply nodev/nosuid/noexec
+# and stop a full /var from taking down audit logging.
+ignoredisk --only-use=@@DISK@@
+zerombr
+clearpart --all --initlabel --drives=@@DISK@@
+
+part /boot/efi --fstype=efi   --size=600  --fsoptions="umask=0077,shortname=winnt"
+part /boot     --fstype=xfs   --size=1024 --fsoptions="nodev,nosuid"
+part pv.01     --fstype=lvmpv --size=1000 --grow
+
+volgroup vg_sys pv.01
+
+logvol /              --vgname=vg_sys --name=lv_root     --fstype=xfs --size=10240
+logvol /home          --vgname=vg_sys --name=lv_home     --fstype=xfs --size=3072  --fsoptions="nodev,nosuid"
+logvol /var           --vgname=vg_sys --name=lv_var      --fstype=xfs --size=6144  --fsoptions="nodev"
+logvol /var/log       --vgname=vg_sys --name=lv_varlog   --fstype=xfs --size=4096  --fsoptions="nodev,nosuid,noexec"
+logvol /var/log/audit --vgname=vg_sys --name=lv_varaudit --fstype=xfs --size=4096  --fsoptions="nodev,nosuid,noexec"
+logvol /var/tmp       --vgname=vg_sys --name=lv_vartmp   --fstype=xfs --size=2048  --fsoptions="nodev,nosuid,noexec"
+logvol /tmp           --vgname=vg_sys --name=lv_tmp      --fstype=xfs --size=2048  --fsoptions="nodev,nosuid,noexec"
+logvol swap           --vgname=vg_sys --name=lv_swap   --fstype=swap --size=2048
+
+# Free extents are left in vg_sys on purpose: the Ansible role carves the
+# LUKS2-encrypted CUI and backup volumes out of them (03.13.08, 03.08.09).
+
+# --- Bootloader --------------------------------------------------------------
+# 03.13.11 fips=1            FIPS 140-3 validated modules
+# 03.03.01 audit=1           capture events before auditd starts
+#          audit_backlog_limit  do not drop events during early boot
+# 03.13.04 slub_debug=P, page_poison=1, vsyscall=none, init_on_alloc=1
+#                            clear freed memory so it cannot leak between subjects
+#
+# The GRUB superuser password (03.10.07) is deliberately NOT set here. Anaconda
+# writes password-protected menu entries without the --unrestricted flag, which
+# would make every boot interactive and break unattended operation. The role
+# sets the password and marks normal boot entries unrestricted, so console
+# editing is protected while automatic boot still works.
+bootloader --append="fips=1 audit=1 audit_backlog_limit=8192 slub_debug=P page_poison=1 vsyscall=none init_on_alloc=1 init_on_free=1"
+
+# --- Packages ----------------------------------------------------------------
+# 03.04.06a: mission-essential only. @core plus what the controls require.
+%packages --excludedocs
+@^minimal-environment
+-iwl*-firmware
+-iwlwifi*
+-alsa-*
+-plymouth
+-abrt*
+-sendmail
+-telnet
+-rsh
+-ypbind
+-tftp
+-xinetd
+-avahi*
+-cups*
+# Controls implemented by the role need these present at first boot:
+audit
+aide
+chrony
+crypto-policies-scripts
+dnf-automatic
+firewalld
+openssh-server
+openscap-scanner
+scap-security-guide
+policycoreutils-python-utils
+rsyslog
+sudo
+tmux
+cryptsetup
+lvm2
+python3-libselinux
+%end
+
+# --- Post-install ------------------------------------------------------------
+%post --log=/root/ks-post.log
+
+set -x
+
+# 03.13.11 Cryptographic Protection
+# fips-mode-setup owns the full transition: crypto-policies, dracut FIPS module,
+# and the boot arguments. Running it here makes FIPS active on first boot rather
+# than after a later reboot.
+/usr/bin/fips-mode-setup --enable || echo "WARN: fips-mode-setup failed"
+
+# 03.01.05 / 03.01.06
+# The admin account reaches root through sudo with a password. Anaconda writes a
+# NOPASSWD wheel drop-in on some paths; remove any such file so 03.01.05 holds.
+rm -f /etc/sudoers.d/*nopasswd* /etc/sudoers.d/90-cloud-init-users
+echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/10-wheel
+chmod 0440 /etc/sudoers.d/10-wheel
+
+# 03.05.12d Change default authenticators at first use.
+# The admin password is generated per build and is never a shared default, so it
+# is not force-expired here (doing so would block the automation's sudo). Aging
+# is applied to it by the role like any other account. Any account that IS
+# created from a template must be expired at handover.
+
+# 03.01.09 Minimal banner so the host is never without one, even before the
+# role runs. The role replaces it with the approved text.
+cat > /etc/issue <<'BANNER'
+This is a U.S. Government information system. Unauthorized access is prohibited.
+BANNER
+cp /etc/issue /etc/issue.net
+
+# Record what built this system, for 03.04.01 baseline evidence.
+mkdir -p /etc/nist-800-171
+cat > /etc/nist-800-171/build-info <<BUILDINFO
+build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+kickstart=rl9-cui.ks
+overlay_version=@@OVERLAY_VERSION@@
+baseline=NIST SP 800-171r3
+hostname=@@HOSTNAME@@
+BUILDINFO
+chmod 0644 /etc/nist-800-171/build-info
+
+# Serial console for unattended build monitoring.
+systemctl enable serial-getty@ttyS0.service
+
+%end
+
+reboot --eject

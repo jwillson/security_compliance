@@ -1,0 +1,187 @@
+---
+# Requirement families, applied in dependency order.
+#
+# Every task carries its requirement ID as a tag, so `--tags 03.05.07` applies
+# exactly the tasks that implement Password Management and nothing else. The
+# family tag (`--tags 03.05`) selects the whole family.
+
+- name: Prepare the toolkit directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ nist_conf_dir }}"
+    - "{{ nist_lib_dir }}"
+    - "{{ nist_report_dir }}"
+  tags: [always]
+
+- name: Ensure the drop-in directories the role writes into exist
+  # A minimal Rocky 9 install ships several of these only when the owning
+  # package creates them, so they are established up front rather than being
+  # discovered one failure at a time.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/coredump.conf.d
+    - /etc/systemd/journald.conf.d
+    - /etc/systemd/system/dnf-automatic.timer.d
+    - /etc/security/limits.d
+    - /etc/modprobe.d
+    - /etc/sysctl.d
+    - /etc/rsyslog.d
+    - /etc/ssh/sshd_config.d
+    - /etc/ssh/ssh_config.d
+    - /etc/dconf/db/gdm.d
+    - /etc/fapolicyd/rules.d
+  tags: [always]
+
+# authselect owns the PAM stack on RHEL 9 derivatives. A minimal install can
+# leave it uninitialised ("No existing configuration detected"), and then no
+# feature can be enabled. Several requirements depend on it - 03.01.08
+# (faillock) and 03.05.07 (pwquality, pwhistory) - so it is established once
+# here rather than repeatedly inside those families.
+- name: Check whether the authselect configuration is present and intact
+  # `authselect check` fails both when no profile is selected and when the
+  # generated PAM files have been edited by hand. Either way the fix is the
+  # same: reassert the profile so authselect owns the stack again.
+  ansible.builtin.command:
+    cmd: authselect check
+  register: nist_authselect_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [always]
+
+- name: Reassert the authselect profile so it owns the PAM stack
+  ansible.builtin.command:
+    cmd: authselect select sssd --force
+  when: nist_authselect_check.rc != 0
+  changed_when: true
+  tags: [always]
+
+- name: Access Control (03.01)
+  ansible.builtin.include_tasks:
+    file: ac.yml
+    apply:
+      tags: ["03.01"]
+  tags: ["03.01"]
+
+- name: Audit and Accountability (03.03)
+  ansible.builtin.include_tasks:
+    file: au.yml
+    apply:
+      tags: ["03.03"]
+  tags: ["03.03"]
+
+- name: Configuration Management (03.04)
+  ansible.builtin.include_tasks:
+    file: cm.yml
+    apply:
+      tags: ["03.04"]
+  tags: ["03.04"]
+
+- name: Identification and Authentication (03.05)
+  ansible.builtin.include_tasks:
+    file: ia.yml
+    apply:
+      tags: ["03.05"]
+  tags: ["03.05"]
+
+- name: Incident Response (03.06)
+  ansible.builtin.include_tasks:
+    file: ir.yml
+    apply:
+      tags: ["03.06"]
+  tags: ["03.06"]
+
+- name: Maintenance (03.07)
+  ansible.builtin.include_tasks:
+    file: ma.yml
+    apply:
+      tags: ["03.07"]
+  tags: ["03.07"]
+
+- name: Media Protection (03.08)
+  ansible.builtin.include_tasks:
+    file: mp.yml
+    apply:
+      tags: ["03.08"]
+  tags: ["03.08"]
+
+- name: Personnel Security (03.09)
+  ansible.builtin.include_tasks:
+    file: ps.yml
+    apply:
+      tags: ["03.09"]
+  tags: ["03.09"]
+
+- name: Physical Protection (03.10)
+  ansible.builtin.include_tasks:
+    file: pe.yml
+    apply:
+      tags: ["03.10"]
+  tags: ["03.10"]
+
+- name: Risk Assessment (03.11)
+  ansible.builtin.include_tasks:
+    file: ra.yml
+    apply:
+      tags: ["03.11"]
+  tags: ["03.11"]
+
+- name: Security Assessment and Monitoring (03.12)
+  ansible.builtin.include_tasks:
+    file: ca.yml
+    apply:
+      tags: ["03.12"]
+  tags: ["03.12"]
+
+- name: System and Communications Protection (03.13)
+  ansible.builtin.include_tasks:
+    file: sc.yml
+    apply:
+      tags: ["03.13"]
+  tags: ["03.13"]
+
+- name: System and Information Integrity (03.14)
+  ansible.builtin.include_tasks:
+    file: si.yml
+    apply:
+      tags: ["03.14"]
+  tags: ["03.14"]
+
+- name: Planning (03.15)
+  ansible.builtin.include_tasks:
+    file: pl.yml
+    apply:
+      tags: ["03.15"]
+  tags: ["03.15"]
+
+- name: System and Services Acquisition (03.16)
+  ansible.builtin.include_tasks:
+    file: sa.yml
+    apply:
+      tags: ["03.16"]
+  tags: ["03.16"]
+
+- name: Supply Chain Risk Management (03.17)
+  ansible.builtin.include_tasks:
+    file: sr.yml
+    apply:
+      tags: ["03.17"]
+  tags: ["03.17"]
+
+# Organizational requirements produce documentation, not configuration.
+- name: Emit SSP stubs for organizational requirements
+  ansible.builtin.include_tasks:
+    file: org_stubs.yml
+    apply:
+      tags: [organizational]
+  tags: [organizational]

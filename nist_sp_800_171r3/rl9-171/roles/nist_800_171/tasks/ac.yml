@@ -1,0 +1,560 @@
+---
+# 03.01 ACCESS CONTROL
+
+# ===========================================================================
+# 03.01.01 Account Management
+# ===========================================================================
+- name: "03.01.01 | Disable accounts after the ODP inactivity period"
+  ansible.builtin.lineinfile:
+    path: /etc/default/useradd
+    regexp: '^\s*INACTIVE\s*='
+    line: "INACTIVE={{ odp.account_inactivity_days }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.01"]
+
+- name: "03.01.01 | Enumerate interactive accounts"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      awk -F: '($3 >= 1000 && $3 != 65534 && $7 !~ /(nologin|false)$/) {print $1}' /etc/passwd
+    executable: /bin/bash
+  register: nist_interactive_accounts
+  changed_when: false
+  check_mode: false
+  tags: ["03.01.01", "03.01.05"]
+
+- name: "03.01.01 | Apply the inactivity lock to existing interactive accounts"
+  # chage always exits 0, so comparing field 7 of /etc/shadow first is what
+  # makes this report a change only when it actually changes something.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for u in {{ nist_interactive_accounts.stdout_lines | join(' ') | quote }}; do
+        [ -n "$u" ] || continue
+        cur=$(awk -F: -v u="$u" '$1==u {print $7}' /etc/shadow)
+        if [ "$cur" != "{{ odp.account_inactivity_days }}" ]; then
+          chage --inactive {{ odp.account_inactivity_days }} "$u" && changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_chage_inactive
+  changed_when: "'changed=1' in nist_chage_inactive.stdout"
+  tags: ["03.01.01"]
+
+- name: "03.01.01 | Give every aged account a last-change date"
+  # Aging fields are inert while the last-change field in /etc/shadow is empty:
+  # there is no reference point from which to measure, so neither expiry
+  # (03.05.12e) nor the inactivity lock (03.01.01f) can ever trigger. An
+  # account created from a pre-hashed password - as the installer does - has no
+  # such date, so one is set here.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for u in $(awk -F: '($3=="" ) {print $1}' /etc/shadow); do
+        chage -d "$(date +%Y-%m-%d)" "$u" && changed=1
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_lastchg
+  changed_when: "'changed=1' in nist_lastchg.stdout"
+  tags: ["03.01.01", "03.05.12"]
+
+- name: "03.01.01 | Give non-login system accounts a nologin shell"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      while IFS=: read -r user _ uid _ _ _ shell; do
+        # System accounts below UID_MIN must not be able to start a shell.
+        if [ "$uid" -lt 1000 ] && [ "$user" != "root" ] && [ "$user" != "sync" ] \
+           && [ "$shell" != "/sbin/nologin" ] && [ "$shell" != "/bin/false" ]; then
+          usermod -s /sbin/nologin "$user" && changed=1
+        fi
+      done < /etc/passwd
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_nologin
+  changed_when: "'changed=1' in nist_nologin.stdout"
+  tags: ["03.01.01"]
+
+- name: "03.01.01 | Remove legacy default accounts that are not used"
+  ansible.builtin.user:
+    name: "{{ item }}"
+    state: absent
+    remove: true
+  loop: [games, gopher, ftp, lp, uucp, operator]
+  failed_when: false
+  tags: ["03.01.01"]
+
+# ===========================================================================
+# 03.01.02 Access Enforcement
+# ===========================================================================
+- name: "03.01.02 | Put SELinux in enforcing mode with the targeted policy"
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+  register: nist_selinux
+  tags: ["03.01.02"]
+
+- name: "03.01.02 | Flag a reboot if SELinux needed one"
+  ansible.builtin.set_fact:
+    nist_reboot_required: true
+  when: nist_selinux.reboot_required | default(false)
+  tags: ["03.01.02"]
+
+- name: "03.01.02 | Enforce permissions on the account databases"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/passwd,   group: root,   mode: "0644" }
+    - { path: /etc/group,    group: root,   mode: "0644" }
+    - { path: /etc/shadow,   group: root,   mode: "0000" }
+    - { path: /etc/gshadow,  group: root,   mode: "0000" }
+    - { path: /etc/passwd-,  group: root,   mode: "0644" }
+    - { path: /etc/group-,   group: root,   mode: "0644" }
+    - { path: /etc/shadow-,  group: root,   mode: "0000" }
+    - { path: /etc/gshadow-, group: root,   mode: "0000" }
+  failed_when: false
+  tags: ["03.01.02"]
+
+- name: "03.01.02 | Give every world-writable directory a sticky bit"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      found=$(find / -xdev -type d -perm -0002 ! -perm -1000 2>/dev/null)
+      if [ -n "$found" ]; then
+        echo "$found" | xargs -r chmod a+t
+        echo "changed=1"
+      fi
+    executable: /bin/bash
+  register: nist_sticky
+  changed_when: "'changed=1' in nist_sticky.stdout"
+  tags: ["03.01.02"]
+
+- name: "03.01.02 | Assign ownership to unowned files"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      found=$(find / -xdev \( -nouser -o -nogroup \) 2>/dev/null)
+      if [ -n "$found" ]; then
+        echo "$found" | xargs -r chown root:root
+        echo "changed=1"
+      fi
+    executable: /bin/bash
+  register: nist_unowned
+  changed_when: "'changed=1' in nist_unowned.stdout"
+  tags: ["03.01.02"]
+
+# ===========================================================================
+# 03.01.03 Information Flow Enforcement
+# ===========================================================================
+- name: "03.01.03 | Stop the host acting as an uncontrolled transit point"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/80-nist-800-171-flow.conf
+    state: present
+    reload: true
+  loop:
+    - { name: net.ipv4.ip_forward,                      value: "0" }
+    - { name: net.ipv4.conf.all.send_redirects,         value: "0" }
+    - { name: net.ipv4.conf.default.send_redirects,     value: "0" }
+    - { name: net.ipv4.conf.all.accept_redirects,       value: "0" }
+    - { name: net.ipv4.conf.default.accept_redirects,   value: "0" }
+    - { name: net.ipv4.conf.all.secure_redirects,       value: "0" }
+    - { name: net.ipv4.conf.default.secure_redirects,   value: "0" }
+    - { name: net.ipv4.conf.all.accept_source_route,    value: "0" }
+    - { name: net.ipv4.conf.default.accept_source_route, value: "0" }
+    - { name: net.ipv4.conf.all.rp_filter,              value: "1" }
+    - { name: net.ipv4.conf.default.rp_filter,          value: "1" }
+    - { name: net.ipv4.conf.all.log_martians,           value: "1" }
+    - { name: net.ipv4.conf.default.log_martians,       value: "1" }
+    - { name: net.ipv6.conf.all.accept_redirects,       value: "0" }
+    - { name: net.ipv6.conf.default.accept_redirects,   value: "0" }
+    - { name: net.ipv6.conf.all.accept_source_route,    value: "0" }
+    - { name: net.ipv6.conf.default.accept_source_route, value: "0" }
+    - { name: net.ipv6.conf.all.forwarding,             value: "0" }
+  tags: ["03.01.03"]
+
+# ===========================================================================
+# 03.01.04 Separation of Duties
+# ===========================================================================
+- name: "03.01.04 | Create an audit administration role distinct from sysadmin"
+  ansible.builtin.group:
+    name: "{{ nist_audit_admin_group }}"
+    state: present
+    system: true
+  tags: ["03.01.04"]
+
+- name: "03.01.04 | Grant the audit role only audit management rights"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/20-audit-admin
+    content: |
+      # 03.01.04 Separation of Duties / 03.03.08b
+      # Audit administration is a separate duty from system administration:
+      # this group manages audit data and configuration, and nothing else.
+      Cmnd_Alias AUDIT_CMDS = /sbin/auditctl, /sbin/aureport, /sbin/ausearch, \
+                              /sbin/augenrules, /bin/systemctl status auditd, \
+                              /bin/systemctl restart auditd
+      %{{ nist_audit_admin_group }} ALL=(root) AUDIT_CMDS
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+  tags: ["03.01.04"]
+
+# ===========================================================================
+# 03.01.05 Least Privilege
+# ===========================================================================
+- name: "03.01.05 | Remove sudo rules that bypass authentication"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for f in /etc/sudoers /etc/sudoers.d/*; do
+        [ -f "$f" ] || continue
+        if grep -Eq '^[^#]*(NOPASSWD|!authenticate)' "$f"; then
+          sed -ri 's/[[:space:]]*NOPASSWD:[[:space:]]*/ /g; /^[^#]*!authenticate/d' "$f"
+          changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_sudo_clean
+  changed_when: "'changed=1' in nist_sudo_clean.stdout"
+  tags: ["03.01.05"]
+
+- name: "03.01.05 | Require re-authentication and restrict privilege escalation"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/10-nist-least-privilege
+    content: |
+      # 03.01.05 Least Privilege
+      # Re-authenticate for each privileged session rather than caching
+      # credentials across a login, and never echo the password (03.05.11).
+      Defaults timestamp_timeout=0
+      Defaults !pwfeedback
+      Defaults !visiblepw
+      # use_pty stops a backgrounded process from hijacking the terminal after
+      # the privileged command exits. requiretty is deliberately NOT set: it
+      # blocks configuration management without adding protection that use_pty
+      # does not already provide.
+      Defaults use_pty
+      Defaults logfile="/var/log/sudo.log"
+      Defaults log_input, log_output
+      # Privilege is granted to an explicit group, never to ALL.
+      %{{ nist_admin_group }} ALL=(ALL) ALL
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+  tags: ["03.01.05", "03.05.11"]
+
+- name: "03.01.05 | Enforce permissions on the sudo configuration"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0440"
+  loop:
+    - /etc/sudoers
+  tags: ["03.01.05"]
+
+- name: "03.01.05 | Set a restrictive default umask"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*UMASK\s+'
+    line: "UMASK           077"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.05", "03.08.02"]
+
+- name: "03.01.05 | Set the default umask for shell sessions"
+  ansible.builtin.copy:
+    dest: /etc/profile.d/80-nist-umask.sh
+    content: |
+      # 03.01.05 / 03.08.02  Files are created private by default.
+      umask 077
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.05", "03.08.02"]
+
+- name: "03.01.05 | Install the privileged-access review report"
+  ansible.builtin.template:
+    src: privilege-report.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-privilege-report"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.01.05"]
+
+# ===========================================================================
+# 03.01.06 Least Privilege - Privileged Accounts
+# ===========================================================================
+- name: "03.01.06 | Restrict su to the administrative group"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/su
+    regexp: '^\s*auth\s+required\s+pam_wheel\.so'
+    line: "auth            required        pam_wheel.so use_uid group={{ nist_admin_group }}"
+    insertafter: '^auth\s+sufficient\s+pam_rootok\.so'
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.06"]
+
+- name: "03.01.06 | Find any account other than root holding UID 0"
+  ansible.builtin.shell:
+    cmd: "awk -F: '($3 == 0 && $1 != \"root\") {print $1}' /etc/passwd"
+  register: nist_uid0
+  changed_when: false
+  check_mode: false
+  tags: ["03.01.06"]
+
+- name: "03.01.06 | Fail if a second UID 0 account exists"
+  ansible.builtin.fail:
+    msg: >-
+      Accounts other than root hold UID 0: {{ nist_uid0.stdout_lines | join(', ') }}.
+      This breaks unique identification (03.05.01) and privileged account
+      restriction (03.01.06). Remove or renumber them, then re-run.
+  when: nist_uid0.stdout_lines | length > 0
+  tags: ["03.01.06"]
+
+- name: "03.01.06 | Lock any account that has an empty password"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for u in $(awk -F: '($2 == "") {print $1}' /etc/shadow); do
+        passwd -l "$u" && changed=1
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_empty_pw
+  changed_when: "'changed=1' in nist_empty_pw.stdout"
+  tags: ["03.01.06", "03.05.01"]
+
+# ===========================================================================
+# 03.01.07 Least Privilege - Privileged Functions
+# ===========================================================================
+# Audit rules for privileged execution are installed with the 03.03 rule set
+# (templates/audit-rules.j2) so the whole policy is loaded atomically. This
+# task exists so `--tags 03.01.07` still triggers the rule deployment.
+- name: "03.01.07 | Deploy the audit policy covering privileged functions"
+  ansible.builtin.template:
+    src: audit-rules.j2
+    dest: /etc/audit/rules.d/99-nist-800-171.rules
+    owner: root
+    group: root
+    mode: "0600"
+  notify: regenerate audit rules
+  tags: ["03.01.07", "03.03.01", "03.03.03", "03.14.06"]
+
+- name: "03.01.07 | Create the sudo log with restrictive permissions"
+  ansible.builtin.file:
+    path: /var/log/sudo.log
+    state: touch
+    owner: root
+    group: root
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+  tags: ["03.01.07"]
+
+# ===========================================================================
+# 03.01.08 Unsuccessful Logon Attempts
+# ===========================================================================
+- name: "03.01.08 | Configure faillock to the ODP thresholds"
+  ansible.builtin.copy:
+    dest: /etc/security/faillock.conf
+    content: |
+      # 03.01.08 Unsuccessful Logon Attempts
+      # {{ odp.lockout_attempts }} consecutive failures within
+      # {{ odp.lockout_window_seconds }}s lock the account for
+      # {{ odp.lockout_duration_seconds }}s.
+      dir = /var/log/faillock
+      audit
+      silent
+      deny = {{ odp.lockout_attempts }}
+      fail_interval = {{ odp.lockout_window_seconds }}
+      unlock_time = {{ odp.lockout_duration_seconds }}
+      even_deny_root
+      root_unlock_time = {{ odp.lockout_duration_seconds }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.08"]
+
+- name: "03.01.08 | Ensure the faillock state directory exists"
+  ansible.builtin.file:
+    path: /var/log/faillock
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.01.08"]
+
+- name: "03.01.08 | Enable faillock in the PAM stack via authselect"
+  # `authselect enable-feature` is not idempotent in its reporting, so the
+  # enabled feature list is consulted first.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if authselect current 2>/dev/null | grep -q 'with-faillock'; then
+        echo "already-enabled"
+      else
+        authselect enable-feature with-faillock && echo "enabled"
+      fi
+    executable: /bin/bash
+  register: nist_authselect_faillock
+  changed_when: "'already-enabled' not in nist_authselect_faillock.stdout"
+  notify: apply authselect changes
+  tags: ["03.01.08"]
+
+# ===========================================================================
+# 03.01.09 System Use Notification
+# ===========================================================================
+- name: "03.01.09 | Install the system use notification on every access path"
+  ansible.builtin.template:
+    src: banner.j2
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/issue      # local console, pre-authentication
+    - /etc/issue.net  # network, pre-authentication
+    - /etc/motd       # post-authentication
+  tags: ["03.01.09"]
+
+# ===========================================================================
+# 03.01.10 Device Lock / 03.01.11 Session Termination
+# ===========================================================================
+- name: "03.01.10 | Install tmux for console session locking"
+  ansible.builtin.dnf:
+    name: tmux
+    state: present
+  tags: ["03.01.10"]
+
+- name: "03.01.10 | Lock idle tmux sessions after the ODP period"
+  ansible.builtin.copy:
+    dest: /etc/tmux.conf
+    content: |
+      # 03.01.10 Device Lock
+      # Lock the terminal after {{ odp.idle_lock_seconds }}s of inactivity and
+      # require re-authentication to resume.
+      set -g lock-command vlock
+      set -g lock-after-time {{ odp.idle_lock_seconds }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.10"]
+
+- name: "03.01.10 | Install vlock so the lock command can authenticate"
+  ansible.builtin.dnf:
+    name: vlock
+    state: present
+  failed_when: false
+  tags: ["03.01.10"]
+
+- name: "03.01.11 | Terminate idle shell sessions"
+  ansible.builtin.copy:
+    dest: /etc/profile.d/81-nist-tmout.sh
+    content: |
+      # 03.01.11 Session Termination / 03.13.09 Network Disconnect
+      # Idle login shells exit after {{ odp.session_timeout_seconds }}s.
+      # readonly prevents a user from extending their own timeout.
+      TMOUT={{ odp.session_timeout_seconds }}
+      readonly TMOUT
+      export TMOUT
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.10", "03.01.11", "03.13.09"]
+
+# ===========================================================================
+# 03.01.12 Remote Access / 03.01.16 Wireless / 03.01.20 External systems
+# ===========================================================================
+- name: "03.01.12 | Deploy the hardened sshd configuration"
+  ansible.builtin.template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config.d/00-nist-800-171.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: restart sshd
+  tags: ["03.01.12", "03.05.03", "03.05.04", "03.13.09", "03.13.15"]
+
+- name: "03.01.12 | Protect the sshd configuration files"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - /etc/ssh/sshd_config
+  tags: ["03.01.12"]
+
+- name: "03.01.12 | Enable sshd"
+  ansible.builtin.systemd:
+    name: sshd
+    enabled: true
+    state: started
+  tags: ["03.01.12"]
+
+- name: "03.01.16 | Block wireless and removable-device kernel modules"
+  ansible.builtin.copy:
+    dest: "/etc/modprobe.d/nist-{{ item }}.conf"
+    content: |
+      # 03.01.16 Wireless Access / 03.01.20 External Systems / 03.08.07 Media Use
+      # Capability not intended for use is removed rather than merely disabled.
+      install {{ item }} /bin/false
+      blacklist {{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nist_blocked_devices }}"
+  tags: ["03.01.16", "03.01.20", "03.08.07", "03.13.12"]
+
+- name: "03.01.16 | Unload wireless modules if they are currently loaded"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ nist_blocked_devices }}"
+  failed_when: false
+  tags: ["03.01.16", "03.01.20", "03.08.07"]
+
+- name: "03.01.16 | Mask the Bluetooth service"
+  ansible.builtin.systemd:
+    name: bluetooth
+    enabled: false
+    masked: true
+    state: stopped
+  failed_when: false
+  tags: ["03.01.16"]
+
+- name: "03.01.20 | Disable automounting of removable media"
+  ansible.builtin.systemd:
+    name: autofs
+    enabled: false
+    masked: true
+    state: stopped
+  failed_when: false
+  tags: ["03.01.20", "03.08.07"]
+
+# ===========================================================================
+# 03.01.18 Access Control for Mobile Devices
+# ===========================================================================
+# Full-device encryption is provided by the LUKS volumes created in mp.yml
+# (03.13.08 / 03.08.09). Nothing further is enforced here; see the overlay's
+# residual note for the MDM-side controls.

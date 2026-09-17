@@ -1,0 +1,50 @@
+---
+# 03.16 SYSTEM AND SERVICES ACQUISITION
+
+# ===========================================================================
+# 03.16.02 Unsupported System Components
+# ===========================================================================
+- name: "03.16.02 | Read the installed release"
+  ansible.builtin.slurp:
+    src: /etc/rocky-release
+  register: nist_release
+  tags: ["03.16.02"]
+
+- name: "03.16.02 | Record the support status of this build"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/support-status"
+    content: |
+      # 03.16.02a  Components must be within vendor support.
+      release={{ (nist_release.content | b64decode) | trim }}
+      major_version={{ ansible_facts['distribution_major_version'] }}
+      # Rocky Linux 9 receives security support through 2032-05-31.
+      support_end=2032-05-31
+      running_kernel={{ ansible_facts['kernel'] }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.16.02"]
+
+- name: "03.16.02 | Remove packages with no supporting repository"
+  # An orphaned package receives no security updates, so it is by definition
+  # an unsupported component (statement a).
+  ansible.builtin.command:
+    cmd: dnf -q repoquery --extras --queryformat '%{name}'
+  register: nist_orphans
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["03.16.02"]
+
+- name: "03.16.02 | Report packages that no repository supports"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/unsupported-packages"
+    content: |
+      # 03.16.02  Packages installed from no currently-enabled repository.
+      # Each is either removed, or granted a documented risk mitigation
+      # (statement b).
+      {{ nist_orphans.stdout | default('') | trim if (nist_orphans.stdout | default('') | trim) else '(none)' }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.16.02"]

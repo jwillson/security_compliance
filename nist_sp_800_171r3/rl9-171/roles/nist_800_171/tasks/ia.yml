@@ -1,0 +1,387 @@
+---
+# 03.05 IDENTIFICATION AND AUTHENTICATION
+
+# ===========================================================================
+# 03.05.01 User Identification and Authentication
+# ===========================================================================
+- name: "03.05.01 | Look for duplicate identifiers"
+  # Emits one line per duplicate found, and nothing at all when clean, so the
+  # guard below is a simple emptiness test rather than a pattern match.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      awk -F: '{print $3}' /etc/passwd | sort | uniq -d | sed 's/^/duplicate uid: /'
+      awk -F: '{print $1}' /etc/passwd | sort | uniq -d | sed 's/^/duplicate user: /'
+      awk -F: '{print $3}' /etc/group  | sort | uniq -d | sed 's/^/duplicate gid: /'
+      awk -F: '{print $1}' /etc/group  | sort | uniq -d | sed 's/^/duplicate group: /'
+      exit 0
+    executable: /bin/bash
+  register: nist_dupes
+  changed_when: false
+  check_mode: false
+  tags: ["03.05.01", "03.05.05"]
+
+- name: "03.05.01 | Fail if identifiers are not unique"
+  ansible.builtin.fail:
+    msg: >-
+      Unique identification (03.05.01a) is broken -
+      {{ nist_dupes.stdout_lines | join('; ') }}.
+      Resolve the duplicates before this host may process CUI.
+  when: nist_dupes.stdout_lines | length > 0
+  tags: ["03.05.01", "03.05.05"]
+
+- name: "03.05.01 | Remove nullok so an empty password can never authenticate"
+  # authselect owns /etc/pam.d/system-auth and password-auth on RHEL 9
+  # derivatives. Editing them directly breaks that ownership and makes every
+  # later `authselect` call fail, so the supported feature toggle is used.
+  # `authselect enable-feature` is not idempotent in its reporting, so the
+  # enabled feature list is consulted first.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if authselect current 2>/dev/null | grep -q 'without-nullok'; then
+        echo "already-enabled"
+      else
+        authselect enable-feature without-nullok && echo "enabled"
+      fi
+    executable: /bin/bash
+  register: nist_nullok
+  changed_when: "'already-enabled' not in nist_nullok.stdout"
+  notify: apply authselect changes
+  tags: ["03.05.01"]
+
+- name: "03.05.01 | Remove NIS-style '+' entries from the identity databases"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for f in /etc/passwd /etc/shadow /etc/group; do
+        if grep -q '^+' "$f"; then
+          sed -ri '/^\+/d' "$f"
+          changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_plus
+  changed_when: "'changed=1' in nist_plus.stdout"
+  tags: ["03.05.01"]
+
+- name: "03.05.01 | Bind session identity immutably to every process"
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/11-loginuid.rules
+    content: |
+      # 03.05.01a  Associate unique identification with processes acting on
+      # behalf of the user. Once set at login, the audit loginuid cannot be
+      # changed, so a session's identity cannot be repudiated or reassigned.
+      --loginuid-immutable
+    owner: root
+    group: root
+    mode: "0600"
+  notify: regenerate audit rules
+  tags: ["03.05.01"]
+
+# ===========================================================================
+# 03.05.02 Device Identification and Authentication
+# ===========================================================================
+- name: "03.05.02 | Protect the SSH host private keys"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for k in /etc/ssh/ssh_host_*_key; do
+        [ -f "$k" ] || continue
+        if [ "$(stat -c %a "$k")" != "600" ]; then chmod 0600 "$k"; changed=1; fi
+        if [ "$(stat -c %U:%G "$k")" != "root:root" ]; then chown root:root "$k"; changed=1; fi
+      done
+      for k in /etc/ssh/ssh_host_*_key.pub; do
+        [ -f "$k" ] || continue
+        if [ "$(stat -c %a "$k")" != "644" ]; then chmod 0644 "$k"; changed=1; fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_hostkeys
+  changed_when: "'changed=1' in nist_hostkeys.stdout"
+  tags: ["03.05.02", "03.13.10"]
+
+- name: "03.05.02 | Verify peer identity on outbound connections"
+  ansible.builtin.copy:
+    dest: /etc/ssh/ssh_config.d/00-nist-800-171.conf
+    content: |
+      # 03.05.02  Authenticate the device before establishing a connection.
+      # Accepting an unknown host key defeats device authentication, so the
+      # client refuses rather than prompts.
+      Host *
+          StrictHostKeyChecking yes
+          HashKnownHosts yes
+          # 03.13.15  Do not let a client silently downgrade the session.
+          GSSAPIAuthentication no
+          # 03.01.03  No uncontrolled flow paths out of this host.
+          ForwardAgent no
+          ForwardX11 no
+    owner: root
+    group: root
+    mode: "0600"
+  tags: ["03.05.02", "03.13.15"]
+
+# ===========================================================================
+# 03.05.03 Multi-Factor Authentication
+# ===========================================================================
+- name: "03.05.03 | Install smart card and directory authentication support"
+  ansible.builtin.dnf:
+    name:
+      - sssd
+      - sssd-tools
+      - openssl-pkcs11
+      - opensc
+      - pcsc-lite
+    state: present
+  failed_when: false
+  tags: ["03.05.03"]
+
+- name: "03.05.03 | Record the MFA posture for assessment"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/mfa-status"
+    content: |
+      # 03.05.03  Multi-factor authentication
+      # enforce_pubkey=true means sshd requires publickey AND password, which
+      # is a possession factor plus a knowledge factor.
+      enforce_pubkey={{ nist_mfa_enforce_pubkey | lower }}
+      smartcard_support=installed
+      # Enrolling PIV/CAC credentials requires enterprise identity
+      # infrastructure and is tracked as a residual item in the overlay.
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.05.03"]
+
+# ===========================================================================
+# 03.05.04 Replay-Resistant Authentication / 03.13.10 Key management
+# ===========================================================================
+- name: "03.05.04 | Read the current system-wide crypto policy"
+  ansible.builtin.command:
+    cmd: update-crypto-policies --show
+  register: nist_crypto_current
+  changed_when: false
+  check_mode: false
+  tags: ["03.05.04", "03.13.10", "03.13.11", "03.13.15"]
+
+- name: "03.05.04 | Set the system-wide crypto policy"
+  # update-crypto-policies always exits 0 and reports success, so the current
+  # policy is read first; otherwise every run would report a change.
+  ansible.builtin.command:
+    cmd: "update-crypto-policies --set {{ odp.crypto_policy }}"
+  when: nist_crypto_current.stdout | trim != odp.crypto_policy
+  changed_when: true
+  notify:
+    - restart sshd
+  tags: ["03.05.04", "03.13.10", "03.13.11", "03.13.15"]
+
+- name: "03.05.04 | Stop sshd regenerating the weak host key types"
+  # Deleting the key is not enough: sshd-keygen@.service recreates it on the
+  # next start, so the removal silently undoes itself. Masking the generator
+  # for those types makes the removal stick.
+  ansible.builtin.systemd:
+    name: "sshd-keygen@{{ item }}.service"
+    masked: true
+  loop: [ecdsa, dsa]
+  failed_when: false
+  tags: ["03.05.04", "03.13.10"]
+
+- name: "03.05.04 | Remove weak SSH host keys"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/ssh/ssh_host_dsa_key
+    - /etc/ssh/ssh_host_dsa_key.pub
+    - /etc/ssh/ssh_host_ecdsa_key
+    - /etc/ssh/ssh_host_ecdsa_key.pub
+  notify: restart sshd
+  tags: ["03.05.04", "03.13.10"]
+
+# ===========================================================================
+# 03.05.05 Identifier Management
+# ===========================================================================
+- name: "03.05.05 | Separate human identifiers from system identifiers"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*{{ item.key }}\s+'
+    line: "{{ item.key }}\t{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: UID_MIN,     value: "1000" }
+    - { key: GID_MIN,     value: "1000" }
+    - { key: SYS_UID_MIN, value: "201" }
+    - { key: SYS_UID_MAX, value: "999" }
+    - { key: SYS_GID_MIN, value: "201" }
+    - { key: SYS_GID_MAX, value: "999" }
+    - { key: CREATE_HOME, value: "yes" }
+  tags: ["03.05.05"]
+
+# ===========================================================================
+# 03.05.07 Password Management
+# ===========================================================================
+- name: "03.05.07 | Install password quality enforcement"
+  ansible.builtin.dnf:
+    name:
+      - libpwquality
+      - cracklib-dicts
+    state: present
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Enforce the ODP composition and complexity rules"
+  ansible.builtin.template:
+    src: pwquality.conf.j2
+    dest: /etc/security/pwquality.conf
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Install the compromised-password wordlist"
+  ansible.builtin.copy:
+    src: banned-passwords.txt
+    dest: /etc/security/banned-passwords
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Store passwords as SHA-512 with the ODP round count"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*{{ item.key }}\s+'
+    line: "{{ item.key }}\t{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: ENCRYPT_METHOD,  value: "SHA512" }
+    - { key: SHA_CRYPT_MIN_ROUNDS, value: "{{ odp.password_hash_rounds }}" }
+    - { key: SHA_CRYPT_MAX_ROUNDS, value: "{{ odp.password_hash_rounds }}" }
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Set the libuser hash algorithm to match"
+  ansible.builtin.lineinfile:
+    path: /etc/libuser.conf
+    regexp: '^\s*crypt_style\s*='
+    line: "crypt_style = sha512"
+    create: false
+  failed_when: false
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Enable password quality and history in the PAM stack"
+  # As with the other authselect features, the enabled list is consulted first
+  # so a no-op run does not report a change.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if authselect current 2>/dev/null | grep -q 'with-pwhistory'; then
+        echo "already-enabled"
+      else
+        authselect enable-feature with-pwhistory && echo "enabled"
+      fi
+    executable: /bin/bash
+  register: nist_authselect_pw
+  changed_when: "'already-enabled' not in nist_authselect_pw.stdout"
+  notify: apply authselect changes
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Prevent reuse of the last N passwords"
+  ansible.builtin.copy:
+    dest: /etc/security/pwhistory.conf
+    content: |
+      # 03.05.07  A password may not be reused until
+      # {{ odp.password_remember }} others have been used.
+      remember = {{ odp.password_remember }}
+      enforce_for_root
+      use_authtok
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.05.07"]
+
+- name: "03.05.07 | Protect the password history file"
+  ansible.builtin.file:
+    path: /etc/security/opasswd
+    state: touch
+    owner: root
+    group: root
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+  tags: ["03.05.07"]
+
+# ===========================================================================
+# 03.05.11 Authentication Feedback
+# ===========================================================================
+# sudo pwfeedback/visiblepw are disabled in ac.yml (03.01.05 drop-in).
+- name: "03.05.11 | Do not enumerate users on the graphical greeter"
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/gdm.d/00-nist-login
+    content: |
+      # 03.05.11  Do not reveal valid account names before authentication.
+      [org/gnome/login-screen]
+      disable-user-list=true
+      banner-message-enable=true
+    owner: root
+    group: root
+    mode: "0644"
+  when: "'gdm' in ansible_facts.packages | default({})"
+  failed_when: false
+  tags: ["03.05.11"]
+
+# ===========================================================================
+# 03.05.12 Authenticator Management
+# ===========================================================================
+- name: "03.05.12 | Set the authenticator lifetime defaults"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*{{ item.key }}\s+'
+    line: "{{ item.key }}\t{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: PASS_MAX_DAYS,  value: "{{ odp.password_max_age }}" }
+    - { key: PASS_MIN_DAYS,  value: "{{ odp.password_min_age }}" }
+    - { key: PASS_WARN_AGE,  value: "{{ odp.password_warn_age }}" }
+  tags: ["03.05.12"]
+
+- name: "03.05.12 | Apply the lifetime to existing interactive accounts"
+  # Fields 4, 5 and 6 of /etc/shadow are min age, max age and warning period.
+  # They are compared first so a no-op run reports no change.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for u in {{ nist_interactive_accounts.stdout_lines | default([]) | join(' ') | quote }}; do
+        [ -n "$u" ] || continue
+        read -r mn mx wn <<<"$(awk -F: -v u="$u" '$1==u {print $4, $5, $6}' /etc/shadow)"
+        if [ "$mn" != "{{ odp.password_min_age }}" ] || \
+           [ "$mx" != "{{ odp.password_max_age }}" ] || \
+           [ "$wn" != "{{ odp.password_warn_age }}" ]; then
+          chage --maxdays {{ odp.password_max_age }} \
+                --mindays {{ odp.password_min_age }} \
+                --warndays {{ odp.password_warn_age }} "$u" && changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_chage_age
+  changed_when: "'changed=1' in nist_chage_age.stdout"
+  tags: ["03.05.12"]
+
+- name: "03.05.12 | Protect the authenticator stores"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/shadow,  group: root, mode: "0000" }
+    - { path: /etc/gshadow, group: root, mode: "0000" }
+  tags: ["03.05.12"]

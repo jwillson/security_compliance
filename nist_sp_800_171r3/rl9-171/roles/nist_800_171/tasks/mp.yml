@@ -1,0 +1,260 @@
+---
+# 03.08 MEDIA PROTECTION
+#
+# This file also realises the storage half of 03.13.08 (Transmission and
+# Storage Confidentiality) and 03.04.11 (Information Location), because the
+# encrypted CUI volume is the single artifact all three depend on.
+
+# ===========================================================================
+# 03.08.09 / 03.13.08 Encrypted volumes for CUI and its backups
+# ===========================================================================
+- name: "03.08.09 | Install the volume encryption tooling"
+  ansible.builtin.dnf:
+    name:
+      - cryptsetup
+      - lvm2
+      - clevis
+      - clevis-luks
+      - clevis-dracut
+      - clevis-systemd
+      - tpm2-tools
+    state: present
+  failed_when: false
+  tags: ["03.08.09", "03.13.08"]
+
+- name: "03.08.09 | Check the volume group for free space"
+  ansible.builtin.command:
+    cmd: "vgs --noheadings --units g -o vg_free --nosuffix {{ nist_vg_name }}"
+  register: nist_vg_free
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["03.08.09", "03.13.08"]
+
+- name: "03.08.09 | Record whether encrypted volumes can be created"
+  ansible.builtin.set_fact:
+    nist_can_encrypt: >-
+      {{ (nist_vg_free.rc | default(1)) == 0 and
+         (nist_vg_free.stdout | default('0') | trim | float) >= 3.0 }}
+  tags: ["03.08.09", "03.13.08"]
+
+- name: "03.08.09 | Warn if there is not enough free space for encrypted volumes"
+  ansible.builtin.debug:
+    msg: >-
+      Volume group {{ nist_vg_name }} has
+      {{ nist_vg_free.stdout | default('0') | trim }} GB free, which is not
+      enough for the CUI and backup volumes. 03.13.08 (storage confidentiality)
+      and 03.08.09 (backup encryption) cannot be satisfied until space is
+      available. The auditor will report both as failing.
+  when: not nist_can_encrypt
+  tags: ["03.08.09", "03.13.08"]
+
+- name: "03.08.09 | Create the encrypted volumes"
+  when: nist_can_encrypt
+  block:
+    - name: "03.08.09 | Create the logical volumes"
+      community.general.lvol:
+        vg: "{{ nist_vg_name }}"
+        lv: "{{ item.lv }}"
+        size: "{{ item.size }}"
+        state: present
+      loop:
+        - { lv: lv_cui,    size: "{{ nist_cui_lv_size }}" }
+        - { lv: lv_backup, size: "{{ nist_backup_lv_size }}" }
+      loop_control:
+        label: "{{ item.lv }}"
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Stage the LUKS key file"
+      ansible.builtin.copy:
+        content: "{{ lookup('file', playbook_dir + '/.secrets/luks_passphrase') }}"
+        dest: /root/.luks-key
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Format the volumes as LUKS2 with an approved cipher"
+      # aes-xts-plain64 with a 512-bit key and pbkdf2 are FIPS-approved
+      # (03.13.11). argon2 is the cryptsetup default but is not approved.
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          dev=/dev/{{ nist_vg_name }}/{{ item }}
+          if cryptsetup isLuks "$dev" 2>/dev/null; then
+            echo "already-luks"
+            exit 0
+          fi
+          cryptsetup luksFormat \
+            --type luks2 \
+            --cipher aes-xts-plain64 \
+            --key-size 512 \
+            --hash sha512 \
+            --pbkdf pbkdf2 \
+            --pbkdf-force-iterations 100000 \
+            --batch-mode \
+            "$dev" /root/.luks-key
+          echo "formatted"
+        executable: /bin/bash
+      loop: [lv_cui, lv_backup]
+      register: nist_luks_format
+      changed_when: "'formatted' in nist_luks_format.stdout"
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Open the encrypted volumes"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          if [ -e /dev/mapper/{{ item.name }} ]; then
+            echo "already-open"
+            exit 0
+          fi
+          cryptsetup luksOpen --key-file /root/.luks-key \
+            /dev/{{ nist_vg_name }}/{{ item.lv }} {{ item.name }}
+          echo "opened"
+        executable: /bin/bash
+      loop:
+        - { lv: lv_cui,    name: cui_data }
+        - { lv: lv_backup, name: cui_backup }
+      loop_control:
+        label: "{{ item.name }}"
+      register: nist_luks_open
+      changed_when: "'opened' in nist_luks_open.stdout"
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Create filesystems on the encrypted volumes"
+      community.general.filesystem:
+        fstype: xfs
+        dev: "/dev/mapper/{{ item }}"
+      loop: [cui_data, cui_backup]
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Register the volumes in crypttab"
+      ansible.builtin.lineinfile:
+        path: /etc/crypttab
+        regexp: '^{{ item.name }}\s'
+        line: "{{ item.name }} /dev/{{ nist_vg_name }}/{{ item.lv }} /root/.luks-key luks,discard"
+        create: true
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - { lv: lv_cui,    name: cui_data }
+        - { lv: lv_backup, name: cui_backup }
+      loop_control:
+        label: "{{ item.name }}"
+      tags: ["03.08.09", "03.13.08"]
+
+    - name: "03.08.09 | Bind the volumes to the TPM for unattended unlock"
+      # 03.13.10: the key is sealed to the platform state rather than stored in
+      # cleartext where it could be read off the disk. Best-effort - a host
+      # without a TPM keeps the key file, which the auditor reports.
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          dev=/dev/{{ nist_vg_name }}/{{ item }}
+          if clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then
+            echo "already-bound"
+            exit 0
+          fi
+          clevis luks bind -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' \
+            -k /root/.luks-key -y && echo "bound"
+        executable: /bin/bash
+      loop: [lv_cui, lv_backup]
+      register: nist_clevis
+      changed_when: "'bound' in nist_clevis.stdout"
+      failed_when: false
+      tags: ["03.08.09", "03.13.10"]
+
+    - name: "03.08.09 | Mount the encrypted CUI and backup filesystems"
+      ansible.posix.mount:
+        path: "{{ item.path }}"
+        src: "/dev/mapper/{{ item.name }}"
+        fstype: xfs
+        opts: "defaults,nodev,nosuid,noexec"
+        state: mounted
+      loop:
+        - { name: cui_data,   path: "{{ nist_cui_path }}" }
+        - { name: cui_backup, path: "{{ nist_backup_path }}" }
+      loop_control:
+        label: "{{ item.path }}"
+      tags: ["03.08.09", "03.13.08", "03.04.11"]
+
+# ===========================================================================
+# 03.08.02 Media Access
+# ===========================================================================
+- name: "03.08.02 | Create the CUI access group"
+  ansible.builtin.group:
+    name: "{{ nist_cui_group }}"
+    state: present
+  tags: ["03.08.02", "03.04.11"]
+
+- name: "03.08.02 | Restrict the CUI and backup paths to authorized roles"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ nist_cui_group }}"
+    mode: "0770"
+  loop:
+    - "{{ nist_cui_path }}"
+    - "{{ nist_backup_path }}"
+  tags: ["03.08.02", "03.04.11", "03.08.09"]
+
+- name: "03.08.02 | Restrict home directories to their owner"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      while IFS=: read -r user _ uid _ _ home _; do
+        if [ "$uid" -ge 1000 ] && [ "$uid" != 65534 ] && [ -d "$home" ]; then
+          if [ "$(stat -c %a "$home")" != "700" ]; then
+            chmod 0700 "$home"; changed=1
+          fi
+        fi
+      done < /etc/passwd
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_homeperms
+  changed_when: "'changed=1' in nist_homeperms.stdout"
+  tags: ["03.08.02"]
+
+# ===========================================================================
+# 03.08.03 Media Sanitization
+# ===========================================================================
+- name: "03.08.03 | Install media sanitization tooling"
+  ansible.builtin.dnf:
+    name:
+      - coreutils      # shred
+      - util-linux     # wipefs, blkdiscard
+      - nvme-cli       # cryptographic erase on NVMe
+      - hdparm         # ATA secure erase
+    state: present
+  failed_when: false
+  tags: ["03.08.03"]
+
+- name: "03.08.03 | Install the sanitization helper"
+  ansible.builtin.template:
+    src: sanitize-media.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-sanitize-media"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.08.03"]
+
+# ===========================================================================
+# 03.08.07 Media Use
+# ===========================================================================
+# usb-storage is blocked in ac.yml with the other device classes (03.01.20d).
+- name: "03.08.07 | Disable removable media automounting in udisks"
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/80-nist-no-automount.rules
+    content: |
+      # 03.08.07  Removable media is not usable without an authorized exception.
+      SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{UDISKS_IGNORE}="1"
+      SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{UDISKS_AUTO}="0"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.08.07", "03.01.20"]

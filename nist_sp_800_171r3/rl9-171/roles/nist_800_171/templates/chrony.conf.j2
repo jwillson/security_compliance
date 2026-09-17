@@ -1,0 +1,24 @@
+# NIST SP 800-171r3 03.03.07 Time Stamps - managed by Ansible.
+#
+# Audit timestamps are only meaningful if the clock is correct and its
+# reference is authorized. UTC is set separately (timedatectl).
+
+{% for src in nist_time_sources %}
+server {{ src }} iburst
+{% endfor %}
+
+# Record the drift so the clock recovers quickly after a restart.
+driftfile /var/lib/chrony/drift
+
+# 03.03.07b  Step the clock only at startup, and only for large offsets, so a
+# compromised or faulty source cannot silently rewrite the audit timeline.
+makestep 1.0 3
+
+# Keep the RTC in step so timestamps survive an unclean shutdown.
+rtcsync
+
+# Do not act as a time server; this host is a client only (03.04.06).
+port 0
+cmdport 0
+
+logdir /var/log/chrony

@@ -1,0 +1,448 @@
+---
+# 03.04 CONFIGURATION MANAGEMENT
+
+# ===========================================================================
+# 03.04.01 Baseline Configuration
+# ===========================================================================
+- name: "03.04.01 | Install AIDE"
+  ansible.builtin.dnf:
+    name: aide
+    state: present
+  tags: ["03.04.01"]
+
+- name: "03.04.01 | Configure AIDE to cover the baseline files"
+  # EL9's aide has no conf.d, so the rules go into a marked block in the main
+  # config. The block is idempotent and leaves the vendor rules intact.
+  ansible.builtin.blockinfile:
+    path: /etc/aide.conf
+    marker: "# {mark} NIST SP 800-171r3 (managed by Ansible)"
+    owner: root
+    group: root
+    mode: "0600"
+    block: |
+      # 03.04.01a  Baseline configuration under change detection.
+      # 03.14.06   Detect unauthorized change (system monitoring).
+      # Volatile paths are excluded first; they would produce noise, not signal.
+      !/etc/mtab$
+      !/etc/adjtime$
+      !/etc/resolv.conf$
+      !/etc/lvm/archive
+      !/etc/lvm/backup
+      !/var/log/nist-800-171
+      /etc/          NORMAL
+      /boot/         NORMAL
+      /bin/          NORMAL
+      /sbin/         NORMAL
+      /usr/bin/      NORMAL
+      /usr/sbin/     NORMAL
+      /usr/lib/      NORMAL
+      /usr/lib64/    NORMAL
+      {{ nist_conf_dir }}/  NORMAL
+  tags: ["03.04.01"]
+
+- name: "03.04.01 | Check whether the AIDE database already exists"
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db.gz
+  register: nist_aide_db
+  tags: ["03.04.01"]
+
+- name: "03.04.01 | Initialize the AIDE baseline database"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      aide --init --config /etc/aide.conf
+      mv -f /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+    executable: /bin/bash
+  when: not nist_aide_db.stat.exists
+  changed_when: true
+  tags: ["03.04.01"]
+
+- name: "03.04.01 | Protect the AIDE database"
+  ansible.builtin.file:
+    path: /var/lib/aide/aide.db.gz
+    owner: root
+    group: root
+    mode: "0600"
+  failed_when: false
+  tags: ["03.04.01", "03.03.08"]
+
+- name: "03.04.01 | Install the scheduled integrity check"
+  ansible.builtin.template:
+    src: aide-check.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-aide-check"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.04.01", "03.14.06"]
+
+- name: "03.04.01 | Schedule the integrity check"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: nist-aide-check.service
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.04.01/03.14.06 file integrity check
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ nist_bin_dir }}/nist-aide-check
+    - name: nist-aide-check.timer
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 integrity check schedule
+
+        [Timer]
+        OnCalendar={{ nist_aide_check_schedule }}
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  notify: reload systemd
+  tags: ["03.04.01", "03.14.06"]
+
+- name: "03.04.01 | Enable the integrity check timer"
+  ansible.builtin.systemd:
+    name: nist-aide-check.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: ["03.04.01", "03.12.03", "03.14.06"]
+
+# ===========================================================================
+# 03.04.02 Configuration Settings
+# ===========================================================================
+- name: "03.04.02 | Apply the hardened kernel parameter set"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/81-nist-800-171-kernel.conf
+    state: present
+    reload: true
+  loop:
+    # 03.13.04 Information in shared system resources
+    - { name: kernel.randomize_va_space,   value: "2" }
+    - { name: kernel.kptr_restrict,        value: "2" }
+    - { name: kernel.dmesg_restrict,       value: "1" }
+    - { name: kernel.yama.ptrace_scope,    value: "1" }
+    - { name: vm.mmap_min_addr,            value: "65536" }
+    - { name: kernel.core_pattern,         value: "|/bin/false" }
+    - { name: fs.suid_dumpable,            value: "0" }
+    - { name: kernel.perf_event_paranoid,  value: "2" }
+    # 03.13.15 Session authenticity
+    - { name: net.ipv4.tcp_syncookies,     value: "1" }
+    # 03.14.06 System monitoring
+    - { name: kernel.unprivileged_bpf_disabled, value: "1" }
+    - { name: net.core.bpf_jit_harden,     value: "2" }
+    # 03.04.06 Least functionality
+    # kernel.modules_disabled is deliberately omitted: it is a one-way latch
+    # (writing 0 is rejected), and latching it to 1 would stop the legitimate
+    # module loading that FIPS, LUKS and the storage stack depend on.
+    - { name: fs.protected_hardlinks,      value: "1" }
+    - { name: fs.protected_symlinks,       value: "1" }
+    - { name: fs.protected_fifos,          value: "2" }
+    - { name: fs.protected_regular,        value: "2" }
+  tags: ["03.04.02", "03.13.04", "03.13.15", "03.14.06"]
+
+# ===========================================================================
+# 03.04.05 Access Restrictions for Change
+# ===========================================================================
+- name: "03.04.05 | Require signature verification for all packages"
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/dnf.conf
+    regexp: '^\s*{{ item.key }}\s*='
+    line: "{{ item.key }}={{ item.value }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: gpgcheck,        value: "1" }
+    - { key: localpkg_gpgcheck, value: "1" }
+    - { key: clean_requirements_on_remove, value: "1" }
+    - { key: best,            value: "1" }
+  tags: ["03.04.05", "03.17.03"]
+
+- name: "03.04.05 | Require signature verification in every repository"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for f in /etc/yum.repos.d/*.repo; do
+        [ -f "$f" ] || continue
+        if grep -Eq '^\s*gpgcheck\s*=\s*0' "$f"; then
+          sed -ri 's/^\s*gpgcheck\s*=\s*0/gpgcheck=1/' "$f"
+          changed=1
+        fi
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  register: nist_repo_gpg
+  changed_when: "'changed=1' in nist_repo_gpg.stdout"
+  tags: ["03.04.05", "03.17.03"]
+
+- name: "03.04.05 | Protect the repository and package manager configuration"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/dnf/dnf.conf
+  tags: ["03.04.05"]
+
+# ===========================================================================
+# 03.04.06 Least Functionality
+# ===========================================================================
+- name: "03.04.06 | Remove legacy and cleartext network software"
+  ansible.builtin.dnf:
+    name: "{{ nist_forbidden_packages }}"
+    state: absent
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Prevent unnecessary filesystem drivers from loading"
+  ansible.builtin.copy:
+    dest: "/etc/modprobe.d/nist-fs-{{ item }}.conf"
+    content: |
+      # 03.04.06d  Filesystem driver with no mission role.
+      install {{ item }} /bin/false
+      blacklist {{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nist_blocked_filesystems }}"
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Prevent uncommon network protocols from loading"
+  ansible.builtin.copy:
+    dest: "/etc/modprobe.d/nist-net-{{ item }}.conf"
+    content: |
+      # 03.04.06b  Network protocol not required by the mission.
+      install {{ item }} /bin/false
+      blacklist {{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nist_blocked_protocols }}"
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Mask services that are not mission-essential"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    masked: true
+    state: stopped
+  loop: "{{ nist_masked_services }}"
+  failed_when: false
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Check what Ctrl-Alt-Del currently points at"
+  ansible.builtin.stat:
+    path: /etc/systemd/system/ctrl-alt-del.target
+  register: nist_cad
+  tags: ["03.04.06", "03.10.07"]
+
+- name: "03.04.06 | Clear the stock Ctrl-Alt-Del alias so it can be masked"
+  # The distribution ships this as a symlink to reboot.target and systemd
+  # refuses to mask over an existing symlink. Remove it ONLY when it is that
+  # alias - removing it unconditionally would delete the /dev/null mask we
+  # created last run, so the task would undo itself on every run.
+  ansible.builtin.file:
+    path: /etc/systemd/system/ctrl-alt-del.target
+    state: absent
+  when:
+    - nist_cad.stat.exists
+    - nist_cad.stat.islnk | default(false)
+    - (nist_cad.stat.lnk_target | default('')) != '/dev/null'
+  tags: ["03.04.06", "03.10.07"]
+
+- name: "03.04.06 | Disable the Ctrl-Alt-Del reboot shortcut"
+  ansible.builtin.systemd:
+    name: ctrl-alt-del.target
+    masked: true
+    daemon_reload: true
+  tags: ["03.04.06", "03.10.07"]
+
+- name: "03.04.06 | Harden mount options on separate filesystems"
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts }}"
+    state: mounted
+  loop: "{{ nist_mount_hardening }}"
+  when: nist_mount_hardening | length > 0
+  tags: ["03.04.06"]
+
+- name: "03.04.06 | Harden /dev/shm, which the installer does not separate"
+  ansible.posix.mount:
+    path: /dev/shm
+    src: tmpfs
+    fstype: tmpfs
+    opts: "defaults,nodev,nosuid,noexec"
+    state: mounted
+  tags: ["03.04.06", "03.13.04"]
+
+# ===========================================================================
+# 03.04.08 Authorized Software - Allow by Exception
+# ===========================================================================
+- name: "03.04.08 | Install fapolicyd"
+  ansible.builtin.dnf:
+    name: fapolicyd
+    state: present
+  when: nist_fapolicyd_enabled
+  tags: ["03.04.08"]
+
+- name: "03.04.08 | Set fapolicyd to deny execution by default"
+  ansible.builtin.lineinfile:
+    path: /etc/fapolicyd/fapolicyd.conf
+    regexp: '^\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    create: false
+  loop:
+    # permissive=0 enforces the policy; 1 would only log.
+    - { key: permissive, value: "{{ 1 if nist_fapolicyd_permissive else 0 }}" }
+    # Trust is derived from the RPM database, so only software installed from
+    # an authorized signed package is allowed to execute (03.17.03).
+    - { key: trust,      value: "rpmdb,file" }
+    - { key: integrity,  value: "sha256" }
+    - { key: syslog_format, value: "rule,dec,perm,auid,pid,exe,:,path,ftype,trust" }
+  when: nist_fapolicyd_enabled
+  notify: restart fapolicyd
+  tags: ["03.04.08"]
+
+- name: "03.04.08 | Install the allow-by-exception rule set"
+  ansible.builtin.copy:
+    dest: /etc/fapolicyd/rules.d/99-nist-deny-all.rules
+    content: |
+      # 03.04.08b  Deny-all, allow-by-exception execution policy.
+      # Ordered last: anything not matched by an earlier allow rule is denied.
+      deny_audit perm=any all : all
+    owner: root
+    group: fapolicyd
+    mode: "0644"
+  when: nist_fapolicyd_enabled
+  notify: restart fapolicyd
+  tags: ["03.04.08"]
+
+- name: "03.04.08 | Enable fapolicyd"
+  ansible.builtin.systemd:
+    name: fapolicyd
+    enabled: true
+    state: started
+  when: nist_fapolicyd_enabled
+  tags: ["03.04.08"]
+
+# ===========================================================================
+# 03.04.10 System Component Inventory
+# ===========================================================================
+- name: "03.04.10 | Install the component inventory generator"
+  ansible.builtin.template:
+    src: inventory.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-inventory"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Generate the inventory now"
+  # This refreshes a report, it does not alter the system's configuration.
+  # Reporting it as a change would mean `--check` never comes back clean and
+  # real drift would be lost in the noise.
+  ansible.builtin.command:
+    cmd: "{{ nist_bin_dir }}/nist-inventory"
+  changed_when: false
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Schedule inventory refresh"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: nist-inventory.service
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 03.04.10 system component inventory
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ nist_bin_dir }}/nist-inventory
+    - name: nist-inventory.timer
+      content: |
+        [Unit]
+        Description=NIST 800-171r3 component inventory schedule
+
+        [Timer]
+        OnCalendar={{ nist_inventory_schedule }}
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  notify: reload systemd
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Enable the inventory timer"
+  ansible.builtin.systemd:
+    name: nist-inventory.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Install the dnf post-transaction plugin"
+  # Must precede the action file: the plugin owns the directory it lives in.
+  ansible.builtin.dnf:
+    name: python3-dnf-plugin-post-transaction-actions
+    state: present
+  register: nist_dnf_pta
+  failed_when: false
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Ensure the post-transaction action directory exists"
+  ansible.builtin.file:
+    path: /etc/dnf/plugins/post-transaction-actions.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: ["03.04.10"]
+
+- name: "03.04.10 | Refresh the inventory on every package transaction"
+  ansible.builtin.copy:
+    dest: /etc/dnf/plugins/post-transaction-actions.d/nist-inventory.action
+    content: |
+      # 03.04.10c  Update the inventory as part of installs, removals, updates.
+      *:any:{{ nist_bin_dir }}/nist-inventory
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.04.10"]
+
+# ===========================================================================
+# 03.04.11 Information Location
+# ===========================================================================
+# The CUI filesystem itself is created in mp.yml alongside its encryption.
+- name: "03.04.11 | Record where CUI is processed and stored"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/cui-locations"
+    content: |
+      # 03.04.11a  Documented location of CUI on this system.
+      # Machine-readable so the SSP (03.15.02) is generated, not transcribed.
+      cui_data_path={{ nist_cui_path }}
+      cui_backup_path={{ nist_backup_path }}
+      cui_access_group={{ nist_cui_group }}
+      encryption=LUKS2
+      volume_group={{ nist_vg_name }}
+      # No timestamp here on purpose: it would make this file differ on every
+      # run and drown real drift. The file's mtime records when it was written.
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.04.11"]

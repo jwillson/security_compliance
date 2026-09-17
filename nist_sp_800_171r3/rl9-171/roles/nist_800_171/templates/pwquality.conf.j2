@@ -1,0 +1,34 @@
+# NIST SP 800-171r3 03.05.07f password composition - managed by Ansible.
+#
+# The values come from odp.* in catalog/overlay-rocky9.yml so the role and the
+# auditor read the same policy.
+
+# 03.05.07f  Minimum length.
+minlen = {{ odp.password_min_length }}
+
+# Character classes. Negative credit values require at least that many of each.
+dcredit = {{ odp.password_dcredit }}
+ucredit = {{ odp.password_ucredit }}
+lcredit = {{ odp.password_lcredit }}
+ocredit = {{ odp.password_ocredit }}
+minclass = {{ odp.password_min_classes }}
+
+# 03.05.07f  How many characters must differ from the previous password.
+difok = {{ odp.password_difok }}
+
+# Limit runs of the same character and of the same class.
+maxrepeat = {{ odp.password_max_repeat }}
+maxclassrepeat = {{ odp.password_max_class_repeat }}
+
+# 03.05.07b  Reject passwords found in the dictionary or derived from identity.
+dictcheck = 1
+usercheck = 1
+gecoscheck = 1
+badwords = cui controlled unclassified rocky linux admin password
+
+# Apply the policy to root as well; root is the highest-value credential.
+enforce_for_root
+
+# Reject rather than warn.
+enforcing = 1
+retry = 3

@@ -1,0 +1,57 @@
+---
+# Apply the NIST SP 800-171r3 overlay to Rocky Linux 9 hosts.
+#
+#   ansible-playbook site.yml                     apply everything
+#   ansible-playbook site.yml --tags 03.03        one family
+#   ansible-playbook site.yml --tags 03.05.07     one requirement
+#   ansible-playbook site.yml --check --diff      report drift, change nothing
+#
+# The ODP values and the requirement mapping both come from
+# catalog/overlay-rocky9.yml, so the role and the auditor can never disagree
+# about what the baseline says.
+
+- name: NIST SP 800-171r3 overlay for Rocky Linux 9
+  hosts: cui_hosts
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - catalog/overlay-rocky9.yml
+
+  pre_tasks:
+    - name: Confirm the target is Rocky Linux 9
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Rocky'
+          - ansible_facts['distribution_major_version'] == '9'
+        fail_msg: >-
+          This overlay targets Rocky Linux 9. Found
+          {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}.
+      tags: [always]
+
+    - name: Record which overlay version is being applied
+      ansible.builtin.copy:
+        dest: /etc/nist-800-171/overlay-version
+        content: |
+          overlay_version={{ meta.version }}
+          overlay_name={{ meta.name }}
+          baseline={{ meta.baseline }}
+          # Deliberately no timestamp: it would make this file change on every
+          # run, so `--check` could never distinguish drift from a no-op.
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [always, "03.04.02"]
+
+  roles:
+    - role: nist_800_171
+
+  post_tasks:
+    - name: Report what was applied
+      ansible.builtin.debug:
+        msg: >-
+          Overlay {{ meta.version }} applied.
+          Reboot required: {{ nist_reboot_required | default(false) }}.
+          Run ./verify.sh to assess the host against all 97 requirements.
+      tags: [always]

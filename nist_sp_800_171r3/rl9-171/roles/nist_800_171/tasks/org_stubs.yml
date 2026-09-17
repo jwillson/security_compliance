@@ -1,0 +1,17 @@
+---
+# Organizational requirements.
+#
+# 28 of the 97 active requirements in 800-171r3 have no host-enforceable
+# component: policy, process, personnel, and physical controls. Silently
+# skipping them would make the assessment look complete when it is not, so the
+# role writes a stub for each one naming what the organization still owes.
+# The auditor reports these as NOT_APPLICABLE(host) rather than PASS.
+
+- name: "Organizational | Emit the SSP stub for requirements the host cannot enforce"
+  ansible.builtin.template:
+    src: organizational-requirements.md.j2
+    dest: "{{ nist_conf_dir }}/organizational-requirements.md"
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [organizational]

@@ -1,0 +1,276 @@
+---
+# 03.13 SYSTEM AND COMMUNICATIONS PROTECTION
+
+# ===========================================================================
+# 03.13.01 Boundary Protection / 03.13.06 Deny by Default
+# ===========================================================================
+- name: "03.13.01 | Install firewalld"
+  ansible.builtin.dnf:
+    name: firewalld
+    state: present
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.01 | Use the nftables backend"
+  ansible.builtin.lineinfile:
+    path: /etc/firewalld/firewalld.conf
+    regexp: '^\s*FirewallBackend\s*='
+    line: "FirewallBackend=nftables"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart firewalld
+  tags: ["03.13.01"]
+
+- name: "03.13.01 | Log traffic denied at the boundary"
+  ansible.builtin.lineinfile:
+    path: /etc/firewalld/firewalld.conf
+    regexp: '^\s*LogDenied\s*='
+    line: "LogDenied=all"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart firewalld
+  tags: ["03.13.01", "03.14.06"]
+
+- name: "03.13.01 | Enable firewalld"
+  ansible.builtin.systemd:
+    name: firewalld
+    enabled: true
+    state: started
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.06 | Set the default zone"
+  ansible.posix.firewalld:
+    zone: "{{ nist_firewall_zone }}"
+    state: present
+    permanent: true
+  failed_when: false
+  tags: ["03.13.06"]
+
+- name: "03.13.06 | Read the current zone target"
+  ansible.builtin.command:
+    cmd: "firewall-cmd --permanent --zone={{ nist_firewall_zone }} --get-target"
+  register: nist_zone_target_current
+  changed_when: false
+  check_mode: false
+  tags: ["03.13.06"]
+
+- name: "03.13.06 | Make the default zone deny by default"
+  # firewall-cmd prints "success" whether or not anything changed, so the
+  # current target is read first.
+  ansible.builtin.command:
+    cmd: "firewall-cmd --permanent --zone={{ nist_firewall_zone }} --set-target=DROP"
+  when: nist_zone_target_current.stdout | trim != 'DROP'
+  changed_when: true
+  register: nist_zone_target
+  tags: ["03.13.06"]
+
+- name: "03.13.06 | Read the current default zone"
+  ansible.builtin.command:
+    cmd: firewall-cmd --get-default-zone
+  register: nist_default_zone_current
+  changed_when: false
+  check_mode: false
+  tags: ["03.13.06"]
+
+- name: "03.13.06 | Set the default zone for unassigned interfaces"
+  ansible.builtin.command:
+    cmd: "firewall-cmd --set-default-zone={{ nist_firewall_zone }}"
+  when: nist_default_zone_current.stdout | trim != nist_firewall_zone
+  changed_when: true
+  register: nist_default_zone
+  tags: ["03.13.06"]
+
+- name: "03.13.01 | Permit only the explicitly authorized services"
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    zone: "{{ nist_firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ nist_firewall_allowed_services }}"
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.06 | List services currently permitted in the zone"
+  ansible.builtin.command:
+    cmd: "firewall-cmd --permanent --zone={{ nist_firewall_zone }} --list-services"
+  register: nist_zone_services
+  changed_when: false
+  check_mode: false
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.06 | Remove services that are not in the authorized set"
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    zone: "{{ nist_firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: >-
+    {{ (nist_zone_services.stdout | default('') | split)
+       | difference(nist_firewall_allowed_services) }}
+  register: nist_zone_service_removals
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.06 | Reload the firewall so the permanent policy is live"
+  # Only needed when the permanent configuration actually moved.
+  ansible.builtin.command:
+    cmd: firewall-cmd --reload
+  when: >-
+    (nist_zone_target is defined and nist_zone_target is changed) or
+    (nist_default_zone is defined and nist_default_zone is changed) or
+    (nist_zone_service_removals is defined and nist_zone_service_removals is changed)
+  changed_when: true
+  tags: ["03.13.01", "03.13.06"]
+
+# ===========================================================================
+# 03.13.04 Information in Shared System Resources
+# ===========================================================================
+# The sysctl half lives in cm.yml (03.04.02). Here we close the remaining
+# residual-information paths that sysctl does not cover.
+- name: "03.13.04 | Disable core dumps for all users"
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/80-nist-coredump.conf
+    content: |
+      # 03.13.04  A core dump can contain CUI from another subject's memory.
+      *    hard    core    0
+      *    soft    core    0
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.13.04"]
+
+- name: "03.13.04 | Disable systemd core dump collection"
+  ansible.builtin.copy:
+    dest: /etc/systemd/coredump.conf.d/80-nist.conf
+    content: |
+      # 03.13.04  Do not store core dumps anywhere on the system.
+      [Coredump]
+      Storage=none
+      ProcessSizeMax=0
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.13.04"]
+
+- name: "03.13.04 | Mask the core dump collector"
+  ansible.builtin.systemd:
+    name: systemd-coredump.socket
+    masked: true
+  failed_when: false
+  tags: ["03.13.04"]
+
+- name: "03.13.04 | Ensure shared temp directories carry the sticky bit"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "1777"
+  loop:
+    - /tmp
+    - /var/tmp
+    - /dev/shm
+  tags: ["03.13.04"]
+
+# ===========================================================================
+# 03.13.08 Transmission and Storage Confidentiality
+# 03.13.11 Cryptographic Protection
+# ===========================================================================
+- name: "03.13.11 | Confirm FIPS mode is active"
+  ansible.builtin.slurp:
+    src: /proc/sys/crypto/fips_enabled
+  register: nist_fips_state
+  failed_when: false
+  tags: ["03.13.11"]
+
+- name: "03.13.11 | Enable FIPS mode if the build did not"
+  ansible.builtin.command:
+    cmd: fips-mode-setup --enable
+  when: (nist_fips_state.content | default('MA==') | b64decode | trim) != '1'
+  register: nist_fips_enable
+  changed_when: nist_fips_enable.rc == 0
+  tags: ["03.13.11"]
+
+- name: "03.13.11 | Flag the reboot FIPS activation requires"
+  ansible.builtin.set_fact:
+    nist_reboot_required: true
+  when: (nist_fips_state.content | default('MA==') | b64decode | trim) != '1'
+  tags: ["03.13.11"]
+
+# The system-wide crypto policy is set in ia.yml (03.05.04) and covers sshd,
+# GnuTLS, OpenSSL, NSS and Java from one place.
+
+- name: "03.13.08 | Remove software that transmits credentials in the clear"
+  ansible.builtin.dnf:
+    name:
+      - telnet
+      - rsh
+      - ftp
+      - tftp
+      - ypbind
+    state: absent
+  tags: ["03.13.08", "03.04.06"]
+
+# ===========================================================================
+# 03.13.12 Collaborative Computing Devices
+# ===========================================================================
+- name: "03.13.12 | Remove conferencing and capture software"
+  ansible.builtin.dnf:
+    name:
+      - pipewire-v4l2
+      - cheese
+      - ekiga
+      - linphone
+    state: absent
+  failed_when: false
+  tags: ["03.13.12"]
+
+# The uvcvideo module is blocked in ac.yml alongside the other device classes.
+
+# ===========================================================================
+# 03.13.13 Mobile Code
+# ===========================================================================
+- name: "03.13.13 | Remove browser plugin runtimes that execute mobile code"
+  ansible.builtin.dnf:
+    name:
+      - icedtea-web
+      - java-1.8.0-openjdk-plugin
+      - flash-plugin
+    state: absent
+  failed_when: false
+  tags: ["03.13.13"]
+
+- name: "03.13.13 | Record the acceptable mobile code decision"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/mobile-code-policy"
+    content: |
+      # 03.13.13a  Acceptable mobile code and mobile code technologies.
+      # This host runs no browser and hosts no web application, so no mobile
+      # code technology is authorized. Execution of any unauthorized binary or
+      # interpreter is denied by fapolicyd (03.04.08), which is the enforcement
+      # mechanism for statement b.
+      authorized_mobile_code=none
+      enforcement=fapolicyd
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.13.13"]
+
+# ===========================================================================
+# 03.13.15 Session Authenticity
+# ===========================================================================
+# sshd MACs, KEX and RekeyLimit come from the crypto policy plus the sshd
+# template; the TCP-level protections are applied with the 03.04.02 sysctl set.
+- name: "03.13.15 | Harden TCP against session injection"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/82-nist-800-171-session.conf
+    state: present
+    reload: true
+  loop:
+    - { name: net.ipv4.tcp_syncookies,      value: "1" }
+    - { name: net.ipv4.tcp_timestamps,      value: "1" }
+    - { name: net.ipv4.tcp_rfc1337,         value: "1" }
+    - { name: net.ipv4.icmp_echo_ignore_broadcasts, value: "1" }
+    - { name: net.ipv4.icmp_ignore_bogus_error_responses, value: "1" }
+  tags: ["03.13.15"]

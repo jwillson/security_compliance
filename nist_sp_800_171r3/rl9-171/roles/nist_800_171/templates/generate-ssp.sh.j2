@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# 03.15.02  Generate the machine-derivable portions of the System Security Plan.
+#
+# Everything here is read from the running host, so the SSP describes what is
+# actually deployed rather than what someone believed was deployed. The
+# narrative sections (threats, roles, approval) remain the system owner's.
+set -uo pipefail
+OUT="{{ nist_conf_dir }}/system-security-plan.md"
+INV="{{ nist_conf_dir }}/component-inventory.json"
+
+{
+cat <<HEADER
+# System Security Plan
+
+**System:** $(hostname -f 2>/dev/null || hostname)
+**Baseline:** NIST SP 800-171r3 (May 2024)
+**Overlay:** {{ meta.name }} {{ meta.version }}
+**Generated:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+> Sections marked GENERATED are derived from the running system and are
+> refreshed whenever this script runs. Sections marked AUTHOR must be completed
+> by the system owner; 03.15.02 is only partially satisfied until they are.
+
+## 1. Constituent system components (GENERATED - 03.15.02a.1)
+
+| Property | Value |
+|---|---|
+| Platform | $(cat /etc/rocky-release 2>/dev/null) |
+| Kernel | $(uname -r) |
+| Architecture | $(uname -m) |
+| Machine ID | $(cat /etc/machine-id 2>/dev/null) |
+| Installed packages | $(rpm -qa 2>/dev/null | wc -l) |
+| FIPS mode | $(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0) |
+| SELinux | $(getenforce 2>/dev/null) |
+
+Full component inventory: \`$INV\` (03.04.10).
+
+## 2. Information types (AUTHOR - 03.15.02a.2)
+
+Identify the CUI categories this system processes, stores, and transmits.
+CUI is stored at the locations recorded in \`{{ nist_conf_dir }}/cui-locations\`:
+
+$(sed 's/^/    /' {{ nist_conf_dir }}/cui-locations 2>/dev/null || echo "    (not yet recorded)")
+
+## 3. Threats of concern (AUTHOR - 03.15.02a.3)
+
+## 4. Operational environment and connections (GENERATED - 03.15.02a.4)
+
+| Property | Value |
+|---|---|
+| Network interfaces | $(ip -br addr show 2>/dev/null | grep -v '^lo' | awk '{print $1"("$3")"}' | paste -sd' ' -) |
+| Boundary protection | firewalld, default zone target $(firewall-cmd --permanent --zone="$(firewall-cmd --get-default-zone 2>/dev/null)" --get-target 2>/dev/null) |
+| Permitted inbound services | $(firewall-cmd --list-services 2>/dev/null) |
+| Listening services | $(ss -tulnH 2>/dev/null | awk '{print $5}' | sort -u | paste -sd' ' -) |
+| Remote access | sshd, crypto policy $(update-crypto-policies --show 2>/dev/null) |
+
+## 5. Security requirements overview (GENERATED - 03.15.02a.5)
+
+This system is assessed against all 97 active requirements of SP 800-171r3.
+The applicability of each is recorded in the overlay at
+\`{{ nist_conf_dir }}/overlay-rocky9.yml\`.
+
+## 6. Safeguards in place (GENERATED - 03.15.02a.6)
+
+Latest assessment result:
+
+HEADER
+
+if [ -f "{{ nist_report_dir }}/assessment-latest.json" ]; then
+  python3 - <<'PY'
+import json
+try:
+    d = json.load(open("{{ nist_report_dir }}/assessment-latest.json"))
+    s = d.get("summary", {})
+    print(f"| Result | Count |")
+    print(f"|---|---|")
+    for k in ("pass", "fail", "error", "not_applicable", "manual"):
+        if k in s:
+            print(f"| {k.replace('_',' ').title()} | {s[k]} |")
+    print()
+    fails = [r for r in d.get("requirements", []) if r.get("status") == "FAIL"]
+    if fails:
+        print("Requirements not currently satisfied:\n")
+        for r in fails:
+            print(f"- **{r['id']}** {r.get('title','')}")
+except Exception as e:
+    print(f"(assessment results unreadable: {e})")
+PY
+else
+  echo "_No assessment has been run yet. Run \`nist-assess\` to populate this section._"
+fi
+
+cat <<'FOOTER'
+
+## 7. Roles and responsibilities (AUTHOR - 03.15.02a.7)
+
+| Role | Individual | Responsibility |
+|---|---|---|
+| System Owner | | Accepts residual risk; approves this plan |
+| System Administrator | | Applies and maintains the overlay |
+| Audit Administrator | | Reviews audit records (03.03.05) |
+| ISSO | | Assesses requirements (03.12.01); maintains POA&M (03.12.02) |
+
+## 8. Organizational requirements (GENERATED)
+
+The requirements this host cannot enforce are enumerated in
+`organizational-requirements.md` in this directory. Each requires a documented
+organizational control before the system may be authorized to process CUI.
+FOOTER
+} > "$OUT"
+
+chmod 0600 "$OUT"
+echo "wrote $OUT"

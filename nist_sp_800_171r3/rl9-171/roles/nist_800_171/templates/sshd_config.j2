@@ -1,0 +1,82 @@
+# NIST SP 800-171r3 sshd hardening - managed by Ansible.
+#
+# SSH is the only authorized remote access path to this host, so it carries
+# several requirements at once:
+#
+#   03.01.12  Remote Access - managed access control point
+#   03.01.06  No direct privileged login
+#   03.01.09  System use notification before authentication
+#   03.05.03  Multi-factor authentication
+#   03.05.04  Replay-resistant authentication
+#   03.05.11  Authentication feedback obscured
+#   03.13.08  Transmission confidentiality
+#   03.13.09  Network disconnect on idle
+#   03.13.15  Session authenticity
+
+# --- 03.01.06 Privileged accounts -------------------------------------------
+# Root must log in as a named user and escalate, so actions stay attributable.
+PermitRootLogin no
+
+# --- 03.05.01 / 03.01.06 Authentication ------------------------------------
+PermitEmptyPasswords no
+PermitUserEnvironment no
+StrictModes yes
+IgnoreRhosts yes
+HostbasedAuthentication no
+# 03.05.04: GSSAPI and host-based auth are removed rather than relied on.
+GSSAPIAuthentication no
+KerberosAuthentication no
+
+{% if nist_mfa_enforce_pubkey %}
+# --- 03.05.03 Multi-factor authentication -----------------------------------
+# Two independent factors: something held (the private key) and something
+# known (the account password). Set nist_mfa_enforce_pubkey=false only if
+# operators have not yet enrolled keys.
+PubkeyAuthentication yes
+PasswordAuthentication yes
+AuthenticationMethods publickey,password
+{% else %}
+# MFA not enforced on this host - recorded as a deviation by the auditor.
+PubkeyAuthentication yes
+PasswordAuthentication yes
+AuthenticationMethods any
+{% endif %}
+
+# 03.01.08: bound the attempts a single connection may make.
+MaxAuthTries {{ odp.lockout_attempts }}
+MaxSessions 4
+MaxStartups 10:30:60
+LoginGraceTime 60
+
+# --- 03.01.09 System use notification ---------------------------------------
+Banner /etc/issue.net
+PrintMotd yes
+PrintLastLog yes
+
+# --- 03.13.09 Network disconnect / 03.01.11 Session termination -------------
+# An idle session is dropped after {{ odp.ssh_client_alive_interval }}s.
+ClientAliveInterval {{ odp.ssh_client_alive_interval }}
+ClientAliveCountMax {{ odp.ssh_client_alive_count_max }}
+TCPKeepAlive yes
+
+# --- 03.04.06 Least functionality -------------------------------------------
+# Forwarding creates uncontrolled flow paths through the boundary (03.01.03).
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+AllowStreamLocalForwarding no
+
+# --- 03.13.08 / 03.13.11 / 03.13.15 Cryptography ----------------------------
+# Algorithms are inherited from the system-wide FIPS crypto policy rather than
+# pinned here, so a policy change cannot be silently bypassed by this file.
+# The policy is set by crypto-policies (03.13.11) and verified by the auditor.
+RekeyLimit 512M 1h
+
+# 03.03.01: log at a level that records authentication events.
+LogLevel VERBOSE
+SyslogFacility AUTHPRIV
+
+UsePAM yes
+Compression no

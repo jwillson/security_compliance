@@ -1,0 +1,72 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+
+- name: restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted
+
+- name: restart chronyd
+  ansible.builtin.systemd:
+    name: chronyd
+    state: restarted
+
+- name: restart firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    state: restarted
+
+- name: restart fapolicyd
+  ansible.builtin.systemd:
+    name: fapolicyd
+    state: restarted
+
+- name: restart journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+
+# auditd refuses `systemctl restart` by design; the service file sets
+# RefuseManualStop. Use its own control path instead.
+- name: restart auditd
+  ansible.builtin.command:
+    cmd: /usr/sbin/service auditd restart
+  changed_when: true
+
+- name: regenerate audit rules
+  ansible.builtin.command:
+    cmd: /sbin/augenrules --load
+  register: nist_augenrules
+  changed_when: true
+  # With `-e 2` already loaded, the rules are immutable until reboot. That is
+  # the desired end state (03.03.08a), so a refusal here is not a failure - it
+  # means protection is already active. The new rules load on next boot.
+  failed_when: false
+  notify: flag reboot for audit rules
+
+- name: flag reboot for audit rules
+  ansible.builtin.set_fact:
+    nist_reboot_required: true
+  when: nist_augenrules.rc | default(0) != 0
+
+- name: apply authselect changes
+  ansible.builtin.command:
+    cmd: authselect apply-changes -b
+  changed_when: true
+
+- name: update grub config
+  ansible.builtin.command:
+    cmd: grub2-mkconfig -o /boot/grub2/grub.cfg
+  changed_when: true
+
+- name: rebuild fapolicyd trust database
+  ansible.builtin.command:
+    cmd: fapolicyd-cli --update
+  changed_when: true

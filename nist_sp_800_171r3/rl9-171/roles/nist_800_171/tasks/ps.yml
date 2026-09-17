@@ -1,0 +1,14 @@
+---
+# 03.09 PERSONNEL SECURITY
+
+# ===========================================================================
+# 03.09.02 Personnel Termination and Transfer
+# ===========================================================================
+- name: "03.09.02 | Install the offboarding helper"
+  ansible.builtin.template:
+    src: offboard-user.sh.j2
+    dest: "{{ nist_bin_dir }}/nist-offboard-user"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.09.02"]

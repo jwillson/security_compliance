@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# 03.04.10  System component inventory.
+#
+# Regenerated on a timer and on every dnf transaction, so the inventory is
+# always current with installs, removals and updates (statement c).
+set -uo pipefail
+OUT="{{ nist_conf_dir }}/component-inventory.json"
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+pkgs=$(rpm -qa --queryformat '{"name":"%{NAME}","version":"%{VERSION}-%{RELEASE}","arch":"%{ARCH}","signature":"%{SIGPGP:pgpsig}","installed":"%{INSTALLTIME:date}"},\n' \
+       | sed '$ s/,$//')
+
+ifaces=$(ip -j addr show 2>/dev/null || echo '[]')
+blockdev=$(lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE 2>/dev/null || echo '{}')
+listening=$(ss -tulpnH 2>/dev/null | awk '{print "{\"proto\":\""$1"\",\"local\":\""$5"\"}"}' | paste -sd, -)
+
+cat > "$TMP" <<JSON
+{
+  "_comment": "NIST SP 800-171r3 03.04.10 system component inventory",
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "hostname": "$(hostname -f 2>/dev/null || hostname)",
+  "platform": {
+    "release": "$(cat /etc/rocky-release 2>/dev/null)",
+    "kernel": "$(uname -r)",
+    "architecture": "$(uname -m)",
+    "boot_id": "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)",
+    "machine_id": "$(cat /etc/machine-id 2>/dev/null)",
+    "fips_enabled": "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)",
+    "selinux": "$(getenforce 2>/dev/null)"
+  },
+  "packages": [
+$pkgs
+  ],
+  "network_interfaces": $ifaces,
+  "block_devices": $blockdev,
+  "listening_services": [${listening:-}]
+}
+JSON
+
+mv -f "$TMP" "$OUT"
+chmod 0640 "$OUT"
+trap - EXIT
+echo "wrote $OUT ($(rpm -qa | wc -l) packages)"

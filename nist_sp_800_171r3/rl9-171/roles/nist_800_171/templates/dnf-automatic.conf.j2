@@ -1,0 +1,27 @@
+# NIST SP 800-171r3 03.14.01 Flaw Remediation - managed by Ansible.
+
+[commands]
+# 03.14.01b  Security-relevant updates only, applied automatically so the
+# {{ odp.patch_window_days }} day ODP window is met without human latency.
+upgrade_type = security
+random_sleep = 300
+network_online_timeout = 60
+
+# Download and install, not just notify. A notification that nobody acts on
+# does not "correct system flaws" (statement a).
+download_updates = yes
+apply_updates = yes
+
+reboot = never
+
+[emitters]
+# 03.14.03b  Generate an internal alert for each remediation action.
+emit_via = stdio,motd
+
+[email]
+email_from = nist-800-171@{{ ansible_facts['fqdn'] | default('localhost') }}
+email_to = {{ nist_alert_mail }}
+email_host = localhost
+
+[base]
+debuglevel = 1

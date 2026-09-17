@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# 03.08.03  Media sanitization prior to disposal, release, or reuse.
+#
+#   nist-sanitize-media /dev/sdX          purge (NIST SP 800-88 Purge)
+#   nist-sanitize-media --clear /dev/sdX  clear (single overwrite)
+#
+# Destroying the LUKS header of an encrypted volume is a cryptographic erase
+# and is the fastest valid Purge for volumes created by this role.
+set -euo pipefail
+
+MODE=purge
+[ "${1:-}" = "--clear" ] && { MODE=clear; shift; }
+DEV="${1:-}"
+
+[ -n "$DEV" ] || { echo "usage: $0 [--clear] <device>" >&2; exit 2; }
+[ -b "$DEV" ] || { echo "error: $DEV is not a block device" >&2; exit 2; }
+
+echo "About to sanitize $DEV (mode: $MODE). This is IRREVERSIBLE."
+read -r -p "Type the device path again to confirm: " confirm
+[ "$confirm" = "$DEV" ] || { echo "aborted"; exit 1; }
+
+logger -p authpriv.notice -t nist-800-171 "03.08.03 sanitizing $DEV mode=$MODE user=${SUDO_USER:-$USER}"
+
+if cryptsetup isLuks "$DEV" 2>/dev/null; then
+  echo "LUKS volume: performing cryptographic erase"
+  cryptsetup luksErase --batch-mode "$DEV"
+  wipefs -a "$DEV"
+elif [[ "$DEV" == /dev/nvme* ]] && command -v nvme >/dev/null 2>&1; then
+  echo "NVMe: issuing cryptographic erase (sanitize)"
+  nvme format "$DEV" --ses=2 || nvme format "$DEV" --ses=1
+elif [ "$MODE" = purge ] && command -v hdparm >/dev/null 2>&1 && \
+     hdparm -I "$DEV" 2>/dev/null | grep -q "supported: enhanced erase"; then
+  echo "ATA: issuing enhanced secure erase"
+  hdparm --user-master u --security-set-pass nist "$DEV"
+  hdparm --user-master u --security-erase-enhanced nist "$DEV"
+else
+  echo "Falling back to overwrite"
+  if [ "$MODE" = purge ]; then
+    shred -v -n 3 -z "$DEV"
+  else
+    shred -v -n 1 -z "$DEV"
+  fi
+  wipefs -a "$DEV"
+fi
+
+logger -p authpriv.notice -t nist-800-171 "03.08.03 sanitization of $DEV complete"
+echo "Sanitization complete. Record this action in the media disposal log."
