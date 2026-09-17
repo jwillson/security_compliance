@@ -41,20 +41,46 @@
   changed_when: true
 
 - name: regenerate audit rules
-  ansible.builtin.command:
-    cmd: /sbin/augenrules --load
-  register: nist_augenrules
-  changed_when: true
   # With `-e 2` already loaded, the rules are immutable until reboot. That is
   # the desired end state (03.03.08a), so a refusal here is not a failure - it
   # means protection is already active. The new rules load on next boot.
+  #
+  # `--check` is run straight after because augenrules reports what happened
+  # on stdout, not through its exit status - see the next handler.
+  ansible.builtin.shell: |
+    /sbin/augenrules --load 2>&1 || true
+    /sbin/augenrules --check 2>&1 || true
+  register: nist_augenrules
+  changed_when: true
   failed_when: false
   notify: flag reboot for audit rules
 
 - name: flag reboot for audit rules
+  # augenrules exits 0 whatever happens. It exits 0 having loaded the rules,
+  # and it exits 0 again having loaded nothing because the configuration is
+  # already immutable. Gating on its return code therefore reports "no reboot
+  # required" on exactly the host that needs one - a freshly hardened host,
+  # where `-e 2` is applied in the same run that writes the rules, so
+  # 11-loginuid.rules never reaches /etc/audit/audit.rules and
+  # ia-01-loginuid-immutable fails until the next boot.
+  #
+  # Only stdout distinguishes the cases:
+  #   loaded     -> (nothing of interest)
+  #   refused    -> "Audit system is in immutable mode - exiting with no changes"
+  #   pending    -> "Rules have changed and should be updated"
+  #   up to date -> "No change"
+  #
+  # Only the "pending" message is used. "immutable mode" is tempting and
+  # wrong: it appears every time this handler runs on any locked host, so
+  # rewriting a rules file with identical content - which needs no reboot at
+  # all - would report that one is required. `--check` is the narrower
+  # question, and the right one: does what is on disk differ from what is
+  # compiled and loaded? Only then is a reboot owed.
   ansible.builtin.set_fact:
     nist_reboot_required: true
-  when: nist_augenrules.rc | default(0) != 0
+  when: >-
+    nist_augenrules.rc | default(0) != 0
+    or 'Rules have changed' in (nist_augenrules.stdout | default(''))
 
 - name: apply authselect changes
   ansible.builtin.command:

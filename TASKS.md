@@ -100,21 +100,39 @@ Found by building a second host. Each was invisible with one VM.
       them, and the checks subtract that declaration. 514 is authorized on a
       collector and still a finding on a plain CUI host. *Fixed.*
 
-- [ ] **1b.4 `apply.sh` reports "Reboot required: False" when a reboot is
-      required.** On a freshly hardened host, `-e 2` locks the audit
-      configuration during the same run, so `11-loginuid.rules` never reaches
-      `/etc/audit/audit.rules` and `loginuid_immutable` stays 0 —
-      `ia-01-loginuid-immutable` fails until a reboot. There is already a
-      `flag reboot for audit rules` handler gated on
-      `nist_augenrules.rc != 0`, but **`augenrules --load` exits 0 even when
-      the kernel refuses the load**, so it never fires.
-      *Why it matters:* an operator who believes "Reboot required: False"
-      leaves 03.05.01 unenforced and the next assessment reports a deviation
-      they were told not to expect.
-      *Fix:* stop trusting the exit code; compare the compiled rules against
-      the rules.d source (`augenrules --check`) and flag when they differ.
-      *Needs a host with pending audit rules to test against — do not
-      implement this untested.*
+- [x] **1b.4 `apply.sh` reported "Reboot required: False" when a reboot was
+      required.** *Fixed, and tested in both directions against a
+      deliberately staged host.* `augenrules` exits 0 whether it loaded the
+      rules or refused them, so its exit code was never evidence. The handler
+      now reads stdout: `augenrules --check` prints "Rules have changed and
+      should be updated" exactly when what is on disk is not what the kernel
+      enforces.
+      Tempting and wrong: keying on the "immutable mode" message from
+      `--load`. A settled, locked host prints that too, so it would demand a
+      reboot after rewriting a file with identical content.
+      *Proven:* rules genuinely pending -> `Reboot required: True`; nothing
+      pending -> `False`, on the same host minutes apart.
+
+- [ ] **1b.6 The collector is not idempotent.** `03.14.08 | Tighten
+      permissions on existing log files` reports changed on every run against
+      `rl9-log-01`, while `rl9-cui-01` sits at `changed=0`. The collector
+      continuously creates `/var/log/nist-remote/<host>/<program>.log`, so
+      the task always finds files it has not seen — even though rsyslog
+      already creates them 0600 via `$FileCreateMode`.
+      *Why it matters:* `./apply.sh --check` is documented as a drift
+      detector. On a collector it now reports permanent drift, which is the
+      kind of noise that makes people stop reading it.
+      *Fix:* have the task touch only files whose mode is actually wrong.
+
+- [x] **1b.7 `--tags <requirement>` ran nothing at all.** README, RUNBOOK and
+      `apply.sh --help` all promised that `--tags 03.05.07` applies exactly
+      that requirement's tasks. `main.yml` used `include_tasks` with only the
+      family tag on the include statement, so a requirement tag never reached
+      the inner tasks: `--tags 03.05.01` ran **0** tasks while `--tags 03.05`
+      ran 26. All 17 includes converted to `import_tasks`, which resolves at
+      parse time so each task's own tag is visible to the filter. *Fixed —
+      `--tags 03.05.01` now runs exactly those four tasks.* Found only
+      because 1b.4 needed to trigger one requirement's tasks in isolation.
 
 - [ ] **1b.5 `rl9-cui-01` was passing `ia-01-loginuid-immutable` by
       accident.** Neither host configures it persistently in a way that

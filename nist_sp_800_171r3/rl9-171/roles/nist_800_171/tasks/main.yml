@@ -4,6 +4,13 @@
 # Every task carries its requirement ID as a tag, so `--tags 03.05.07` applies
 # exactly the tasks that implement Password Management and nothing else. The
 # family tag (`--tags 03.05`) selects the whole family.
+#
+# import_tasks, not include_tasks, is what makes the first half of that true.
+# An include is resolved at run time, so the tag filter can only see the tags
+# on the include statement itself - the family - and `--tags 03.05.07` would
+# skip the include and run nothing at all. import_tasks is resolved when the
+# playbook is parsed, so each task's own requirement tag is visible to the
+# filter. The family tag here is inherited by every task in the file.
 
 - name: Prepare the toolkit directories
   ansible.builtin.file:
@@ -67,121 +74,70 @@
   tags: [always]
 
 - name: Access Control (03.01)
-  ansible.builtin.include_tasks:
-    file: ac.yml
-    apply:
-      tags: ["03.01"]
+  ansible.builtin.import_tasks: ac.yml
   tags: ["03.01"]
 
 - name: Audit and Accountability (03.03)
-  ansible.builtin.include_tasks:
-    file: au.yml
-    apply:
-      tags: ["03.03"]
+  ansible.builtin.import_tasks: au.yml
   tags: ["03.03"]
 
 - name: Configuration Management (03.04)
-  ansible.builtin.include_tasks:
-    file: cm.yml
-    apply:
-      tags: ["03.04"]
+  ansible.builtin.import_tasks: cm.yml
   tags: ["03.04"]
 
 - name: Identification and Authentication (03.05)
-  ansible.builtin.include_tasks:
-    file: ia.yml
-    apply:
-      tags: ["03.05"]
+  ansible.builtin.import_tasks: ia.yml
   tags: ["03.05"]
 
 - name: Incident Response (03.06)
-  ansible.builtin.include_tasks:
-    file: ir.yml
-    apply:
-      tags: ["03.06"]
+  ansible.builtin.import_tasks: ir.yml
   tags: ["03.06"]
 
 - name: Maintenance (03.07)
-  ansible.builtin.include_tasks:
-    file: ma.yml
-    apply:
-      tags: ["03.07"]
+  ansible.builtin.import_tasks: ma.yml
   tags: ["03.07"]
 
 - name: Media Protection (03.08)
-  ansible.builtin.include_tasks:
-    file: mp.yml
-    apply:
-      tags: ["03.08"]
+  ansible.builtin.import_tasks: mp.yml
   tags: ["03.08"]
 
 - name: Personnel Security (03.09)
-  ansible.builtin.include_tasks:
-    file: ps.yml
-    apply:
-      tags: ["03.09"]
+  ansible.builtin.import_tasks: ps.yml
   tags: ["03.09"]
 
 - name: Physical Protection (03.10)
-  ansible.builtin.include_tasks:
-    file: pe.yml
-    apply:
-      tags: ["03.10"]
+  ansible.builtin.import_tasks: pe.yml
   tags: ["03.10"]
 
 - name: Risk Assessment (03.11)
-  ansible.builtin.include_tasks:
-    file: ra.yml
-    apply:
-      tags: ["03.11"]
+  ansible.builtin.import_tasks: ra.yml
   tags: ["03.11"]
 
 - name: Security Assessment and Monitoring (03.12)
-  ansible.builtin.include_tasks:
-    file: ca.yml
-    apply:
-      tags: ["03.12"]
+  ansible.builtin.import_tasks: ca.yml
   tags: ["03.12"]
 
 - name: System and Communications Protection (03.13)
-  ansible.builtin.include_tasks:
-    file: sc.yml
-    apply:
-      tags: ["03.13"]
+  ansible.builtin.import_tasks: sc.yml
   tags: ["03.13"]
 
 - name: System and Information Integrity (03.14)
-  ansible.builtin.include_tasks:
-    file: si.yml
-    apply:
-      tags: ["03.14"]
+  ansible.builtin.import_tasks: si.yml
   tags: ["03.14"]
 
 - name: Planning (03.15)
-  ansible.builtin.include_tasks:
-    file: pl.yml
-    apply:
-      tags: ["03.15"]
+  ansible.builtin.import_tasks: pl.yml
   tags: ["03.15"]
 
 - name: System and Services Acquisition (03.16)
-  ansible.builtin.include_tasks:
-    file: sa.yml
-    apply:
-      tags: ["03.16"]
+  ansible.builtin.import_tasks: sa.yml
   tags: ["03.16"]
 
 - name: Supply Chain Risk Management (03.17)
-  ansible.builtin.include_tasks:
-    file: sr.yml
-    apply:
-      tags: ["03.17"]
+  ansible.builtin.import_tasks: sr.yml
   tags: ["03.17"]
 
 # Organizational requirements produce documentation, not configuration.
 - name: Emit SSP stubs for organizational requirements
-  ansible.builtin.include_tasks:
-    file: org_stubs.yml
-    apply:
-      tags: [organizational]
+  ansible.builtin.import_tasks: org_stubs.yml
   tags: [organizational]
