@@ -55,6 +55,9 @@ having, port it into `rl9-171/` and note the port in `archive/README.md`.
   `ansible.posix.*`, `community.general.*`) and carry their requirement ID as
   a tag.
 
+Operator procedure, including recovery paths, is
+`nist_sp_800_171r3/rl9-171/docs/RUNBOOK.md`.
+
 ## First commands
 
 ```bash

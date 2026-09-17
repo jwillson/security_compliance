@@ -21,6 +21,10 @@ Four artifacts, each with one job:
 | `roles/nist_800_171/` | The Ansible role that applies the overlay |
 | `audit/` | An assessor that verifies the host, written independently of the role |
 
+Day-to-day procedure — building, applying, assessing, and getting back in when
+a control locks you out — is in [docs/RUNBOOK.md](docs/RUNBOOK.md). This README
+is the design: what the tool does and why.
+
 This tree is the tool. Earlier attempts at the same problem — a hand-authored
 catalog with its own middleware, an r2-tagged Vagrant playbook, and an
 extraction that put r2 titles on r3 IDs — are kept unmaintained under
@@ -331,6 +335,7 @@ rl9-171/
 ├── inventory/
 │   └── hosts.yml.example        copy to hosts.yml to target your own host
 ├── docs/
+│   ├── RUNBOOK.md               operator procedure: build, apply, verify, recover
 │   └── legacy-gap.md            why ../archive/ is not the catalog (generated)
 ├── roles/
 │   ├── nist_800_171/            the overlay
