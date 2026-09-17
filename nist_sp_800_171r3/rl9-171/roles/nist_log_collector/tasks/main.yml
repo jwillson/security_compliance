@@ -61,6 +61,22 @@
   failed_when: false
   tags: ["03.03.05"]
 
+- name: Declare the forwarding port as authorized on this host
+  # 03.04.06 / 03.13.06 treat an undeclared listener as a deviation. This is
+  # where 514 becomes legitimate - on the collector only, and only because
+  # the role that opened it said so. The checks read this directory; they do
+  # not have 514 written into them.
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/authorized-ports.d/10-collector"
+    content: |
+      # Authorized by roles/nist_log_collector: rsyslog receives forwarded
+      # audit records here (03.03.05c).
+      {{ nist_collector_port }}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.03.05", "03.04.06", "03.13.06"]
+
 - name: Record what this host collects
   ansible.builtin.copy:
     dest: "{{ nist_conf_dir }}/log-collector-status"

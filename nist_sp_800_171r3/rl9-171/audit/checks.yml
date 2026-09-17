@@ -44,7 +44,14 @@ checks:
   - id: ac-01-nologin-shells
     description: System accounts cannot obtain an interactive shell
     command: |
-      awk -F: '($3<1000 && $1!="root" && $1!="sync" && $7!="/sbin/nologin" && $7!="/bin/false"){print $1}' /etc/passwd
+      # /sbin and /usr/sbin are the same directory under the /usr merge, so
+      # both spellings of nologin are the same binary. Packages disagree about
+      # which one they write into /etc/passwd - clevis ships /usr/sbin/nologin
+      # while most others ship /sbin/nologin - and treating one as a finding
+      # is a false positive, not a hardening gap.
+      awk -F: '($3<1000 && $1!="root" && $1!="sync" &&
+                $7!="/sbin/nologin" && $7!="/usr/sbin/nologin" &&
+                $7!="/bin/false"  && $7!="/usr/bin/false"){print $1}' /etc/passwd
     expect_empty: true
 
   - id: ac-01-audit-account-events
@@ -785,8 +792,15 @@ checks:
   - id: cm-06-no-listening-extras
     description: No unexpected service is listening on a network socket
     command: |
+      # Authorized ports are declared on the host, one fragment per role,
+      # by whatever opened them. Reading them here keeps the check honest: a
+      # collector's 514 is authorized, the same port on a plain CUI host is
+      # still a finding.
+      auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
+               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      auth=${auth:-22}
       ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un \
-        | grep -vE '^(22)$' || true
+        | grep -vE "^(${auth})$" || true
     expect_empty: true
 
   - id: cm-06-ctrlaltdel-masked
@@ -1506,7 +1520,17 @@ checks:
 
   - id: sc-06-no-unexpected-ports
     description: No port is opened outside the authorized service set
-    command: "firewall-cmd --list-ports 2>/dev/null"
+    command: |
+      # Authorized ports are declared on the host, one fragment per role,
+      # by whatever opened them. Reading them here keeps the check honest: a
+      # collector's 514 is authorized, the same port on a plain CUI host is
+      # still a finding.
+      auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
+               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      auth=${auth:-22}
+      # firewalld prints "514/tcp 9100/udp" on a single line.
+      firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -v '^$' \
+        | grep -vE "^(${auth})/(tcp|udp)$" || true
     expect_empty: true
 
   - id: sc-06-icmp-block
@@ -1517,9 +1541,16 @@ checks:
   - id: sc-06-listening-allowlist
     description: Only authorized services listen on the network
     command: |
+      # Authorized ports are declared on the host, one fragment per role,
+      # by whatever opened them. Reading them here keeps the check honest: a
+      # collector's 514 is authorized, the same port on a plain CUI host is
+      # still a finding.
+      auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
+               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      auth=${auth:-22}
       ss -tlnH 2>/dev/null \
         | awk '$4 !~ /^(127\.|\[::1\])/ {print $4}' \
-        | sed 's/.*://' | sort -un | grep -vE '^22$' || true
+        | sed 's/.*://' | sort -un | grep -vE "^(${auth})$" || true
     expect_empty: true
 
   - id: sc-08-crypto-policy

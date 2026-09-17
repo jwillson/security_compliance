@@ -22,7 +22,19 @@ ROOT="$(cd "$HERE/.." && pwd)"
 
 VM_NAME=""
 VM_ROLE="cui"
+# Install-time memory, not steady-state. A collector needs far less RAM than
+# this to run, but the Rocky 9 network installer does not: it unpacks a large
+# initrd and the stage-2 squashfs into RAM before it writes anything. Asking
+# for less makes virt-install override it up to its computed minimum (3072),
+# and at that minimum the install hung at firmware with an idle CPU, zero
+# disk writes and a silent serial console. 4096 is the value that installs.
+# A collector is trimmed back to VM_RUNTIME_RAM_MB once the install is done.
 VM_RAM_MB=4096
+# Steady-state allocation for a collector, applied after the install. It only
+# receives and stores records; holding the installer's footprint for the life
+# of the guest costs host RAM for nothing. maxmem is left alone, so `virsh
+# setmem` can raise it again without redefining the domain.
+VM_RUNTIME_RAM_MB=2048
 VM_VCPUS=2
 VM_DISK_GB=40
 MIRROR="https://dl.rockylinux.org/pub/rocky/9"
@@ -54,9 +66,7 @@ done
 
 case "$VM_ROLE" in
   cui) : "${VM_NAME:=rl9-cui-01}" ;;
-  log) : "${VM_NAME:=rl9-log-01}"
-       # The collector only receives and stores; it needs disk, not CPU.
-       VM_RAM_MB=2048 ;;
+  log) : "${VM_NAME:=rl9-log-01}" ;;
   *)   die "unknown role: $VM_ROLE (expected cui or log)" ;;
 esac
 
@@ -220,6 +230,35 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 
+# The forwarding advice only applies when there is no collector yet.
+if [[ "$VM_ROLE" == "log" ]]; then
+  NEXT_HINT="
+  This host receives forwarded audit records. ./apply.sh configures both
+  halves: every CUI host forwards, and this one listens. Then 03.03.05c is
+  verified rather than reported MANUAL:
+
+             ./verify.sh --requirement 03.03.05
+"
+elif "$ROOT/tools/inventory.py" show 2>/dev/null | grep -q ' log '; then
+  NEXT_HINT=""
+else
+  NEXT_HINT="
+  A single CUI host cannot exercise audit-record forwarding (03.03.05c):
+  there is nowhere to forward to, so the assessor reports it MANUAL. Build
+  the collector and re-apply to close that:
+
+             ./vm/build-vm.sh --role log
+             ./apply.sh
+"
+fi
+
+# Give back the memory the installer needed and the guest does not.
+if [[ "$VM_ROLE" == "log" && "$VM_RUNTIME_RAM_MB" -lt "$VM_RAM_MB" ]]; then
+  log "trimming $VM_NAME to ${VM_RUNTIME_RAM_MB} MB (the installer needed ${VM_RAM_MB})"
+  sudo virsh -c "$LIBVIRT_URI" setmem "$VM_NAME" "${VM_RUNTIME_RAM_MB}M" \
+    --config --live 2>/dev/null || log "could not trim memory; leaving at ${VM_RAM_MB} MB"
+fi
+
 cat <<DONE
 
   VM:        $VM_NAME  (role: $VM_ROLE)
@@ -236,12 +275,5 @@ cat <<DONE
 
   Next:      ./apply.sh          apply the 800-171r3 overlay
              ./verify.sh         assess the host against all 97 requirements
-
-  A single CUI host cannot exercise audit-record forwarding (03.03.05c):
-  there is nowhere to forward to, so the assessor reports it MANUAL. Build
-  the collector and re-apply to close that:
-
-             ./vm/build-vm.sh --role log
-             ./apply.sh
-
+$NEXT_HINT
 DONE

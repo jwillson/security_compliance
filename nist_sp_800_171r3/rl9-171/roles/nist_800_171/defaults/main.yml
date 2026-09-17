@@ -139,3 +139,9 @@ nist_mount_hardening:
   - { path: /var/tmp,       src: /dev/mapper/vg_sys-lv_vartmp,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
   - { path: /var/log,       src: /dev/mapper/vg_sys-lv_varlog,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
   - { path: /var/log/audit, src: /dev/mapper/vg_sys-lv_varaudit, fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
+
+# Ports every host may listen on. Role-specific additions are declared in
+# their own fragment under {{ nist_conf_dir }}/authorized-ports.d/ rather than
+# by widening this list - see roles/nist_log_collector.
+nist_authorized_tcp_ports:
+  - 22

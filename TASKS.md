@@ -13,38 +13,42 @@ system owner can make.
 
 Be honest about the difference — most of what follows exists to close the gap.
 
-**Proven against a running host (`rl9-cui-01`)**
+**Proven against running hosts (`rl9-cui-01` + `rl9-log-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
 - `make validate` — 97 requirements, 327 checks, 29 + 47 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
-- `./verify.sh` — 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28
+- `./verify.sh` — **both hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
-- The regenerated `organizational-requirements.md` template renders under Ansible
+- `organizational-requirements.md` renders on the host with all 43 ODP sections
+- `make vm-log` / `build-vm.sh --role log` builds a collector end to end
+- `roles/nist_log_collector` applies cleanly; rsyslog config passes `rsyslogd -N1`
+- **03.03.05c audit-record forwarding actually works** — records arrive in
+  `/var/log/nist-remote/<host>/` at 0700/0600 root:root, and
+  `au-05-forward-established` / `au-05-collector-receiving` each report PASS
+  on the host where they are meaningful and MANUAL where they are not
+- `tools/inventory.py` driven by real builds and destroys: adding a second
+  host preserves the first, destroying one rewires the survivors
 
 **Written but never executed**
 
-- `roles/nist_log_collector` — the role has never run against a host
-- `build-vm.sh --role log`, `make vm-log` — never invoked
-- `au-05-forward-established`, `au-05-collector-receiving` — have only ever
-  returned MANUAL. Neither has returned PASS, so neither is proven to be able to
-- `tools/inventory.py` — unit-exercised by hand, never driven by a real build
 - The whole BYO-host path (`inventory/hosts.yml.example`) — the headline
   portability claim, never run against a non-lab machine
+- A third host. `verify.sh` has looped over two, not three
 - Every lockout recovery procedure in the runbook
 
 ---
 
 ## Phase 1 — prove the lab end to end
 
-- [ ] **1.1 Build the log collector.** `make vm-log`
+- [x] **1.1 Build the log collector.** `make vm-log`
   *Why:* the single largest unproven piece. The role, the second play, the
   `--role log` path and the inventory rewiring all execute for the first time
   here.
   *Done when:* `./tools/inventory.py show` lists two hosts and the CUI host
   forwards to the collector.
 
-- [ ] **1.2 Apply to both and confirm forwarding actually works.**
+- [x] **1.2 Apply to both and confirm forwarding actually works.**
   `./apply.sh && ./verify.sh --requirement 03.03.05`
   *Why:* 03.03.05c has never been verified, only deferred to MANUAL.
   *Done when:* `au-05-forward-established` and `au-05-collector-receiving`
@@ -53,7 +57,7 @@ Be honest about the difference — most of what follows exists to close the gap.
   *Check by hand too:* `ls /var/log/nist-remote/*/` on the collector should
   show a directory named for the CUI host.
 
-- [ ] **1.3 Confirm the collector is itself hardened.**
+- [x] **1.3 Confirm the collector is itself hardened.**
   `./verify.sh --host rl9-log-01`
   *Why:* it stores other systems' audit records. If the first play did not
   cover it, it is an unhardened box holding CUI evidence.
@@ -66,10 +70,58 @@ Be honest about the difference — most of what follows exists to close the gap.
   *Done when:* `./verify.sh` assesses three hosts in one run and writes three
   report pairs.
 
-- [ ] **1.5 Read the generated organizational document on a host.**
+- [x] **1.5 Read the generated organizational document on a host.**
   `sudo cat /etc/nist-800-171/organizational-requirements.md`
   *Why:* it has only been rendered in `--check`. Confirm the 43 ODP sections
   are present and the tables are not mangled.
+
+---
+
+## Phase 1b — defects Phase 1 uncovered
+
+Found by building a second host. Each was invisible with one VM.
+
+- [x] **1b.1 `--role log` set install memory to 2048.** virt-install silently
+      raised it to its 3072 minimum and the install died at firmware: idle
+      CPU, zero disk writes, silent serial console, no diagnostic. Both roles
+      now install at 4096. *Fixed.*
+
+- [x] **1b.2 `ac-01-nologin-shells` false positive.** It accepted only
+      `/sbin/nologin` and `/bin/false`. `clevis` ships `/usr/sbin/nologin`,
+      the same binary under the /usr merge, and was reported as a system
+      account with an interactive shell. Now accepts both spellings. *Fixed.*
+
+- [x] **1b.3 A collector's own listener was an unauthorized port.** The
+      collector opens 514 for 03.03.05c, which `cm-06-no-listening-extras`,
+      `sc-06-no-unexpected-ports` and `sc-06-listening-allowlist` correctly
+      flagged, because their allowlist was hardcoded to 22. Fixed without
+      widening the checks: each host declares its authorized ports in
+      `/etc/nist-800-171/authorized-ports.d/`, written by whatever opened
+      them, and the checks subtract that declaration. 514 is authorized on a
+      collector and still a finding on a plain CUI host. *Fixed.*
+
+- [ ] **1b.4 `apply.sh` reports "Reboot required: False" when a reboot is
+      required.** On a freshly hardened host, `-e 2` locks the audit
+      configuration during the same run, so `11-loginuid.rules` never reaches
+      `/etc/audit/audit.rules` and `loginuid_immutable` stays 0 —
+      `ia-01-loginuid-immutable` fails until a reboot. There is already a
+      `flag reboot for audit rules` handler gated on
+      `nist_augenrules.rc != 0`, but **`augenrules --load` exits 0 even when
+      the kernel refuses the load**, so it never fires.
+      *Why it matters:* an operator who believes "Reboot required: False"
+      leaves 03.05.01 unenforced and the next assessment reports a deviation
+      they were told not to expect.
+      *Fix:* stop trusting the exit code; compare the compiled rules against
+      the rules.d source (`augenrules --check`) and flag when they differ.
+      *Needs a host with pending audit rules to test against — do not
+      implement this untested.*
+
+- [ ] **1b.5 `rl9-cui-01` was passing `ia-01-loginuid-immutable` by
+      accident.** Neither host configures it persistently in a way that
+      survives without a reboot; cui-01 reported `loginuid_immutable 1` from
+      stale running-kernel state accumulated over 16 hours and several
+      applies. Re-verify after a rebuild from scratch, not after an apply to
+      a long-lived host.
 
 ---
 

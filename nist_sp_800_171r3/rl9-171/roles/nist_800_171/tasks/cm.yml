@@ -446,3 +446,37 @@
     group: root
     mode: "0644"
   tags: ["03.04.11"]
+
+# --- Authorized network services (03.04.06, 03.13.06) ------------------------
+#
+# The assessor reads *effective* state for what is listening, but "listening"
+# is only a finding when it is not authorized, and the authorized set depends
+# on what the host is for. A log collector legitimately listens on 514; a
+# plain CUI host does not.
+#
+# So the host carries its own declaration, one fragment per role, and the
+# checks subtract it from what they observe. A port is authorized because
+# something declared it here - never because a check was widened to hide it.
+- name: "03.04.06 | Create the authorized-port declaration directory"
+  ansible.builtin.file:
+    path: "{{ nist_conf_dir }}/authorized-ports.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: ["03.04.06", "03.13.06"]
+
+- name: "03.04.06 | Declare the baseline authorized ports"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/authorized-ports.d/00-base"
+    content: |
+      # Baseline authorized TCP ports for every host under this overlay.
+      # One port per line. Anything listening that is not declared in this
+      # directory is a deviation under 03.04.06 and 03.13.06.
+      {% for p in nist_authorized_tcp_ports %}
+      {{ p }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.04.06", "03.13.06"]
