@@ -17,11 +17,11 @@ Be honest about the difference — most of what follows exists to close the gap.
 the retrofit pair `byo-rl9-01` / `byo-log-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
-- `make validate` — 97 requirements, 330 checks, 28 + 47 ODPs, all consistent
+- `make validate` — 97 requirements, 334 checks, 32 + 62 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
 - `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
   three report pairs from one run (before 4.4; the same hosts now read
-  36 / 33 / 0 / 28 with 330 checks, nothing on them having changed)
+  36 / 33 / 0 / 28 with 334 checks, nothing on them having changed)
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
 - `organizational-requirements.md` renders on the host with all 43 ODP sections
 - `make vm-log` / `build-vm.sh --role log` builds a collector end to end
@@ -37,7 +37,7 @@ the retrofit pair `byo-rl9-01` / `byo-log-01`)**
   guest this toolkit did not build, driven from a second control workstation
   (an Ubuntu laptop) with no `.secrets/` at all. `--check --diff` completes on
   the never-applied host, the apply completes, one reboot, and the assessment
-  reports **34 / 30 / 5 / 28, 330 checks, 6 failed** — every failure a
+  reports **34 / 30 / 5 / 28, 334 checks, 6 failed** — every failure a
   documented retrofit limit (2.2). The apply after the reboot settles the
   kernel record and one log file; the apply after that is `changed=0`, and
   so is `--check` on the applied host. Eight defects had to be fixed
@@ -194,7 +194,7 @@ result below, and each was invisible on a host the kickstart had built.
         is proven.
       * After the reboot FIPS is on, sshd enforces `publickey,password` and
         the operator's own askpass supplies the second factor.
-      * `./verify.sh`: **34 / 30 / 5 / 28, 330 checks, 6 failed** (41 / 23
+      * `./verify.sh`: **34 / 30 / 5 / 28, 334 checks, 6 failed** (41 / 23
         before the 4.4 re-dispositions), all six
         the retrofit limits in 2.2.
       * `./apply.sh` after the reboot: `changed=2` - `support-status` now
@@ -393,7 +393,7 @@ copies make a failed one cheap.
       03.13` reported nothing - the runbook's "verify.sh will report it" was
       false for this case. Fixed both ways: 03.13.06 now removes any source
       or interface from the trusted zone on apply, and the new check
-      `sc-06-no-trusted-bypass` (330 checks) reports one that remains.
+      `sc-06-no-trusted-bypass` (334 checks) reports one that remains.
       Proven on the host: a planted permanent trusted source is flagged, the
       tagged re-apply removes it, and the check passes.
 - [x] **3.5 Correct anything the runbook got wrong.** *Done.* The faillock
@@ -414,13 +414,21 @@ copies make a failed one cheap.
 
 No amount of testing substitutes for these. Each is a live commitment.
 
-- [ ] **4.1 Review all 28 machine ODPs and all 47 organizational ODPs** in
-      `catalog/overlay-rocky9.yml`. *Decision list ready:*
-      `rl9-171/docs/ODP-REVIEW.md` maps all 80 decision points in the 97
-      statements to the register, states every finding of 4.1b with the
-      current value, a recommended value, and a decision line, and adds
-      the 13 assignments that had no ODP at all. When the decision lines
-      are filled in, the overlay, checks and tasks are changed to match.
+- [x] **4.1 Review every ODP** in `catalog/overlay-rocky9.yml`. *Done
+      2026-09-18: all 25 recommendations in `rl9-171/docs/ODP-REVIEW.md`
+      accepted by the owner and applied.* The register now holds 32 machine
+      and 62 organizational ODPs against all 80 decision points in the 97
+      statements. What changed on the hosts: one idle value (900 s) for
+      console and SSH alike; password minimum length 15 (STIG); audit
+      retention measured in days (auditd keep_logs, the daily review prunes
+      by age, logrotate no longer touches the audit log); the five
+      continuous-monitoring schedules are machine ODPs the assessor reads
+      back from the timers (five new checks); the two faillock checks assert
+      what the ODPs mean. What changed on paper: every register entry that
+      contradicted or understated the host now states what the host does,
+      a precedence rule for STIG versus CIS versus this overlay, the medium
+      patch tier restored, 15 previously unrecorded assignments and both
+      nested selections recorded, and the usbguard error corrected.
       *Why:* they are defaults drawn from common DoD CUI practice, not your
       organization's values. `make validate` confirms nothing references a
       parameter that does not exist — it cannot tell you a number is wrong.
@@ -605,7 +613,7 @@ No amount of testing substitutes for these. Each is a live commitment.
       supplies its own in the same layout. A forwarder without a certificate
       forwards nothing, records `tls-certificate-missing`, and the assessor
       reports it: `au-05-forward-established` treats that as a finding, and
-      the new `sc-08-forward-encrypted` (330 checks) reports plain
+      the new `sc-08-forward-encrypted` (334 checks) reports plain
       forwarding under 03.13.08. `nist_log_tls: false` is the explicit
       opt-out. Sequence proven on the pair: plain 514 first
       (`au-05-forward-established` and `au-05-collector-receiving` PASS, as

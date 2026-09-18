@@ -7,6 +7,11 @@ set -euo pipefail
 SINCE="${1:-yesterday}"
 OUT="{{ nist_report_dir }}/audit-review-$(date -u +%Y%m%d).txt"
 
+# 03.03.03b  Retention by age: auditd rotates and keeps (keep_logs); files
+# older than the ODP retention period are removed here, daily. The live
+# audit.log is never touched.
+find /var/log/audit -maxdepth 1 -type f -name 'audit.log.*' -mtime +{{ odp.audit_retention_days }} -delete 2>/dev/null || true
+
 {
   echo "Audit record review - $(hostname) - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "NIST SP 800-171r3 03.03.05 | period: since $SINCE"

@@ -24,13 +24,14 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
   enforces for each requirement, what it cannot, and the ODP values. This is
   the file to edit.
 - ODPs live in two blocks of the overlay and nowhere else.
-  `odp:` (29) are values the host enforces: the role applies them and the checks
+  `odp:` (32) are values the host enforces: the role applies them and the checks
   assert them via `{odp.name}`, so they cannot drift. Never hardcode one in a
-  task or a check.
-  `odp_organizational:` (47, across 43 requirements) are the assignments no host
+  task or a check; `make validate` fails on a machine ODP no check asserts.
+  `odp_organizational:` (62, across 49 requirements) are the assignments no host
   setting can satisfy. Nothing substitutes them and no check asserts them; they
   render into `/etc/nist-800-171/organizational-requirements.md`. Each is keyed
-  to the requirement that asks for the parameter.
+  to the requirement that asks for the parameter. Every value was reviewed and
+  accepted by the owner on 2026-09-18 (`rl9-171/docs/ODP-REVIEW.md`).
 - `make validate` must pass: it confirms the catalog, the overlay and the
   checks all agree. Run it after editing any of the three.
 

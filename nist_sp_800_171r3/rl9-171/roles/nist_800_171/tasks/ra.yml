@@ -45,7 +45,7 @@
         Description=NIST 800-171r3 vulnerability scan schedule
 
         [Timer]
-        OnCalendar={{ nist_vuln_scan_schedule }}
+        OnCalendar={{ odp.vuln_scan_schedule }}
         Persistent=true
 
         [Install]

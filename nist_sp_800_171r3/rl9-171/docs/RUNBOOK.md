@@ -308,7 +308,7 @@ A healthy reference VM reports:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 330 checks run, 0 failed
+ 97 requirements assessed, 334 checks run, 0 failed
 ```
 
 36 rather than 37 satisfied because 03.14.02 reports partial: fapolicyd

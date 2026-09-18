@@ -121,7 +121,7 @@
         Description=NIST 800-171r3 integrity check schedule
 
         [Timer]
-        OnCalendar={{ nist_aide_check_schedule }}
+        OnCalendar={{ odp.aide_check_schedule }}
         Persistent=true
 
         [Install]
@@ -459,7 +459,7 @@
         Description=NIST 800-171r3 component inventory schedule
 
         [Timer]
-        OnCalendar={{ nist_inventory_schedule }}
+        OnCalendar={{ odp.inventory_schedule }}
         Persistent=true
 
         [Install]

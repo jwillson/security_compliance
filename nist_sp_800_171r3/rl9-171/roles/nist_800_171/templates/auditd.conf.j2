@@ -20,12 +20,13 @@ log_group = root
 freq = 50
 flush = INCREMENTAL_ASYNC
 
-## 03.03.03b / 03.14.08  Retention: {{ odp.audit_num_logs }} files of
-## {{ odp.audit_max_log_file_mb }} MB holds the {{ odp.audit_retention_days }}
-## day window. Rotate rather than overwrite so records are never lost silently.
+## 03.03.03b / 03.14.08  Retention is measured in days: rotate at
+## {{ odp.audit_max_log_file_mb }} MB and never delete here (keep_logs); the
+## daily audit review prunes rotated files older than
+## {{ odp.audit_retention_days }} days. ROTATE with num_logs would delete the
+## oldest file at a count, whatever its age.
 max_log_file = {{ odp.audit_max_log_file_mb }}
-num_logs = {{ odp.audit_num_logs }}
-max_log_file_action = ROTATE
+max_log_file_action = KEEP_LOGS
 
 ## 03.03.04a  Alert the audit administrator before space runs out.
 space_left = {{ odp.audit_space_left_mb }}

@@ -34,17 +34,20 @@ meta:
 odp:
   # 03.01.01f - disable accounts inactive for this many days
   account_inactivity_days: 35
-  # 03.01.08a/b - consecutive failures, counting window, lockout duration
+  # 03.01.08a/b - consecutive failures, counting window, lockout duration.
+  # Statement b selection: lock the ACCOUNT (not the node) for the duration.
   lockout_attempts: 3
   lockout_window_seconds: 900
   lockout_duration_seconds: 900        # 0 = until admin release
-  # 03.01.10a / 03.01.11 / 03.13.09 - idle timeouts (seconds)
+  # 03.01.10a / 03.01.11 / 03.13.09 - idle timeouts (seconds).
+  # 03.01.10a selection: the system initiates the lock after the period; users
+  # are not required to lock manually before leaving.
   idle_lock_seconds: 900
   session_timeout_seconds: 900
-  ssh_client_alive_interval: 600
+  ssh_client_alive_interval: 900
   ssh_client_alive_count_max: 0
   # 03.05.07f - password composition
-  password_min_length: 14
+  password_min_length: 15
   password_min_classes: 4
   password_dcredit: -1
   password_ucredit: -1
@@ -59,15 +62,24 @@ odp:
   password_max_age: 60
   password_min_age: 1
   password_warn_age: 7
-  # 03.03.03b - audit record retention
+  # 03.03.03b - audit record retention. auditd rotates at audit_max_log_file_mb
+  # and never deletes (keep_logs); the daily audit review prunes rotated files
+  # older than audit_retention_days, so retention is measured in days, not in
+  # a file count.
   audit_retention_days: 90
   audit_max_log_file_mb: 50
-  audit_num_logs: 20
   # 03.03.04 - free space thresholds (MB) that trigger alerts
   audit_space_left_mb: 500
   audit_admin_space_left_mb: 250
   # 03.13.11 / 03.13.15 - system-wide crypto policy
   crypto_policy: "FIPS"
+  # 03.12.03 - the continuous-monitoring schedules, in systemd's normalised
+  # OnCalendar form because the checks read them back from the timers.
+  assessment_schedule: "*-*-* 06:00:00"      # 03.12.01
+  audit_review_schedule: "*-*-* 05:00:00"    # 03.03.05
+  inventory_schedule: "*-*-* 00:00:00"       # 03.04.10
+  aide_check_schedule: "*-*-* 04:00:00"      # 03.04.01 / 03.14.06
+  vuln_scan_schedule: "Sun *-*-* 02:00:00"   # 03.11.02
   # 03.01.09 - system use notification text lives in
   # roles/nist_800_171/templates/banner.j2
 
@@ -93,9 +105,14 @@ odp_organizational:
   # 03.01.01 Account Management
   - id: notify_period
     requirement: "03.01.01"
-    parameter: "Notify account managers within [time period]"
+    parameter: "Notify account managers within [time period] (statement g)"
     value: "24 hours"
     rationale: "Same-day offboarding."
+  - id: disable_period
+    requirement: "03.01.01"
+    parameter: "Disable an account no longer needed within [time period] (statement f)"
+    value: "immediately when for cause; within 4 hours otherwise"
+    rationale: "Matches offboard_time (03.09.02); inactivity is the machine ODP account_inactivity_days."
 
   # 03.01.05 Least Privilege
   - id: priv_review
@@ -105,9 +122,14 @@ odp_organizational:
     rationale: "Quarterly access recertification."
   - id: sec_functions
     requirement: "03.01.05"
-    parameter: "Security functions requiring explicit authorization"
+    parameter: "Security functions requiring explicit authorization (statement b)"
     value: "account mgmt, sudoers, auditd, firewall, crypto keys, package install"
     rationale: "STIG admin set."
+  - id: sec_info
+    requirement: "03.01.05"
+    parameter: "Security-relevant information requiring explicit authorization (statement b)"
+    value: "/etc/shadow and gshadow; sudoers; audit rules and logs; faillock state; SSH host keys; LUKS key slots; the /etc/nist-800-171 configuration tree"
+    rationale: "The files whose disclosure or change defeats a control; the role protects each."
 
   # 03.01.06 Least Privilege - Privileged Accounts
   - id: priv_roles
@@ -116,12 +138,24 @@ odp_organizational:
     value: "wheel (named admins only)"
     rationale: "No shared root."
 
+  # 03.01.08 Unsuccessful Logon Attempts
+  - id: lockout_action
+    requirement: "03.01.08"
+    parameter: "Selection (statement b): lock the account or node, or delay"
+    value: "lock the account for lockout_duration_seconds (900 s); node lock and delay not used"
+    rationale: "pam_faillock; rehearsed (TASKS.md 3.2): a locked single-admin host waits out the period."
+  # 03.01.10 Device Lock
+  - id: device_lock_mode
+    requirement: "03.01.10"
+    parameter: "Selection (statement a): system-initiated after a period, or user-initiated"
+    value: "system-initiated after idle_lock_seconds (900 s); users may also lock manually (vlock/tmux)"
+    rationale: "Enforced by TMOUT and tmux lock-after-time."
   # 03.01.11 Session Termination
   - id: session_events
     requirement: "03.01.11"
     parameter: "Conditions requiring session disconnect"
-    value: "900s idle; end of shift; incident lockout"
-    rationale: "Matches TMOUT/sshd."
+    value: "900 s idle on any session type (console and SSH alike); end of shift; incident lockout"
+    rationale: "One idle value everywhere: idle_lock_seconds, session_timeout_seconds and ssh_client_alive_interval are all 900."
 
   # 03.01.20 Use of External Systems
   - id: ext_reqs
@@ -136,6 +170,11 @@ odp_organizational:
     parameter: "Training frequency"
     value: "12 months"
     rationale: "Annual awareness."
+  - id: at_events
+    requirement: "03.02.01"
+    parameter: "Events that also trigger training"
+    value: "on hire; on role change; after a security incident involving the user; on a significant change to the system"
+    rationale: "Common practice; the same events as 03.02.02."
 
   # 03.02.02 Role-Based Training
   - id: rbt_freq
@@ -143,20 +182,47 @@ odp_organizational:
     parameter: "Role-based training frequency"
     value: "12 months"
     rationale: "Annual."
+  - id: rbt_events
+    requirement: "03.02.02"
+    parameter: "Events that also trigger role-based training"
+    value: "on assuming the role; on role change; after a security incident in the role's scope; on a significant change to the system"
+    rationale: "Same events as 03.02.01."
 
   # 03.03.01 Event Logging
+  - id: event_types
+    requirement: "03.03.01"
+    parameter: "Event types to log (statement a)"
+    value: "the audit rule set the role installs (audit-rules.j2): authentication and authorization decisions, privilege use, account and group changes, changes to the audit configuration, kernel module loading, file deletion by users, access to CUI paths, and system startup and shutdown"
+    rationale: "STIG/OSPP event set; au-01-rules-loaded asserts it is what the kernel enforces."
   - id: event_review
     requirement: "03.03.01"
-    parameter: "Review logged event types"
+    parameter: "Review logged event types [frequency] (statement b)"
     value: "12 months"
     rationale: "Annual."
 
+  # 03.03.04 Response to Audit Logging Process Failures
+  - id: audit_fail_alert
+    requirement: "03.03.04"
+    parameter: "Alert within [time period] of an audit logging failure (statement a)"
+    value: "immediately, by syslog and to the audit administrator, at audit_space_left_mb (500 MB) free"
+    rationale: "auditd space_left_action=SYSLOG; the machine ODPs hold the thresholds."
+  - id: audit_fail_actions
+    requirement: "03.03.04"
+    parameter: "Additional actions on failure (statement b)"
+    value: "drop to single-user mode at audit_admin_space_left_mb (250 MB) free, on a full disk, and on a disk error, so no unaudited work occurs"
+    rationale: "auditd admin_space_left_action, disk_full_action and disk_error_action = SINGLE."
   # 03.03.05 Audit Record Review, Analysis, and Reporting
   - id: audit_review_freq
     requirement: "03.03.05"
     parameter: "Review frequency"
-    value: "7 days"
-    rationale: "Weekly plus SIEM continuous."
+    value: "automated report: daily (nist-audit-review.timer, audit_review_schedule); human review of the report: 7 days"
+    rationale: "The timer produces the analysis; a person performs the review. The schedule is a machine ODP the assessor reads back."
+  # 03.03.07 Time Stamps
+  - id: time_granularity
+    requirement: "03.03.07"
+    parameter: "Granularity of time measurement (statement b)"
+    value: "one second, UTC, chrony-synchronised to the organization's authoritative time sources"
+    rationale: "STIG; audit records carry second resolution."
 
   # 03.04.01 Baseline Configuration
   - id: baseline_review
@@ -169,13 +235,18 @@ odp_organizational:
   - id: config_settings
     requirement: "03.04.02"
     parameter: "Configuration settings"
-    value: "DISA RHEL 9 STIG + CIS L2 + this overlay"
-    rationale: "Common secure configuration."
+    value: "this overlay; where it is silent, the DISA RHEL 9 STIG; CIS Level 2 only where both are silent. On conflict the most restrictive setting applies and the overlay records the deviation"
+    rationale: "A precedence rule is what makes 03.04.02a's most-restrictive mode decidable."
 
   # 03.04.06 Least Functionality
+  - id: prohibited_services
+    requirement: "03.04.06"
+    parameter: "Prohibited or restricted functions, ports, protocols, connections and services (statement b)"
+    value: "any listener not declared in authorized-ports.d; telnet, rsh, ftp, tftp, ypbind, VNC and conferencing software; uncommon network protocols (dccp, sctp, rds, tipc); unused filesystem drivers; the trusted firewall zone"
+    rationale: "What the role removes, blocks or closes; sc-06 and cm-06 checks assert it."
   - id: svc_review
     requirement: "03.04.06"
-    parameter: "Service review frequency"
+    parameter: "Service review frequency (statement c)"
     value: "90 days"
     rationale: "Quarterly."
 
@@ -190,14 +261,14 @@ odp_organizational:
   - id: inv_review
     requirement: "03.04.10"
     parameter: "Inventory review frequency"
-    value: "30 days"
-    rationale: "Monthly automated + quarterly attestation."
+    value: "automated: daily (nist-inventory.timer, inventory_schedule) and on every package transaction; owner attestation: 90 days"
+    rationale: "The host refreshes the component inventory itself; the schedule is a machine ODP the assessor reads back."
 
   # 03.04.12 System and Component Configuration for High-Risk Areas
   - id: travel_config
     requirement: "03.04.12"
     parameter: "High-risk travel configuration"
-    value: "sanitized disk, no CUI, usbguard, VPN-only, reimage on return"
+    value: "sanitized disk, no CUI, usb-storage module blocked (03.01.16, 03.08.07), VPN-only, reimage on return"
     rationale: "STIG travel image."
 
   # 03.05.01 User Identification and Authentication
@@ -237,8 +308,8 @@ odp_organizational:
   - id: auth_refresh
     requirement: "03.05.12"
     parameter: "Authenticator refresh"
-    value: "on compromise, role change, or 1 year for hardware tokens; passwords on recovery not calendar"
-    rationale: "800-63."
+    value: "local passwords every 60 days (PASS_MAX_DAYS, enforced) and on compromise or role change; SSH keys and hardware tokens on compromise, role change, or 1 year"
+    rationale: "60 days is the RHEL 9 STIG value and is what password_max_age enforces. A deliberate deviation from SP 800-63B, which prefers no calendar expiry; recorded so the SSP and the evidence agree."
 
   # 03.06.02 Incident Monitoring, Reporting, and Response Assistance
   - id: ir_report_time
@@ -269,13 +340,18 @@ odp_organizational:
     parameter: "IR training frequency"
     value: "12 months"
     rationale: "Annual."
+  - id: ir_train_period
+    requirement: "03.06.04"
+    parameter: "Train within [time period] of assuming an incident response role (statement a)"
+    value: "within 30 days of assuming the role"
+    rationale: "Common practice."
 
   # 03.08.07 Media Use
   - id: media_types
     requirement: "03.08.07"
     parameter: "Restricted/prohibited media types"
     value: "unmanaged USB mass storage; U3; writable optical on servers"
-    rationale: "usbguard."
+    rationale: "The usb-storage module is blocked (03.01.16, 03.08.07) and automounting is disabled."
 
   # 03.09.01 Personnel Screening
   - id: rescreen
@@ -302,8 +378,8 @@ odp_organizational:
   - id: pe_log_review
     requirement: "03.10.02"
     parameter: "Physical access log review"
-    value: "7 days and on incident"
-    rationale: "Weekly."
+    value: "7 days; and on any incident, alarm, or reported unauthorized presence"
+    rationale: "Weekly, plus the events that warrant an immediate look."
 
   # 03.10.06 Alternate Work Site
   - id: aws_reqs
@@ -320,18 +396,23 @@ odp_organizational:
     rationale: "Annual."
 
   # 03.11.02 Vulnerability Monitoring and Scanning
+  - id: scan_freq
+    requirement: "03.11.02"
+    parameter: "Scan frequency (statements a, c)"
+    value: "weekly (nist-vuln-scan.timer, vuln_scan_schedule); and within 7 days of a disclosed vulnerability affecting the platform"
+    rationale: "The schedule is a machine ODP the assessor reads back; advisory metadata is refreshed on every run."
   - id: remediate_sla
     requirement: "03.11.02"
-    parameter: "Remediation times"
-    value: "critical 15d; high 30d; medium 90d"
-    rationale: "Typical CMMC POA&M."
+    parameter: "Remediation times (statement b)"
+    value: "critical 15 days; high 30 days; medium 90 days; low at the next maintenance window"
+    rationale: "Typical CMMC POA&M; the same tiers as patch_sla."
 
   # 03.12.01 Security Assessment
   - id: assess_freq
     requirement: "03.12.01"
     parameter: "Assessment frequency"
-    value: "12 months"
-    rationale: "Annual 800-171A."
+    value: "automated: daily (nist-assessment.timer, assessment_schedule); formal 800-171A assessment: 12 months"
+    rationale: "The host assesses itself daily; the schedule is a machine ODP the assessor reads back. The annual assessment is the independent one."
 
   # 03.12.05 Information Exchange
   - id: isa_types
@@ -352,6 +433,12 @@ odp_organizational:
     value: "FIPS 140-3; ssh-keygen; LUKS; no keys in world-readable files; destroy via shred/luksErase"
     rationale: "SP 800-57."
 
+  # 03.13.11 Cryptographic Protection
+  - id: crypto_types
+    requirement: "03.13.11"
+    parameter: "Types of cryptography"
+    value: "FIPS 140-3 validated modules only: the system-wide crypto policy FIPS; LUKS2 aes-xts-plain64 with a 512-bit key; RSA >= 3072 or ECDSA P-256/384; SHA-2; TLS 1.2 or later"
+    rationale: "What crypto_policy=FIPS and the LUKS tasks enforce; sc-11 checks assert it."
   # 03.13.12 Collaborative Computing Devices and Applications
   - id: collab_exceptions
     requirement: "03.13.12"
@@ -363,8 +450,14 @@ odp_organizational:
   - id: patch_sla
     requirement: "03.14.01"
     parameter: "Install security updates within"
-    value: "critical 15d; high 30d"
-    rationale: "Matches 03.11.02."
+    value: "critical 15 days; high 30 days; medium 90 days; low at the next maintenance window"
+    rationale: "The same tiers as remediate_sla (03.11.02); dnf-automatic applies security updates daily, well inside every tier."
+  # 03.14.02 Malicious Code Protection
+  - id: malware_scan_freq
+    requirement: "03.14.02"
+    parameter: "Scan frequency (statement c)"
+    value: "continuous execution control (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled (off by default, TASKS.md 4.2)"
+    rationale: "fapolicyd is always on; ClamAV needs EPEL and is a per-host opt-in."
 
   # 03.15.01 Policy and Procedures
   - id: policy_review
@@ -660,8 +753,8 @@ requirements:
       auditd is enabled and started at boot, audit=1 is set on the kernel
       command line so events are captured before auditd starts, and the selected
       event types are expressed as a versioned rule set covering the
-      identification, access control, privilege, and file integrity events the
-      ODP names.
+      identification, access control, privilege, and file integrity events
+      the organizational ODP event_types names.
     checks: [au-01-auditd-enabled, au-01-auditd-running, au-01-audit-grub,
              au-01-audit-backlog, au-01-rules-loaded, au-01-rsyslog-enabled]
 
@@ -682,11 +775,12 @@ requirements:
     tasks: tasks/au.yml
     host_scope: >
       Records are generated for every selected event type (the loaded rule set),
-      and retention is enforced for the ODP period through max_log_file,
-      num_logs, and max_log_file_action=rotate sized to hold the retention
-      window without loss.
-    checks: [au-03-max-log-file, au-03-num-logs, au-03-max-log-file-action,
-             au-03-retention-capacity, au-03-logrotate-present]
+      and retention is measured in days: auditd rotates at max_log_file and
+      never deletes (keep_logs), and the daily audit review prunes rotated
+      files older than audit_retention_days. Nothing else touches the audit
+      log - logrotate does not manage it.
+    checks: [au-03-max-log-file, au-03-max-log-file-action,
+             au-03-retention-pruner, au-03-auditd-owns-rotation]
 
   - id: "03.03.04"
     title: Response to Audit Logging Process Failures
@@ -708,14 +802,15 @@ requirements:
     tasks: tasks/au.yml
     host_scope: >
       Provides the review capability and schedules it: a systemd timer runs an
-      aureport/ausearch summary at the ODP frequency and writes it where the
-      audit administrator collects it, and rsyslog forwarding is configured so
-      records can be correlated across repositories (statement c).
+      aureport/ausearch summary on audit_review_schedule (asserted by
+      au-05-review-schedule) and writes it where the audit administrator
+      collects it, and rsyslog forwarding is configured so records can be
+      correlated across repositories (statement c).
     residual: >
       A human reviewing the output and reporting findings (statements a, b) is
       organizational. Forwarding requires a collector address to be set.
     checks: [au-05-review-timer, au-05-review-timer-enabled,
-             au-05-aureport-present, au-05-rsyslog-forwarding,
+             au-05-review-schedule, au-05-aureport-present, au-05-rsyslog-forwarding,
              au-05-forward-established, au-05-collector-receiving]
 
   - id: "03.03.06"
@@ -775,7 +870,7 @@ requirements:
       Reviewing and updating the baseline at the ODP frequency (statement b) is
       a process; the manifest and AIDE database are the artifacts it consumes.
     checks: [cm-01-aide-installed, cm-01-aide-db-exists, cm-01-aide-timer,
-             cm-01-baseline-manifest]
+             cm-01-aide-schedule, cm-01-baseline-manifest]
 
   - id: "03.04.02"
     title: Configuration Settings
@@ -857,7 +952,7 @@ requirements:
       The dnf transaction hook updates it on every install or removal, which is
       statement c.
     checks: [cm-10-inventory-script, cm-10-inventory-exists, cm-10-inventory-timer,
-             cm-10-inventory-fresh, cm-10-dnf-hook]
+             cm-10-inventory-schedule, cm-10-inventory-fresh, cm-10-dnf-hook]
 
   - id: "03.04.11"
     title: Information Location
@@ -1236,14 +1331,15 @@ requirements:
     disposition: technical
     tasks: tasks/ra.yml
     host_scope: >
-      The host scans itself at the ODP frequency: a systemd timer runs an
+      The host scans itself on vuln_scan_schedule (asserted by
+      ra-02-scan-schedule): a systemd timer runs an
       OpenSCAP evaluation against the SSG content plus a dnf security-advisory
       check, writes results where the assessor collects them, and the advisory
       metadata is refreshed so newly published vulnerabilities enter scope
       automatically (statement c).
     checks: [ra-02-openscap-installed, ra-02-ssg-content, ra-02-scan-timer,
-             ra-02-scan-timer-enabled, ra-02-updateinfo-available,
-             ra-02-scan-results]
+             ra-02-scan-timer-enabled, ra-02-scan-schedule,
+             ra-02-updateinfo-available, ra-02-scan-results]
 
   - id: "03.11.04"
     title: Risk Response
@@ -1263,12 +1359,13 @@ requirements:
       The auditor in this toolkit is the assessment mechanism: it evaluates
       every requirement in this overlay against the running host and produces a
       dated, per-requirement pass/fail record with evidence. It is installed on
-      the host and scheduled at the ODP frequency.
+      the host and scheduled on assessment_schedule (asserted by
+      ca-01-assessment-schedule).
     residual: >
       Assessing the environment of operation, and the independence of the
       assessor, are organizational.
     checks: [ca-01-auditor-installed, ca-01-assessment-timer,
-             ca-01-assessment-results]
+             ca-01-assessment-schedule, ca-01-assessment-results]
 
   - id: "03.12.02"
     title: Plan of Action and Milestones
@@ -1457,7 +1554,7 @@ requirements:
       Two complementary mechanisms: fapolicyd blocks execution of any
       unauthorized binary at the point of execution (prevention), and ClamAV
       provides signature-based detection with on-access scanning of files from
-      external sources plus a scheduled full scan at the ODP frequency, with
+      external sources plus a scheduled full scan at malware_scan_freq, with
       freshclam keeping signatures current and detections quarantined.
     checks: [si-02-clamav-installed, si-02-freshclam-enabled,
              si-02-clamav-scan-timer, si-02-signatures-fresh,

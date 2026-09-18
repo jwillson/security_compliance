@@ -207,8 +207,11 @@ checks:
 
   - id: ac-08-faillock-deny
     description: Account lockout triggers at the ODP attempt count
-    command: "grep -oP '(?<=^deny\\s=\\s).*|(?<=^deny=).*' /etc/security/faillock.conf | head -1"
-    expect_int: "<= {odp.lockout_attempts}"
+    # 0 would switch lockout off; the old "<= ODP" assertion passed it.
+    command: |
+      d=$(grep -oP '(?<=^deny\s=\s).*|(?<=^deny=).*' /etc/security/faillock.conf | head -1)
+      if [ -n "$d" ] && [ "$d" -ge 1 ] && [ "$d" -le {odp.lockout_attempts} ]; then echo ok; else echo "deny=${d:-unset}"; fi
+    expect_output: "ok"
 
   - id: ac-08-faillock-interval
     description: Failed attempts are counted over the ODP window
@@ -217,8 +220,13 @@ checks:
 
   - id: ac-08-faillock-unlock
     description: The lockout lasts at least the ODP duration
-    command: "grep -oP '(?<=^unlock_time\\s=\\s).*|(?<=^unlock_time=).*' /etc/security/faillock.conf | head -1"
-    expect_int: ">= {odp.lockout_duration_seconds}"
+    # Equality, not ">=": 0 means "until an administrator resets", the strictest
+    # setting, which ">=" would have failed - and which a single-admin host
+    # cannot recover from (TASKS.md 3.2).
+    command: |
+      u=$(grep -oP '(?<=^unlock_time\s=\s).*|(?<=^unlock_time=).*' /etc/security/faillock.conf | head -1)
+      if [ "$u" = "{odp.lockout_duration_seconds}" ]; then echo ok; else echo "unlock_time=${u:-unset}"; fi
+    expect_output: "ok"
 
   - id: ac-08-faillock-even-deny-root
     description: The lockout applies to root as well
@@ -462,28 +470,20 @@ checks:
     command: "awk -F= '/^max_log_file / {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
     expect_int: ">= {odp.audit_max_log_file_mb}"
 
-  - id: au-03-num-logs
-    description: Enough rotated files are retained for the ODP window
-    command: "awk -F= '/^num_logs/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
-    expect_int: ">= {odp.audit_num_logs}"
-
   - id: au-03-max-log-file-action
     description: Logs rotate rather than being overwritten or ignored
     command: "awk -F= '/^max_log_file_action/ {gsub(/ /,\"\",$2); print toupper($2)}' /etc/audit/auditd.conf"
-    expect_output: "ROTATE"
+    expect_output: "KEEP_LOGS"
 
-  - id: au-03-retention-capacity
-    description: Configured capacity can hold the ODP retention period
-    command: |
-      n=$(awk -F= '/^num_logs/ {gsub(/ /,"",$2); print $2}' /etc/audit/auditd.conf)
-      s=$(awk -F= '/^max_log_file / {gsub(/ /,"",$2); print $2}' /etc/audit/auditd.conf)
-      echo $(( n * s ))
-    expect_int: ">= 500"
+  - id: au-03-retention-pruner
+    description: Rotated audit logs are pruned by age at the ODP retention period
+    command: "grep -c -- '-mtime +{odp.audit_retention_days} ' /usr/local/sbin/nist-audit-review 2>/dev/null"
+    expect_int: ">= 1"
 
-  - id: au-03-logrotate-present
-    description: A retention policy exists for rotated audit logs
-    command: "test -f /etc/logrotate.d/nist-audit && echo present"
-    expect_output: "present"
+  - id: au-03-auditd-owns-rotation
+    description: Nothing but auditd rotates the audit log
+    command: "grep -rl '/var/log/audit/audit.log' /etc/logrotate.d/ /etc/logrotate.conf 2>/dev/null"
+    expect_empty: true
 
   - id: au-04-space-left
     description: A low-space alert threshold is set
@@ -534,6 +534,11 @@ checks:
     description: The audit review runs on schedule
     command: "systemctl is-enabled nist-audit-review.timer 2>&1"
     expect_output: "enabled"
+
+  - id: au-05-review-schedule
+    description: The audit review runs on the ODP schedule
+    command: "systemctl show nist-audit-review.timer -p TimersCalendar --value 2>/dev/null | grep -oP '(?<=OnCalendar=)[^;]*' | sed 's/ *$//'"
+    expect_output: "{odp.audit_review_schedule}"
 
   - id: au-05-aureport-present
     description: The audit reduction and reporting tools are available
@@ -701,6 +706,11 @@ checks:
     command: "systemctl is-enabled nist-aide-check.timer 2>&1"
     expect_output: "enabled"
 
+  - id: cm-01-aide-schedule
+    description: The integrity check runs on the ODP schedule
+    command: "systemctl show nist-aide-check.timer -p TimersCalendar --value 2>/dev/null | grep -oP '(?<=OnCalendar=)[^;]*' | sed 's/ *$//'"
+    expect_output: "{odp.aide_check_schedule}"
+
   - id: cm-01-baseline-manifest
     description: The as-built baseline is recorded
     command: "test -f /etc/nist-800-171/build-info && echo present"
@@ -863,6 +873,11 @@ checks:
     description: The inventory refreshes on a schedule
     command: "systemctl is-enabled nist-inventory.timer 2>&1"
     expect_output: "enabled"
+
+  - id: cm-10-inventory-schedule
+    description: The inventory refresh runs on the ODP schedule
+    command: "systemctl show nist-inventory.timer -p TimersCalendar --value 2>/dev/null | grep -oP '(?<=OnCalendar=)[^;]*' | sed 's/ *$//'"
+    expect_output: "{odp.inventory_schedule}"
 
   - id: cm-10-inventory-fresh
     description: The inventory is not stale (updated within 8 days)
@@ -1379,6 +1394,11 @@ checks:
     command: "systemctl is-enabled nist-vuln-scan.timer 2>&1"
     expect_output: "enabled"
 
+  - id: ra-02-scan-schedule
+    description: The vulnerability scan runs on the ODP schedule
+    command: "systemctl show nist-vuln-scan.timer -p TimersCalendar --value 2>/dev/null | grep -oP '(?<=OnCalendar=)[^;]*' | sed 's/ *$//'"
+    expect_output: "{odp.vuln_scan_schedule}"
+
   - id: ra-02-updateinfo-available
     description: Advisory metadata is available so new CVEs enter scope
     command: "dnf -q updateinfo summary --security >/dev/null 2>&1 && echo available"
@@ -1401,6 +1421,11 @@ checks:
     description: Assessment runs at the ODP frequency
     command: "systemctl is-enabled nist-assessment.timer 2>&1"
     expect_output: "enabled"
+
+  - id: ca-01-assessment-schedule
+    description: The assessment runs on the ODP schedule
+    command: "systemctl show nist-assessment.timer -p TimersCalendar --value 2>/dev/null | grep -oP '(?<=OnCalendar=)[^;]*' | sed 's/ *$//'"
+    expect_output: "{odp.assessment_schedule}"
 
   - id: ca-01-assessment-results
     description: Assessment results are retained on the host
@@ -1920,9 +1945,12 @@ checks:
     expect_int: ">= 3"
 
   - id: si-08-audit-retention
-    description: Audit records are retained for the ODP period
-    command: "awk -F= '/^num_logs/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
-    expect_int: ">= {odp.audit_num_logs}"
+    description: Audit records are retained for the ODP period, by age
+    command: |
+      a=$(awk -F= '/^max_log_file_action/ {gsub(/ /,"",$2); print toupper($2)}' /etc/audit/auditd.conf)
+      p=$(grep -c -- '-mtime +{odp.audit_retention_days} ' /usr/local/sbin/nist-audit-review 2>/dev/null)
+      if [ "$a" = KEEP_LOGS ] && [ "${p:-0}" -ge 1 ]; then echo ok; else echo "action=$a pruner=${p:-0}"; fi
+    expect_output: "ok"
 
   - id: si-08-journald-retention
     description: The journal retains records for the ODP period

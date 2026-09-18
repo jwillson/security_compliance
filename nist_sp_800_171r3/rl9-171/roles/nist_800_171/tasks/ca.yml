@@ -52,7 +52,7 @@
         Description=NIST 800-171r3 assessment schedule
 
         [Timer]
-        OnCalendar={{ nist_assessment_schedule }}
+        OnCalendar={{ odp.assessment_schedule }}
         Persistent=true
 
         [Install]
@@ -93,11 +93,11 @@
     dest: "{{ nist_conf_dir }}/continuous-monitoring.conf"
     content: |
       # 03.12.03  System-level continuous monitoring strategy.
-      integrity_check=nist-aide-check.timer:{{ nist_aide_check_schedule }}
-      audit_review=nist-audit-review.timer:{{ nist_audit_review_schedule }}
-      vulnerability_scan=nist-vuln-scan.timer:{{ nist_vuln_scan_schedule }}
-      assessment=nist-assessment.timer:{{ nist_assessment_schedule }}
-      inventory=nist-inventory.timer:{{ nist_inventory_schedule }}
+      integrity_check=nist-aide-check.timer:{{ odp.aide_check_schedule }}
+      audit_review=nist-audit-review.timer:{{ odp.audit_review_schedule }}
+      vulnerability_scan=nist-vuln-scan.timer:{{ odp.vuln_scan_schedule }}
+      assessment=nist-assessment.timer:{{ odp.assessment_schedule }}
+      inventory=nist-inventory.timer:{{ odp.inventory_schedule }}
       malware_scan=nist-malware-scan.timer:{{ nist_clamav_scan_schedule }}
       results_dir={{ nist_report_dir }}
     owner: root

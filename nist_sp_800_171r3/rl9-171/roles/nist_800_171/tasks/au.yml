@@ -96,29 +96,15 @@
 # The rule set itself is deployed by ac.yml (tagged 03.01.07 and 03.03.01) so
 # it is written once and loaded atomically.
 
-- name: "03.03.03 | Retain rotated audit logs for the ODP period"
-  ansible.builtin.copy:
-    dest: /etc/logrotate.d/nist-audit
-    content: |
-      # 03.03.03b / 03.14.08  Retain audit records for
-      # {{ odp.audit_retention_days }} days.
-      /var/log/audit/audit.log {
-          rotate {{ odp.audit_num_logs }}
-          size {{ odp.audit_max_log_file_mb }}M
-          maxage {{ odp.audit_retention_days }}
-          missingok
-          notifempty
-          compress
-          delaycompress
-          create 0600 root root
-          sharedscripts
-          postrotate
-              /usr/bin/systemctl kill -s SIGUSR1 auditd.service 2>/dev/null || true
-          endscript
-      }
-    owner: root
-    group: root
-    mode: "0644"
+- name: "03.03.03 | Leave audit log rotation to auditd alone"
+  # auditd rotates at max_log_file and, with keep_logs, never deletes; the
+  # daily audit review prunes rotated files older than audit_retention_days
+  # (see audit-review.sh.j2). A logrotate stanza on the same file fought
+  # auditd for the rotation and delivered retention as a file count rather
+  # than a period - the ODP review (E2) removed it.
+  ansible.builtin.file:
+    path: /etc/logrotate.d/nist-audit
+    state: absent
   tags: ["03.03.03", "03.14.08"]
 
 # ===========================================================================
@@ -156,7 +142,7 @@
         Description=NIST 800-171r3 03.03.05 audit review schedule
 
         [Timer]
-        OnCalendar={{ nist_audit_review_schedule }}
+        OnCalendar={{ odp.audit_review_schedule }}
         Persistent=true
 
         [Install]

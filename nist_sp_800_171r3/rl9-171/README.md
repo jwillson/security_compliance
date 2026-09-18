@@ -73,7 +73,7 @@ kickstart-built reference lab:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 330 checks run, 0 failed
+ 97 requirements assessed, 334 checks run, 0 failed
 ```
 
 36 rather than 37 satisfied, because 03.14.02 (Malicious Code Protection)
@@ -110,7 +110,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-330 checks cover the 69 enforceable requirements. Each declares exactly one
+334 checks cover the 69 enforceable requirements. Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -195,7 +195,7 @@ guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
 an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
 reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
-330 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
+334 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
 check passes.
 Every failure is an install-time limit the role records rather than hides:
 
@@ -392,7 +392,7 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               330 check definitions
+│   └── checks.yml               334 check definitions
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls

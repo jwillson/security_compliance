@@ -43,11 +43,10 @@ nist_pki_dir: "{{ lookup('env', 'NIST_PKI_DIR') or (playbook_dir + '/.secrets/pk
 nist_log_collector_name: "{{ (groups['log_hosts'] | default([]) | first) | default('', true) }}"
 
 # --- Scheduling (03.03.05, 03.11.02, 03.12.01, 03.12.03) ---
-nist_aide_check_schedule: "*-*-* 04:00:00"
-nist_audit_review_schedule: "*-*-* 05:00:00"
-nist_vuln_scan_schedule: "Sun *-*-* 02:00:00"
-nist_assessment_schedule: "*-*-* 06:00:00"
-nist_inventory_schedule: "daily"
+# The five continuous-monitoring schedules are machine ODPs in the overlay
+# (odp.*_schedule): the role writes them into the timers and the assessor reads
+# them back. Only the ClamAV scan schedule stays here, because ClamAV is off by
+# default (TASKS.md 4.2).
 
 # --- 03.05.03 Multi-factor authentication ---
 # Requiring a public key in addition to a password locks out anyone who has not
