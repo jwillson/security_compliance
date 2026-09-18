@@ -4,8 +4,8 @@ How to run this thing. The [README](../README.md) explains *why* the tool is
 built the way it is; this is the procedure.
 
 Everything below was exercised against the two hardened Rocky 9 guests of the
-reference lab — a CUI host and a log collector — unless a step says otherwise. Where a recovery procedure is standard practice that has not
-been rehearsed here, it says so.
+reference lab — a CUI host and a log collector — unless a step says otherwise. Every recovery procedure in "When you are locked out"
+has been rehearsed against this baseline on a retrofit guest; where the rehearsal changed the advice, the step says what happened.
 
 **Contents**
 
@@ -296,22 +296,22 @@ Five statuses, and the distinctions matter:
 | `NOT_APPLICABLE` | No host control exists — policy, process, personnel, physical. |
 | `ERROR` | The check itself could not run. Investigate the check, not the host. |
 
-A `PASS` is not always a discharged obligation. Six requirements are classified
-`technical` yet carry a `residual` field, so they report PASS with an
-organizational obligation still outstanding — see TASKS.md 4.4.
+A `PASS` is a discharged host obligation and nothing more: a requirement
+with a `residual` is `partial`, and reports as partial however many of its
+checks pass. `make validate` enforces that.
 
 A healthy reference VM reports:
 
 ```
- 43 satisfied            (technical requirements fully enforced and verified)
- 26 partially satisfied  (host controls verified; organizational evidence still required)
+ 36 satisfied            (technical requirements fully enforced and verified)
+ 33 partially satisfied  (host controls verified; organizational evidence still required)
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 327 checks run, 0 failed
+ 97 requirements assessed, 329 checks run, 0 failed
 ```
 
-43 rather than 44 satisfied because 03.14.02 reports partial: fapolicyd
+36 rather than 37 satisfied because 03.14.02 reports partial: fapolicyd
 prevention is verified but ClamAV signature scanning needs EPEL, outside the
 authorized repository set (03.17.03).
 
@@ -400,7 +400,7 @@ provision the certificates.
 
 ## When you are locked out
 
-Console access is the way back in. On the reference VM:
+Console access is the way back in. On a lab guest:
 
 ```bash
 sudo virsh -c qemu:///system console rl9-cui-01
@@ -409,21 +409,32 @@ sudo virsh -c qemu:///system console rl9-log-01   # the collector
 
 `./tools/inventory.py show` lists the guests and their addresses.
 
-The admin password is in `.secrets/admin_password`. Root is locked by design
-(03.01.06) — log in as the admin user and `sudo`.
+The lab admin password is in `.secrets/admin_password`; a host you brought
+has whatever you gave it. Root is locked by design (03.01.06) — log in as
+the admin user and `sudo`.
 
-*The procedures below are standard practice for these controls and have not
-been rehearsed against this baseline. Take a snapshot before you need them.*
+**First, quiet the console.** `LogDenied=all` (03.13.01) sends every dropped
+packet to the kernel log, and the kernel log goes to the serial console, so
+the prompt is buried within seconds. `sudo dmesg -n 1` silences it for the
+session. (Every step below was rehearsed with the console scripted; the noise
+was the first thing the script had to handle.)
 
-| Cause | From the console |
-|---|---|
-| Account locked by faillock after 3 failures (03.01.08) | `sudo faillock --user <name> --reset` — or wait out `lockout_duration_seconds` (default 900) |
-| MFA enforced before operators enrolled keys | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`, then set `nist_mfa_enforce_pubkey: false` and re-apply so the change survives |
-| Your key is ed25519 and FIPS rejects it | Add an RSA-3072 key to the admin user's `authorized_keys` from the console |
-| Firewall locked out your source network | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` (add `--permanent` and reload to persist) |
+**Before you need any of this, take a copy of the guest.** `virsh
+snapshot-create-as` refuses a UEFI guest with raw NVRAM. Shut the guest down,
+copy its qcow2 and its NVRAM file (`virsh dumpxml <guest> | grep nvram`), and
+start it again; reverting is the reverse. That is how each procedure below
+was rehearsed and reverted.
 
-A reverted control is a deviation. `./verify.sh` will report it, which is
-correct — re-apply properly once you are back in.
+| Cause | What happens | From the console |
+|---|---|---|
+| Account locked by faillock after 3 failures (03.01.08) | The correct password is refused over SSH **and at the console**: the console login runs the same PAM stack. With root locked and one admin account, nobody can log in to run a reset during the lockout. | **Wait.** The lock expires `lockout_duration_seconds` (default 900) after the last failure; then log in and `sudo faillock --user <name> --reset` clears the tally, or simply carry on. For a single-admin host, create a second administrative account before you need it: faillock is per user, so it is not locked when the first one is. |
+| MFA enforced before operators enrolled keys | Key-only logins are refused with "Permission denied". | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`. Rehearsed verbatim: key-only login works immediately, `./verify.sh --requirement 03.05.03` reports `ia-03-sshd-authmethods` as failing, and `./apply.sh --tags 03.05.03` restores enforcement. To keep it off, set `nist_mfa_enforce_pubkey: false` and re-apply. |
+| Your key is ed25519 and FIPS rejects it | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` at preauth. | Add an RSA-3072 key to the admin user's `authorized_keys` from the console. |
+| Firewall locked out your source network | New SSH connections time out; an existing session may survive. | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` gets you back in immediately (rehearsed verbatim). It exempts that address from the firewall entirely, so do not leave it: once you are in, restore the authorized services with `./apply.sh --tags 03.13`, which also removes any trusted-zone exemption, and `sc-06-no-trusted-bypass` reports one that remains. Do **not** make it `--permanent` unless you accept the bypass until the next apply. |
+
+A reverted control is a deviation. `./verify.sh` reports each of the above
+(rehearsed for MFA and for the firewall bypass) — re-apply properly once you
+are back in.
 
 ---
 

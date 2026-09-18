@@ -2,7 +2,8 @@
 
 [commands]
 # 03.14.01b  Security-relevant updates only, applied automatically so the
-# {{ odp.patch_window_days }} day ODP window is met without human latency.
+# patch_sla window ({{ (odp_organizational | selectattr('id', 'eq', 'patch_sla') | map(attribute='value') | first) }})
+# is met without human latency.
 upgrade_type = security
 random_sleep = 300
 network_online_timeout = 60

@@ -10,10 +10,10 @@ deliberately reading history.
 | Path | Status | Treat as |
 | --- | --- | --- |
 | `nist_sp_800_171r3/rl9-171/` | **the tool** | Catalog extracted from the publication PDF, two Ansible roles (`nist_800_171` over `cui_hosts`, `nist_log_collector` over `log_hosts`), independent assessor, reference VM build, and `tools/inventory.py`, which owns `inventory/hosts.yml`. |
-| `nist_sp_800_171r3/web/` | adjunct, out of scope | nginx TLS snippet for a web tier. Not covered by the roles, which harden hosts. Requirement IDs in its comments are checked against the catalog. |
 
 Superseded trees (`r3/`, `os/`, `stig/`) were removed once their reconciliation
-had served its purpose. They remain in git history if ever needed.
+had served its purpose, and the orphaned `web/` nginx snippet went the same way
+(TASKS.md 4.5). They remain in git history if ever needed.
 
 ## Source of truth
 
@@ -42,9 +42,8 @@ had served its purpose. They remain in git history if ever needed.
 - A requirement classed `partial` must never report PASS — only MANUAL. A
   green report must not imply the system is authorized. 28 requirements are
   purely organizational; the assessor reports them `NOT_APPLICABLE(host)`.
-  Six requirements are currently `technical` *and* carry a `residual`, so they
-  report PASS with an obligation outstanding. That is an open defect
-  (TASKS.md 4.4), not a pattern to copy.
+  A `technical` entry may not carry a `residual` and every machine ODP must
+  be asserted by a check; `make validate` enforces both.
 - Verification reads **effective** state, not the file the role wrote:
   `sshd -T` over `sshd_config`, `sysctl -n` over `/etc/sysctl.d/`,
   `auditctl -l` over `rules.d`, `systemctl is-enabled` over unit files. Every

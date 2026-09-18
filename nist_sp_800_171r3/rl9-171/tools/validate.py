@@ -52,6 +52,12 @@ for req in overlay["requirements"]:
         errors.append(f"{req['id']} has no host_scope description")
     if req["disposition"] == "partial" and not req.get("residual"):
         errors.append(f"{req['id']} is partial but does not state the residual")
+    # The converse of the rule above. A residual names what the organization
+    # still owes, which is the definition of partial; a technical entry that
+    # carries one would report PASS next to prose conceding non-compliance.
+    if req["disposition"] == "technical" and req.get("residual"):
+        errors.append(f"{req['id']} is technical but states a residual "
+                      "(a residual is what makes a requirement partial)")
     if req["disposition"] not in ("technical", "partial", "organizational"):
         errors.append(f"{req['id']} has unknown disposition {req['disposition']!r}")
 
@@ -75,14 +81,22 @@ for cid in sorted(declared - set(defined)):
 for cid in sorted(set(defined) - declared):
     warnings.append(f"check {cid} is defined but never referenced")
 
-# 4. ODP references in checks resolve.
+# 4. ODP references in checks resolve, and every machine ODP is asserted.
 import re
 odp = overlay.get("odp", {})
+referenced = set()
 for c in checks["checks"]:
     blob = " ".join(str(v) for k, v in c.items() if k != "id")
     for key in re.findall(r"\{odp\.([a-z0-9_]+)\}", blob):
+        referenced.add(key)
         if key not in odp:
             errors.append(f"check {c['id']} references unknown ODP {key!r}")
+# A machine ODP exists so the role applies it and a check asserts it. One no
+# check reads can change without anything failing, so it is either dead or a
+# policy value that belongs in odp_organizational.
+for key in odp:
+    if key not in referenced:
+        errors.append(f"machine ODP {key!r} is asserted by no check")
 
 # 5. Task files named by the overlay exist.
 for req in overlay["requirements"]:

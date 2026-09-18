@@ -142,6 +142,31 @@
   register: nist_zone_service_removals
   tags: ["03.13.01", "03.13.06"]
 
+- name: "03.13.06 | Remove any source or interface exempted via the trusted zone"
+  # The trusted zone accepts everything, so anything in it is outside the
+  # deny-by-default policy. The runbook's lockout recovery puts the operator's
+  # address there to get back in; that is an emergency measure, and once the
+  # authorized services are restored (above) it is removed here, so the
+  # re-apply the runbook asks for leaves no bypass behind. Rehearsal 3.4
+  # found the exception survived a re-apply and no check reported it.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0
+      for kind in source interface; do
+        for scope in "--permanent" ""; do
+          for item in $(firewall-cmd $scope --zone=trusted --list-${kind}s 2>/dev/null); do
+            firewall-cmd $scope --zone=trusted --remove-$kind="$item" >/dev/null && changed=1
+          done
+        done
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  when: nist_firewalld_ready
+  register: nist_trusted_bypass
+  changed_when: "'changed=1' in nist_trusted_bypass.stdout"
+  tags: ["03.13.06"]
+
 - name: "03.13.06 | Reload the firewall so the permanent policy is live"
   # Only needed when the permanent configuration actually moved.
   ansible.builtin.command:

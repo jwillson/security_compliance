@@ -63,8 +63,6 @@ odp:
   audit_retention_days: 90
   audit_max_log_file_mb: 50
   audit_num_logs: 20
-  # 03.14.01b - install security updates within this window
-  patch_window_days: 30
   # 03.03.04 - free space thresholds (MB) that trigger alerts
   audit_space_left_mb: 500
   audit_admin_space_left_mb: 250
@@ -252,7 +250,11 @@ odp_organizational:
     requirement: "03.06.02"
     parameter: "Authorities to notify"
     value: "CISO; contracting officer; CISA as required"
-    rationale: "Contract flow-down."
+    rationale: >-
+      Contract flow-down. The intended population is non-DoD CUI, so DFARS
+      252.204-7012 (report to DoD via DIBNet within 72 hours) does not apply;
+      a DoD contractor adopting this overlay must change this value and add
+      that clock.
 
   # 03.06.03 Incident Response Testing
   - id: ir_test
@@ -477,7 +479,7 @@ requirements:
 
   - id: "03.01.05"
     title: Least Privilege
-    disposition: technical
+    disposition: partial
     tasks: tasks/ac.yml
     host_scope: >
       sudo requires authentication (no NOPASSWD, no !authenticate), sudo is
@@ -486,8 +488,10 @@ requirements:
       group/other write. Privilege review is supported by a generated report of
       every account holding privileged access.
     residual: >
-      The periodic review itself (statement c) is a process; the role installs
-      the report that feeds it.
+      Authorizing access to security functions and security-relevant
+      information (statement b) and reviewing privileges at the ODP frequency
+      (statement c) are processes; the role installs the report that feeds
+      the review and the reassignment it may call for (statement d).
     checks: [ac-05-sudo-no-nopasswd, ac-05-sudo-no-authenticate-off,
              ac-05-sudo-timestamp-timeout, ac-05-umask-login-defs,
              ac-05-sudoers-perms, ac-05-privilege-report]
@@ -542,7 +546,7 @@ requirements:
 
   - id: "03.01.10"
     title: Device Lock
-    disposition: technical
+    disposition: partial
     tasks: tasks/ac.yml
     host_scope: >
       Idle sessions lock after the ODP period. On a text-mode host this is
@@ -550,8 +554,10 @@ requirements:
       requires re-authentication. Graphical lock settings are applied via dconf
       when a desktop is present.
     residual: >
-      Statement c (concealing the display with a publicly viewable image) only
-      applies where a graphical session exists.
+      Statement a is a selection the organization makes; the host implements
+      the inactivity lock and cannot make users initiate one. Statement c
+      (concealing the display with a publicly viewable image) only applies
+      where a graphical session exists, and is asserted by no check.
     checks: [ac-10-tmout-set, ac-10-tmout-readonly, ac-10-tmux-lock,
              ac-10-tmux-installed]
 
@@ -568,7 +574,7 @@ requirements:
 
   - id: "03.01.12"
     title: Remote Access
-    disposition: technical
+    disposition: partial
     tasks: tasks/ac.yml
     host_scope: >
       SSH is the sole authorized remote access path and is routed through a
@@ -577,9 +583,10 @@ requirements:
       host-based or GSSAPI auth, no agent/TCP forwarding, strict modes, FIPS
       ciphers), and privileged remote execution is logged.
     residual: >
-      Documenting the usage restrictions and authorizing each access type
-      (statements a, b) is organizational; the enforced configuration is the
-      evidence.
+      Establishing the usage restrictions and connection requirements and
+      authorizing each access type (statements a, b) is organizational, as is
+      authorizing who may execute privileged commands remotely (statement d);
+      the enforced configuration and the audit trail are the evidence.
     checks: [ac-12-sshd-active, ac-12-sshd-no-empty-passwords,
              ac-12-sshd-hostbased, ac-12-sshd-gssapi, ac-12-sshd-strictmodes,
              ac-12-sshd-ignorerhosts, ac-12-sshd-permituserenv,
@@ -935,15 +942,19 @@ requirements:
 
   - id: "03.05.05"
     title: Identifier Management
-    disposition: technical
+    disposition: partial
     tasks: tasks/ia.yml
     host_scope: >
-      Identifier assignment is constrained and reuse is prevented: UID_MIN/
-      GID_MIN separate human from system identifiers, identifiers are never
-      recycled (UID reuse is blocked by retaining the account record), and
-      individual identifiers are unique per person.
+      Identifier assignment is constrained: UID_MIN/GID_MIN separate human
+      from system identifiers, no two current accounts share an identifier,
+      and every account gets its own home directory.
     residual: >
       Authorization to assign an identifier (statement a) is organizational.
+      Preventing reuse for the ODP time period (statement c) has no host
+      control: ia-05-no-uid-reuse only asserts that no two current accounts
+      share a UID, which is 03.05.01a restated, and nothing retains a retired
+      identifier. The status characteristic of statement d is not managed by
+      the host.
     checks: [ia-05-uid-min, ia-05-gid-min, ia-05-sys-uid-range,
              ia-05-no-uid-reuse, ia-05-create-home]
 
@@ -977,18 +988,22 @@ requirements:
 
   - id: "03.05.12"
     title: Authenticator Management
-    disposition: technical
+    disposition: partial
     tasks: tasks/ia.yml
     host_scope: >
-      Authenticator lifetime is enforced (PASS_MAX_DAYS, PASS_MIN_DAYS,
+      Local password lifetime is enforced (PASS_MAX_DAYS, PASS_MIN_DAYS,
       PASS_WARN_AGE at the ODP values, applied to existing accounts as well as
-      defaults), default authenticators cannot persist (accounts created without
-      a password are locked, and the installer's root password is expired at
-      first boot), and authenticator content is protected by shadow file
-      permissions and the FIPS hash policy.
+      defaults), accounts created without a password are locked, and
+      authenticator content is protected by shadow file permissions and the
+      FIPS hash policy.
     residual: >
-      Identity proofing at issuance and the administrative procedures for lost
-      or revoked authenticators (statements a, c) are organizational.
+      Identity proofing at issuance (statement a), initial authenticator
+      content (statement b) and the administrative procedures for
+      distribution, loss and revocation (statement c) are organizational.
+      Changing default authenticators at first use (statement d) has no host
+      control. The refresh rule (statement e) is enforced for local passwords
+      on the calendar only: not for the ODP events, and not for SSH keys or
+      tokens.
     checks: [ia-12-pass-max-days, ia-12-pass-min-days, ia-12-pass-warn-age,
              ia-12-existing-max-days, ia-12-existing-min-days,
              ia-12-no-never-expire, ia-12-shadow-perms, ia-12-gshadow-perms]
@@ -1052,14 +1067,17 @@ requirements:
 
   - id: "03.07.05"
     title: Nonlocal Maintenance
-    disposition: technical
+    disposition: partial
     tasks: tasks/ma.yml
     host_scope: >
       Nonlocal maintenance occurs only over SSH with multi-factor and
       replay-resistant authentication (03.05.03, 03.05.04), sessions terminate
       on completion or idle expiry via ClientAlive and TMOUT, and each session
       is audited from establishment to teardown.
-    residual: Approving and monitoring the activity (statement a) is a process.
+    residual: >
+      Approving and monitoring nonlocal maintenance and diagnostic activity
+      (statement a) is a process; the host records the sessions it would
+      review.
     checks: [ma-05-ssh-session-audit, ma-05-ssh-idle-terminate,
              ma-05-no-telnet-rsh]
 
@@ -1078,13 +1096,19 @@ requirements:
 
   - id: "03.08.02"
     title: Media Access
-    disposition: technical
+    disposition: partial
     tasks: tasks/mp.yml
     host_scope: >
-      Access to CUI on system media is restricted to authorized roles by
+      Access to CUI on digital system media is restricted to a role by
       filesystem enforcement: the CUI path is group-restricted and mode 0770 or
-      tighter, its parent path is not world-traversable, home directories are
-      0700, and default file creation for all users denies group and other.
+      tighter, home directories are 0700, and default file creation for all
+      users denies group and other.
+    residual: >
+      The publication's system media includes non-digital media, which no
+      host control reaches (the reason 03.08.01, 03.08.04 and 03.08.05 are
+      organizational). The group that operationally defines "authorized
+      personnel" is created empty; deciding and maintaining its membership is
+      organizational, and the host cannot say whether it is right.
     checks: [mp-02-cui-path-mode, mp-02-home-perms, mp-02-umask-profile,
              mp-02-no-world-readable-home]
 
@@ -1318,7 +1342,8 @@ requirements:
       zone target is DROP (not default/ACCEPT), no unexpected ports are open,
       and only explicitly added services constitute the exception set.
     checks: [sc-06-zone-target-drop, sc-06-no-unexpected-ports,
-             sc-06-icmp-block, sc-06-listening-allowlist]
+             sc-06-icmp-block, sc-06-listening-allowlist,
+             sc-06-no-trusted-bypass]
 
   - id: "03.13.08"
     title: Transmission and Storage Confidentiality

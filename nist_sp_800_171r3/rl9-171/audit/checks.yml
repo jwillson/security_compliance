@@ -1549,6 +1549,19 @@ checks:
     command: "firewall-cmd --state 2>/dev/null"
     expect_output: "running"
 
+  - id: sc-06-no-trusted-bypass
+    description: Nothing is exempted from the firewall via the trusted zone
+    command: |
+      # The trusted zone accepts everything. The runbook's lockout recovery
+      # puts the operator's address there, which is the right emergency step
+      # and the wrong steady state: rehearsal 3.4 showed it survives a
+      # re-apply and, until this check, nothing reported it.
+      { firewall-cmd --zone=trusted --list-sources;
+        firewall-cmd --zone=trusted --list-interfaces;
+        firewall-cmd --permanent --zone=trusted --list-sources;
+        firewall-cmd --permanent --zone=trusted --list-interfaces; } 2>/dev/null | tr -s ' \n' '\n' | grep .
+    expect_empty: true
+
   - id: sc-06-listening-allowlist
     description: Only authorized services listen on the network
     command: |

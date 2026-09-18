@@ -24,8 +24,9 @@
   ansible.builtin.copy:
     dest: /etc/systemd/system/dnf-automatic.timer.d/nist-override.conf
     content: |
-      # 03.14.01b  Install security updates within {{ odp.patch_window_days }}
-      # days of release. Checking daily leaves ample margin.
+      # 03.14.01b  The organizational ODP patch_sla sets the window
+      # ({{ (odp_organizational | selectattr('id', 'eq', 'patch_sla') | map(attribute='value') | first) }});
+      # checking daily leaves ample margin for any value it takes.
       [Timer]
       OnCalendar=
       OnCalendar=*-*-* 01:00:00

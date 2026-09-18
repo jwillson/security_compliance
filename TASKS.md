@@ -17,10 +17,11 @@ Be honest about the difference — most of what follows exists to close the gap.
 the retrofit host `byo-rl9-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
-- `make validate` — 97 requirements, 328 checks, 29 + 47 ODPs, all consistent
+- `make validate` — 97 requirements, 329 checks, 28 + 47 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
 - `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
-  three report pairs from one run
+  three report pairs from one run (before 4.4; the same hosts now read
+  36 / 33 / 0 / 28 with 329 checks, nothing on them having changed)
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
 - `organizational-requirements.md` renders on the host with all 43 ODP sections
 - `make vm-log` / `build-vm.sh --role log` builds a collector end to end
@@ -36,7 +37,7 @@ the retrofit host `byo-rl9-01`)**
   guest this toolkit did not build, driven from a second control workstation
   (an Ubuntu laptop) with no `.secrets/` at all. `--check --diff` completes on
   the never-applied host, the apply completes, one reboot, and the assessment
-  reports **41 / 23 / 5 / 28, 328 checks, 6 failed** — every failure a
+  reports **34 / 30 / 5 / 28, 329 checks, 6 failed** — every failure a
   documented retrofit limit (2.2). The apply after the reboot settles the
   kernel record and one log file; the apply after that is `changed=0`, and
   so is `--check` on the applied host. Eight defects had to be fixed
@@ -44,10 +45,16 @@ the retrofit host `byo-rl9-01`)**
 - **FIPS retrofits.** The expected "FIPS from first boot" gap did not
   materialize: `fips-mode-setup --enable` plus the reboot the run flags
   passes every 03.13.11 check on a host installed with FIPS off
+- **Every lockout recovery in the runbook is rehearsed** (Phase 3), on the
+  retrofit guest with the serial console scripted. Two procedures worked
+  verbatim, one could not be run as written (a faillock lockout also locks
+  the console), and one left a firewall bypass that nothing reported; the
+  runbook, the role and the assessor were corrected accordingly
 
 **Written but never executed**
 
-- Every lockout recovery procedure in the runbook
+- Nothing, at the level of a procedure. What remains unproven is listed
+  under Phase 6: TLS on the collector and forwarding to a real SIEM.
 
 ---
 
@@ -186,7 +193,8 @@ result below, and each was invisible on a host the kickstart had built.
         is proven.
       * After the reboot FIPS is on, sshd enforces `publickey,password` and
         the operator's own askpass supplies the second factor.
-      * `./verify.sh`: **41 / 23 / 5 / 28, 328 checks, 6 failed**, all six
+      * `./verify.sh`: **34 / 30 / 5 / 28, 329 checks, 6 failed** (41 / 23
+        before the 4.4 re-dispositions), all six
         the retrofit limits in 2.2.
       * `./apply.sh` after the reboot: `changed=2` - `support-status` now
         names the kernel the security updates installed, and 03.14.08
@@ -341,26 +349,63 @@ and running the whole path again.
 
 ## Phase 3 — rehearse the recovery procedures
 
-Every procedure in `docs/RUNBOOK.md#when-you-are-locked-out` is standard
-practice that has **not** been tested against this baseline. The runbook says
-so. Fix that on a throwaway guest, before needing it at 2am.
+Every procedure in `docs/RUNBOOK.md#when-you-are-locked-out` was standard
+practice that had **not** been tested against this baseline. Rehearsed on
+the retrofit guest `byo-rl9-01`, whose serial console is driven by a script
+so each rehearsal is reproducible, and whose pristine and hardened disk
+copies make a failed one cheap.
 
-- [ ] **3.1 Snapshot a guest.** `virsh snapshot-create-as rl9-cui-02 pre-lockout`
-- [ ] **3.2 Trigger a faillock lockout** (3 bad passwords) and recover with
-      `faillock --user <name> --reset` from the console.
-      *Partly answered by accident in 2b.8:* before that fix, one bad password
-      did not lock the account - it broke sudo permanently, which no runbook
-      step covered. With the fix, one bad password is recorded and the next
-      good one works; the full three-strike lockout and the console reset are
-      still unrehearsed.
-- [ ] **3.3 Back MFA out from the console** and confirm you can log in with a
-      key alone, then re-apply to restore it.
-- [ ] **3.4 Lock yourself out with the firewall** and recover via
-      `firewall-cmd --add-source`.
-- [ ] **3.5 Correct anything the runbook got wrong.** A recovery step that
-      does not work is worse than no step.
-- [ ] **3.6 Update the runbook header** — it currently says these are
-      unrehearsed. Once they are, say so instead.
+- [x] **3.1 Snapshot a guest.** `virsh snapshot-create-as` refuses a UEFI
+      guest with raw NVRAM ("internal snapshots ... require QCOW2 nvram
+      format"). Snapshots are file copies instead: shut down, copy the qcow2
+      and the NVRAM file, start; revert is the reverse. The runbook says so
+      now.
+- [x] **3.2 Trigger a faillock lockout** (3 bad passwords) and recover with
+      `faillock --user <name> --reset` from the console. *Rehearsed.* Three
+      bad SSH passwords lock the account; the correct password is then
+      refused over SSH **and at the console**, because the console login
+      runs the same PAM stack. With root locked (03.01.06) and one admin
+      account, the runbook's "reset from the console" is impossible during
+      the lockout: nobody can log in to run it. What worked was the
+      alternative it also listed - the lock expired 15 minutes after the
+      last failure (`unlock_time`), SSH came back, and only then could the
+      tally be listed and reset from the console. The runbook now leads
+      with the wait, and recommends a second, key-only administrative
+      account as the break-glass path for a single-admin host.
+      *Found on the way (2b.8):* before the SELinux fix, the first bad
+      password did not lock anything - it broke sudo permanently.
+- [x] **3.3 Back MFA out from the console** and confirm you can log in with a
+      key alone, then re-apply to restore it. *Rehearsed, runbook command
+      verbatim.* `sshd -T` showed `authenticationmethods publickey`, a
+      key-only login succeeded, `./verify.sh --requirement 03.05.03` reported
+      `ia-03-sshd-authmethods` failing, `./apply.sh --tags 03.05.03` restored
+      it (`changed=2`) and key-only login was refused again. Nothing to
+      correct.
+- [x] **3.4 Lock yourself out with the firewall** and recover via
+      `firewall-cmd --add-source`. *Rehearsed, runbook command verbatim, and
+      it found a gap.* Removing ssh from the public zone locked new
+      connections out (existing SSH sessions survive, which is why the
+      earlier scripted run could still reach the host). The console
+      `--add-source=<cidr> --zone=trusted` restored access at once. But that
+      source exempts the address from the firewall entirely, it survived
+      `./apply.sh --tags 03.13` (`changed=0`), and `./verify.sh --family
+      03.13` reported nothing - the runbook's "verify.sh will report it" was
+      false for this case. Fixed both ways: 03.13.06 now removes any source
+      or interface from the trusted zone on apply, and the new check
+      `sc-06-no-trusted-bypass` (329 checks) reports one that remains.
+      Proven on the host: a planted permanent trusted source is flagged, the
+      tagged re-apply removes it, and the check passes.
+- [x] **3.5 Correct anything the runbook got wrong.** *Done.* The faillock
+      row led with a console reset that cannot be run during the lockout it
+      describes; it now leads with the wait and recommends a second admin
+      account. The firewall row now says what the trusted zone does and how
+      to undo it. Two things no row mentioned: the serial console is buried
+      by `LogDenied=all` within seconds (`sudo dmesg -n 1` first), and
+      `virsh snapshot-create-as` refuses UEFI guests with raw NVRAM (copy the
+      disk and NVRAM instead).
+- [x] **3.6 Update the runbook header.** *Done:* it now says every recovery
+      procedure was rehearsed on a retrofit guest, and where the rehearsal
+      changed the advice, the step says what happened.
 
 ---
 
@@ -401,10 +446,11 @@ No amount of testing substitutes for these. Each is a live commitment.
       * Four `host_scope` texts cite "the ODP frequency"/"the ODP names" for
         ODPs that do not exist (03.03.01, 03.11.02, 03.14.02, and see 4.4).
 
-      *Contractual — needs legal/contracts review, do not ship unexamined:*
-      * `ir_authorities` names CISA. For the DoD CUI population this targets,
-        DFARS 252.204-7012 requires reporting to DoD via DIBNet within 72
-        hours. No ODP carries that clock.
+      *Contractual — decided 2026-09-17:*
+      * `ir_authorities` names CISA. The intended population is non-DoD CUI,
+        so DFARS 252.204-7012 (DoD via DIBNet within 72 hours) does not
+        apply; the ODP's rationale now says so, so a DoD contractor adopting
+        the overlay knows it is the value to change.
 
       *Baseline coherence:*
       * `config_settings` names "DISA RHEL 9 STIG + CIS L2 + this overlay"
@@ -435,30 +481,47 @@ No amount of testing substitutes for these. Each is a live commitment.
       prohibited functions/ports/services list. Both nested `[Selection:]`
       choices (03.01.08b, 03.01.10a) are unrecorded.
 
-- [ ] **4.1c Add the two validator guards that would have caught most of
-      this.** Neither costs judgement, and both will red-light `make validate`
-      until the defects above are resolved — which is the point, so sequence
-      them with the fixes:
-      * every key in `odp:` must be referenced by at least one check
-        (catches `patch_window_days`);
-      * no `technical` entry may carry a `residual` (catches all six in 4.4).
+- [x] **4.1c Add the two validator guards that would have caught most of
+      this.** *Done.* Both are in `tools/validate.py` and both red-lit it
+      until their defects were fixed in the same change:
+      * every key in `odp:` must be referenced by at least one check.
+        `patch_window_days` was the only offender and is gone: the dnf timer
+        is daily whatever the value, so the window is policy, which
+        `odp_organizational.patch_sla` already records; the two comments that
+        cited the dead value now cite that one. 28 machine ODPs remain.
+      * no `technical` entry may carry a `residual`. All six in 4.4 were
+        re-dispositioned, so the guard passes.
       Longer term: give each ODP an `answers:` field naming the requirement
       *and statement letter* (`03.14.01b`), then assert every assignment is
       answered exactly once.
 
-- [ ] **4.2 Decide the ClamAV / EPEL trade-off (03.14.02 vs 03.17.03).**
-      Signature scanning needs EPEL, which sits outside the authorized
-      repository set. Currently off, which is why the VM reports 43 satisfied
-      rather than 44. Either accept the gap and record it, or set
-      `nist_clamav_enabled` + `nist_enable_epel` and justify the repository.
+- [x] **4.2 Decide the ClamAV / EPEL trade-off (03.14.02 vs 03.17.03).**
+      *Decided 2026-09-17: ClamAV stays off.* A third-party repository on a
+      CUI host is a larger supply-chain exposure (03.17.03) than the
+      signature-scanning gap it would close, and the gap is recorded rather
+      than hidden: 03.14.02 is partial with EPEL named in its residual, and
+      `malicious-code.conf` on the host says signature scanning is not
+      installed. Reversible per host with `nist_clamav_enabled` and
+      `nist_enable_epel`, which then needs its own 03.17.03 justification.
 
-- [ ] **4.3 Profile fapolicyd against a real workload.** Deny-by-default
-      execution will block unprofiled applications. Run with
-      `nist_fapolicyd_permissive: true`, collect, write rules, re-enforce.
+- [x] **4.3 Profile fapolicyd against a real workload.** *Decided
+      2026-09-17: the shipped default stays enforcing.* A baseline that ships
+      permissive would report 03.04.08 as satisfied on the strength of a log
+      file. Profiling is per workload, not per toolkit: the runbook's "Other
+      things that will bite you" already gives the sequence (permissive,
+      collect, write rules into `/etc/fapolicyd/rules.d/`, re-enforce). On
+      the BYO guest, enforcing mode has blocked nothing the toolkit itself
+      runs across four applies, three reboots and the assessments.
 
-- [ ] **4.4 Six requirements report PASS while conceding they are not fully
-      satisfied.** Reviewed in depth; decision outstanding because changing a
-      disposition changes what the tool claims about compliance.
+- [x] **4.4 Six requirements report PASS while conceding they are not fully
+      satisfied.** *Resolved: all six, plus 03.08.02, are `partial`.* The
+      overlay now reads 37 technical, 32 partial, 28 organizational. Each
+      residual names the statements the host does not cover, checked against
+      the publication text, and the three false host_scope claims below are
+      struck. Nothing on any host changed; what changed is that the tool no
+      longer claims seven PASSes it could not back, so every assessment
+      number quoted before this point is seven satisfied fewer and seven
+      partial more. The record of the analysis follows.
 
       `03.01.05`, `03.01.10`, `03.01.12`, `03.05.05`, `03.05.12` and
       `03.07.05` are classified `technical` *and* carry a `residual` field.
@@ -493,15 +556,13 @@ No amount of testing substitutes for these. Each is a live commitment.
       * `03.08.02`: "its parent path is not world-traversable" — asserted by
         no check.
 
-- [ ] **4.4b Make `validate.py` reject `residual` on a `technical` entry.**
-      It already rejects `partial` without a `residual`; the converse is the
-      same error the other way round and would have caught all six above
-      automatically, at no judgement cost.
+- [x] **4.4b Make `validate.py` reject `residual` on a `technical` entry.**
+      *Done with 4.1c.*
 
-- [ ] **4.5 Decide what happens to `nist_sp_800_171r3/web/`.** An nginx TLS
-      snippet, orphaned from the tool, which hardens hosts rather than web
-      tiers. Its requirement IDs are now correct. Either fold it into scope
-      properly, or delete it and stop implying it is maintained.
+- [x] **4.5 Decide what happens to `nist_sp_800_171r3/web/`.** *Deleted
+      2026-09-17.* The tool hardens hosts, not web tiers; the snippet implied
+      coverage the roles and the assessor do not have. It remains in git
+      history.
 
 ---
 
@@ -543,10 +604,9 @@ No amount of testing substitutes for these. Each is a live commitment.
 
 - [ ] **6.4 Open POA&M items for every remaining gap.**
       `sudo nist-generate-poam` turns failed checks into a CSV. The 28
-      organizational requirements and 25 partial residual obligations are not
-      in it — they come from `organizational-requirements.md`. The six
-      residuals on `technical` requirements (4.4) appear in neither, which is
-      part of why 4.4 matters.
+      organizational requirements and 32 partial residual obligations are not
+      in it — they come from `organizational-requirements.md`, which since
+      4.4 includes the seven that used to hide behind a PASS.
 
 - [ ] **6.5 Re-read the caveat that matters.** Passing every check means the
       host-enforceable controls are in place. It does not mean the system is

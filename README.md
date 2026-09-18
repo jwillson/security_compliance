@@ -17,22 +17,21 @@ cp inventory/hosts.yml.example inventory/hosts.yml   # your Rocky 9 host
 ./apply.sh && ./verify.sh                            # harden, then assess
 ```
 
-It classifies 44 requirements as host-enforceable, 25 as partially enforceable
+It classifies 37 requirements as host-enforceable, 32 as partially enforceable
 with the residual obligation named, and 28 as organizational with no host
-control at all — rather than claiming 100% on the technical subset. A real
-assessment of the reference lab reports **43 satisfied, 26 partial, 28
-organizational**: 03.14.02 falls to partial because ClamAV signature scanning
-needs EPEL, which is outside the authorized repository set.
+control at all — rather than claiming 100% on the technical subset. On the
+reference lab every host check passes; 03.14.02 is among the partial ones
+because ClamAV signature scanning needs EPEL, which is outside the
+authorized repository set.
 
 Verification reads effective system state (`sshd -T`, `auditctl -l`,
-`sysctl -n`), not the files the role wrote. Six requirements classified
-`technical` do still report PASS while carrying a residual obligation — an
-open defect, see [TASKS.md](TASKS.md) 4.4.
+`sysctl -n`), not the files the role wrote, and `make validate` refuses an
+overlay that lets a requirement with a residual obligation report PASS.
 
 See its [README](nist_sp_800_171r3/rl9-171/README.md) for the full design.
 
 The same overlay applied to a stock Rocky 9 cloud image it did not build
-reports **41 satisfied, 23 partial, 5 not satisfied, 28 organizational**: the
+reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational**: the
 five are the separate filesystems and LUKS volumes only an install can
 create, and the role records them rather than hiding them.
 

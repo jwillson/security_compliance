@@ -59,22 +59,23 @@ organizational ones as `NOT_APPLICABLE(host)` rather than `PASS`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **technical** | 44 | The host enforces it. A failing check is a real finding. Six (`03.01.05`, `03.01.10`, `03.01.12`, `03.05.05`, `03.05.12`, `03.07.05`) also carry a `residual` obligation yet still report PASS — an open defect, see [TASKS.md](../../TASKS.md) 4.4. |
-| **partial** | 25 | The host enforces part of it; `residual` names what the organization still owes. |
+| **technical** | 37 | The host enforces it. A failing check is a real finding. `make validate` refuses a technical entry that carries a `residual`. |
+| **partial** | 32 | The host enforces part of it; `residual` names what the organization still owes, and the assessor reports it as partial even when every check passes. |
 | **organizational** | 28 | Policy, process, personnel, physical. No host setting satisfies it. |
 
-Assessment result for each host in the reference lab — the CUI host and the collector alike:
+Assessment result for a host on which every check passes, such as the
+kickstart-built reference lab:
 
 ```
- 43 satisfied            (technical requirements fully enforced and verified)
- 26 partially satisfied  (host controls verified; organizational evidence still required)
+ 36 satisfied            (technical requirements fully enforced and verified)
+ 33 partially satisfied  (host controls verified; organizational evidence still required)
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 327 checks run, 0 failed
+ 97 requirements assessed, 329 checks run, 0 failed
 ```
 
-43 rather than 44 satisfied, because 03.14.02 (Malicious Code Protection)
+36 rather than 37 satisfied, because 03.14.02 (Malicious Code Protection)
 reports *partially satisfied*: fapolicyd prevention is verified, but ClamAV
 signature scanning needs EPEL, which is outside the authorized repository set
 (03.17.03). That trade-off is opt-in via `nist_clamav_enabled`, not decided
@@ -108,7 +109,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-328 checks cover the 69 enforceable requirements. Each declares exactly one
+329 checks cover the 69 enforceable requirements. Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -192,8 +193,9 @@ when the environment says nothing.
 guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
 an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
-reports **41 satisfied, 23 partial, 5 not satisfied, 28 organizational** —
-328 checks, 6 failed — against 43 / 26 / 0 / 28 on the kickstart-built lab.
+reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
+329 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
+check passes.
 Every failure is an install-time limit the role records rather than hides:
 
 | Requirement | Check | Why a retrofit cannot satisfy it |
@@ -375,7 +377,7 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               328 check definitions
+│   └── checks.yml               329 check definitions
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls
@@ -440,5 +442,5 @@ automatically on first `./apply.sh`.
   to log instead while profiling.
 - Passing every check means the host-enforceable controls are in place. It does
   **not** mean the system is compliant or authorized — 28 requirements are
-  purely organizational and 31 more carry residual obligations (25 partial,
-  plus the six technical ones that still report PASS).
+  purely organizational and 32 more are partial, each with its residual
+  obligation named in `organizational-requirements.md`.
