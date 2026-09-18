@@ -76,6 +76,10 @@ kickstart-built reference lab:
  97 requirements assessed, 334 checks run, 0 failed
 ```
 
+That is the CUI host. The collector reads 35 / 34 / 0 / 28: it forwards
+nowhere, so `sc-08-forward-encrypted` reports MANUAL there and 03.13.08
+counts as partial - the single-node case, reported as such.
+
 36 rather than 37 satisfied, because 03.14.02 (Malicious Code Protection)
 reports *partially satisfied*: fapolicyd prevention is verified, but ClamAV
 signature scanning needs EPEL, which is outside the authorized repository set

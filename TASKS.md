@@ -19,9 +19,9 @@ the retrofit pair `byo-rl9-01` / `byo-log-01`)**
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
 - `make validate` — 97 requirements, 334 checks, 32 + 62 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
-- `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
-  three report pairs from one run (before 4.4; the same hosts now read
-  36 / 33 / 0 / 28 with 334 checks, nothing on them having changed)
+- `./verify.sh` — the rebuilt kickstart lab (5.1) with the final overlay:
+  `rl9-cui-01` 36 / 33 / 0 / 28, `rl9-log-01` 35 / 34 / 0 / 28, 334 checks,
+  0 failed on both, TLS forwarding passing, `--check` at `changed=0`
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
 - `organizational-requirements.md` renders on the host with all 43 ODP sections
 - `make vm-log` / `build-vm.sh --role log` builds a collector end to end
@@ -582,14 +582,24 @@ No amount of testing substitutes for these. Each is a live commitment.
 
 ## Phase 5 — cleanup and housekeeping
 
-- [ ] **5.1 Rotate `.secrets/`.** Free at the next rebuild, disruptive at any
-      other time — it locks you out of every guest built with the old key.
-      ```bash
-      make destroy && rm -rf .secrets && make secrets && make vm
-      ```
+- [x] **5.1 Rotate `.secrets/`.** *Done 2026-09-18, and it doubled as the
+      kickstart-path proof of everything since Phase 2.* On the lab
+      workstation: the three guests destroyed, `.secrets/` rotated, the CUI
+      host and the collector rebuilt from the kickstart (21 and 20 minutes),
+      `make pki`, apply, reboot, apply again. With the final overlay:
+      `rl9-cui-01` **36 / 33 / 0 / 28**, `rl9-log-01` **35 / 34 / 0 / 28**,
+      334 checks, 0 failed on both, TLS forwarding passing on both sides,
+      `--check` at `changed=0` on both. The collector's extra partial is
+      03.13.08: it forwards nowhere, so `sc-08-forward-encrypted` is MANUAL
+      there - the single-node case, reported as such. The rebuild also caught
+      a broken `make pki` recipe, and the forwarder did exactly what it
+      should without certificates: recorded the gap and failed both
+      forwarding checks rather than sending in the clear.
 
-- [ ] **5.2 Delete the `r3-hardening-middleware` branch.** `main` contains
-      everything; the branch is redundant.
+- [x] **5.2 Delete the `r3-hardening-middleware` branch.** Already gone: no
+      such branch exists locally or on the remote (checked 2026-09-18, after
+      the history rewrite that put the owner's GitHub identity on every
+      commit).
 
 - [x] **5.3 `archive/` removed.** The reconciliation had served its purpose:
       `r3/`, `os/` and `stig/` are gone, along with `tools/legacy-gap.py` and
