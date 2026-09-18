@@ -64,8 +64,9 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
   requirement tag is selectable.
 - A role that opens a listening port declares it in
   `{{ nist_conf_dir }}/authorized-ports.d/<NN>-<role>`. The port checks read
-  that directory rather than hardcoding a port, so 514 is authorized on a
-  collector and still a finding on a plain CUI host. Widening a check to go
+  that directory rather than hardcoding a port, so 6514 is authorized on a
+  collector and still a finding on a plain CUI host, and a port nothing
+  declares is closed on apply. Widening a check to go
   green is the wrong fix.
 - Python 3, stdlib first. Ansible tasks use FQCN (`ansible.builtin.*`,
   `ansible.posix.*`, `community.general.*`) and carry their requirement ID as

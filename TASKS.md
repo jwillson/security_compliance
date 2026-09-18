@@ -14,14 +14,14 @@ system owner can make.
 Be honest about the difference — most of what follows exists to close the gap.
 
 **Proven against running hosts (`rl9-cui-01`, `rl9-cui-02`, `rl9-log-01`, and
-the retrofit host `byo-rl9-01`)**
+the retrofit pair `byo-rl9-01` / `byo-log-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
-- `make validate` — 97 requirements, 329 checks, 28 + 47 ODPs, all consistent
+- `make validate` — 97 requirements, 330 checks, 28 + 47 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
 - `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
   three report pairs from one run (before 4.4; the same hosts now read
-  36 / 33 / 0 / 28 with 329 checks, nothing on them having changed)
+  36 / 33 / 0 / 28 with 330 checks, nothing on them having changed)
 - The seven timers are active and producing output in `/var/log/nist-800-171/`
 - `organizational-requirements.md` renders on the host with all 43 ODP sections
 - `make vm-log` / `build-vm.sh --role log` builds a collector end to end
@@ -37,7 +37,7 @@ the retrofit host `byo-rl9-01`)**
   guest this toolkit did not build, driven from a second control workstation
   (an Ubuntu laptop) with no `.secrets/` at all. `--check --diff` completes on
   the never-applied host, the apply completes, one reboot, and the assessment
-  reports **34 / 30 / 5 / 28, 329 checks, 6 failed** — every failure a
+  reports **34 / 30 / 5 / 28, 330 checks, 6 failed** — every failure a
   documented retrofit limit (2.2). The apply after the reboot settles the
   kernel record and one log file; the apply after that is `changed=0`, and
   so is `--check` on the applied host. Eight defects had to be fixed
@@ -53,8 +53,9 @@ the retrofit host `byo-rl9-01`)**
 
 **Written but never executed**
 
-- Nothing, at the level of a procedure. What remains unproven is listed
-  under Phase 6: TLS on the collector and forwarding to a real SIEM.
+- Nothing, at the level of a procedure. Forwarding to a real SIEM (6.2)
+  needs the SIEM; the TLS path it would use is proven between the two
+  retrofit guests.
 
 ---
 
@@ -193,7 +194,7 @@ result below, and each was invisible on a host the kickstart had built.
         is proven.
       * After the reboot FIPS is on, sshd enforces `publickey,password` and
         the operator's own askpass supplies the second factor.
-      * `./verify.sh`: **34 / 30 / 5 / 28, 329 checks, 6 failed** (41 / 23
+      * `./verify.sh`: **34 / 30 / 5 / 28, 330 checks, 6 failed** (41 / 23
         before the 4.4 re-dispositions), all six
         the retrofit limits in 2.2.
       * `./apply.sh` after the reboot: `changed=2` - `support-status` now
@@ -392,7 +393,7 @@ copies make a failed one cheap.
       03.13` reported nothing - the runbook's "verify.sh will report it" was
       false for this case. Fixed both ways: 03.13.06 now removes any source
       or interface from the trusted zone on apply, and the new check
-      `sc-06-no-trusted-bypass` (329 checks) reports one that remains.
+      `sc-06-no-trusted-bypass` (330 checks) reports one that remains.
       Proven on the host: a planted permanent trusted source is flagged, the
       tagged re-apply removes it, and the check passes.
 - [x] **3.5 Correct anything the runbook got wrong.** *Done.* The faillock
@@ -590,12 +591,31 @@ No amount of testing substitutes for these. Each is a live commitment.
 
 ## Phase 6 — before any real CUI host
 
-- [ ] **6.1 Put TLS on the collector.** 514/tcp plain is acceptable only
-      because the lab network is isolated. Real use needs 6514 with
-      certificates; `roles/nist_log_collector` does not provision them.
+- [x] **6.1 Put TLS on the collector.** *Done and proven on a second retrofit
+      guest, `byo-log-01`, built like the first.* Forwarding is now TLS on
+      6514 with mutual x509 authentication (rsyslog's ossl driver, so FIPS
+      applies), the default for both roles. Certificates come from
+      `NIST_PKI_DIR` or `.secrets/pki`; `tools/lab-pki.sh` (`make pki`) mints
+      a lab CA and a certificate per inventory host, and a real deployment
+      supplies its own in the same layout. A forwarder without a certificate
+      forwards nothing, records `tls-certificate-missing`, and the assessor
+      reports it: `au-05-forward-established` treats that as a finding, and
+      the new `sc-08-forward-encrypted` (330 checks) reports plain
+      forwarding under 03.13.08. `nist_log_tls: false` is the explicit
+      opt-out. Sequence proven on the pair: plain 514 first
+      (`au-05-forward-established` and `au-05-collector-receiving` PASS, as
+      in the kickstart lab), then the switch to TLS - "TLS Connection
+      initiated" in the forwarder's journal, the established 6514 socket at
+      both ends, a probe record in the collector's directory. Moving the
+      port left 514 open in the collector's firewall; 03.13.06 now closes
+      any port no `authorized-ports.d` fragment declares.
 
 - [ ] **6.2 Point forwarding at the real SIEM**, not a lab collector, and
-      confirm `au-05-forward-established` still passes against it.
+      confirm `au-05-forward-established` still passes against it. Set
+      `nist_log_collector: HOST:PORT` and `nist_log_collector_name` to the
+      name the SIEM's certificate carries, and put its CA in `NIST_PKI_DIR`
+      as `ca.crt` alongside a certificate the SIEM will accept for each
+      host. Needs the SIEM.
 
 - [ ] **6.3 Generate and review the SSP.** `sudo nist-generate-ssp`, then read
       `/etc/nist-800-171/system-security-plan.md`. It is generated from live

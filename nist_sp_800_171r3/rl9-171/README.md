@@ -43,6 +43,7 @@ make iso        # download and checksum the Rocky 9 boot ISO
 make vm         # unattended install of the hardened reference VM
 make vm-log     # log collector, so record forwarding can be verified
                 # (`make all` builds the CUI host only)
+make pki        # lab CA + a certificate per host, for TLS forwarding
 make apply      # apply the overlay via Ansible
 make verify     # assess all 97 requirements, write JSON + HTML
 make report     # open the newest HTML report
@@ -72,7 +73,7 @@ kickstart-built reference lab:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 329 checks run, 0 failed
+ 97 requirements assessed, 330 checks run, 0 failed
 ```
 
 36 rather than 37 satisfied, because 03.14.02 (Malicious Code Protection)
@@ -109,7 +110,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-329 checks cover the 69 enforceable requirements. Each declares exactly one
+330 checks cover the 69 enforceable requirements. Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -194,7 +195,7 @@ guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
 an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
 reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
-329 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
+330 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
 check passes.
 Every failure is an install-time limit the role records rather than hides:
 
@@ -274,10 +275,24 @@ make vm-log        # or ./vm/build-vm.sh --role log
 
 The collector is a CUI host too — it stores other systems' audit records — so
 the same overlay hardens it, and `roles/nist_log_collector` adds only the
-receiving half: rsyslog on 514/tcp, one directory per sending host at mode
-0700, and rotation at the same `audit_retention_days` the records had at
-origin. `tools/inventory.py` owns `inventory/hosts.yml` and points the
-forwarders at the collector; adding or removing a log host rewires them.
+receiving half: rsyslog on 6514/tcp under TLS with mutual x509
+authentication (03.13.08), one directory per sending host at mode 0700, and
+rotation at the same `audit_retention_days` the records had at origin.
+`tools/inventory.py` owns `inventory/hosts.yml` and points the forwarders at
+the collector; adding or removing a log host rewires them.
+
+Every host needs `ca.crt` and its own `HOST.crt`/`HOST.key` in
+`NIST_PKI_DIR` (default `.secrets/pki`), where `HOST` is its inventory name:
+`make pki` mints a lab authority for the inventory; a real deployment drops
+its own PKI's files there. A forwarder without a certificate forwards
+nothing, records `tls-certificate-missing`, and is reported by the assessor;
+nothing falls back to plaintext. `nist_log_tls: false` is the explicit
+opt-out (514 plain), and `sc-08-forward-encrypted` reports it.
+
+Proven on the retrofit pair `byo-rl9-01` / `byo-log-01`: the forwarder logs
+"TLS Connection initiated", both ends hold the established 6514 socket, a
+probe record lands in the collector's per-host directory, and the checks
+below pass on the side where each is meaningful.
 
 Two checks then assert the path rather than the configuration:
 
@@ -377,7 +392,7 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               329 check definitions
+│   └── checks.yml               330 check definitions
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls

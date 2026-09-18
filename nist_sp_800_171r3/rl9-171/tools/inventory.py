@@ -81,9 +81,10 @@ def rewire(data: dict) -> None:
 
     for name, host in cui.items():
         if collector and name not in logs:
-            # 514/tcp, plain. The lab network is isolated; on a real
-            # deployment use 6514 with TLS and set this by hand.
-            host["nist_log_collector"] = f"{collector}:514"
+            # 6514/tcp over TLS with mutual x509 authentication (the roles'
+            # default, nist_log_tls). `make pki` mints the lab certificates;
+            # set nist_log_tls: false in the inventory for plain 514.
+            host["nist_log_collector"] = f"{collector}:6514"
         else:
             host.pop("nist_log_collector", None)
 

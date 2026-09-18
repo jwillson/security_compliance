@@ -5,7 +5,7 @@ PDF    := NIST.SP.800-171r3.pdf
 ISO_URL := https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
-.PHONY: help catalog secrets iso vm vm-log apply verify report clean destroy validate all
+.PHONY: help catalog secrets pki iso vm vm-log apply verify report clean destroy validate all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
@@ -14,6 +14,7 @@ help:
 	@echo "  make catalog     extract requirements from the PDF"
 	@echo "  make validate    check the catalog, overlay and checks agree"
 	@echo "  make secrets     generate SSH key and credentials"
+	@echo "  make pki         lab CA + a certificate per inventory host (TLS forwarding)"
 	@echo "  make iso         download and verify the Rocky 9 boot ISO"
 	@echo "  make vm          build the hardened reference VM (unattended)"
 	@echo "  make vm-log      build the log collector, so 03.03.05c can be verified"
@@ -34,6 +35,16 @@ validate: catalog/requirements.json
 	@python3 tools/validate.py
 
 secrets: .secrets/id_rsa
+
+# Audit records are forwarded over TLS (03.03.05c under 03.13.08), which needs
+# a CA and a certificate per host. This mints a LAB authority for the hosts in
+# inventory/hosts.yml; a real deployment drops its own ca.crt and HOST.crt/.key
+# into NIST_PKI_DIR instead. Re-run after adding a host; existing ones are kept.
+pki:
+	@[ -f inventory/hosts.yml ] || { echo "no inventory/hosts.yml"; exit 1; }
+	@./tools/lab-pki.sh $$(ansible-inventory --list 2>/dev/null | python3 -c \
+	  'import json,sys; d=json.load(sys.stdin); hv=d["_meta"]["hostvars"]; \
+	   print(" ".join(f"{h}={hv[h][\"ansible_host\"]}" for h in d["cui_hosts"]["hosts"]))')
 
 .secrets/id_rsa:
 	@mkdir -p .secrets && chmod 700 .secrets

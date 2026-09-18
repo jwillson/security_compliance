@@ -1,8 +1,25 @@
 # 03.03.05c  Receive audit records forwarded by the CUI hosts.
 # Managed by Ansible (roles/nist_log_collector); edits are overwritten.
 
+{% if nist_col_tls_ready %}
+# 03.13.08  TLS with mutual x509 authentication. A forwarder is accepted only
+# if it presents a certificate issued by the CA whose name is on the list
+# below - the cui_hosts of the inventory this was applied from.
+global(DefaultNetstreamDriver="ossl"
+       DefaultNetstreamDriverCAFile="/etc/pki/rsyslog/ca.crt"
+       DefaultNetstreamDriverCertFile="/etc/pki/rsyslog/host.crt"
+       DefaultNetstreamDriverKeyFile="/etc/pki/rsyslog/host.key")
+module(load="imtcp"
+       MaxSessions="200"
+       StreamDriver.Name="ossl"
+       StreamDriver.Mode="1"
+       StreamDriver.AuthMode="x509/name"
+       PermittedPeer=[{{ nist_col_peers | map('to_json') | join(', ') }}])
+{% else %}
+# Plaintext: nist_log_tls is false. Acceptable only on an isolated network.
 module(load="imtcp"
        MaxSessions="200")
+{% endif %}
 input(type="imtcp" port="{{ nist_collector_port }}")
 
 # One directory per sending host, so records stay attributable to the system

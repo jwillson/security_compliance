@@ -176,38 +176,148 @@
   when: not (ansible_check_mode and (nist_audit_review_units | default({})) is changed)
   tags: ["03.03.05", "03.12.03"]
 
+# Forwarding runs over TLS with mutual x509 authentication (03.13.08) unless
+# nist_log_tls is false. The certificates are read from the control
+# workstation (nist_pki_dir) and installed on the host; if they are missing,
+# nothing is forwarded and the status file says so, so the assessor reports a
+# host that should forward and does not - it never falls back to plaintext.
+- name: "03.03.05 | Determine how records will be forwarded"
+  ansible.builtin.set_fact:
+    nist_fwd_host: "{{ nist_log_collector.split(':')[0] }}"
+    nist_fwd_port: "{{ nist_log_collector.split(':')[1] if ':' in nist_log_collector else (6514 if nist_log_tls else 514) }}"
+    nist_fwd_ca:   "{{ lookup('file', nist_pki_dir + '/ca.crt', errors='ignore') or '' }}"
+    nist_fwd_cert: "{{ lookup('file', nist_pki_dir + '/' + inventory_hostname + '.crt', errors='ignore') or '' }}"
+    nist_fwd_key:  "{{ lookup('file', nist_pki_dir + '/' + inventory_hostname + '.key', errors='ignore') or '' }}"
+  no_log: true
+  when: nist_log_collector | length > 0
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Note whether TLS forwarding can be configured"
+  ansible.builtin.set_fact:
+    nist_fwd_tls_ready: >-
+      {{ nist_log_tls and nist_fwd_ca | length > 0
+         and nist_fwd_cert | length > 0 and nist_fwd_key | length > 0 }}
+  when: nist_log_collector | length > 0
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Warn that records are not forwarded for lack of certificates"
+  ansible.builtin.debug:
+    msg: >-
+      nist_log_tls is true but {{ nist_pki_dir }} does not hold ca.crt,
+      {{ inventory_hostname }}.crt and {{ inventory_hostname }}.key, so records
+      are NOT forwarded to {{ nist_fwd_host }}. Supply them (make pki for the
+      lab, your PKI otherwise) and re-apply. The assessor reports this.
+  when: nist_log_collector | length > 0 and nist_log_tls and not nist_fwd_tls_ready
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Install the rsyslog TLS driver"
+  ansible.builtin.dnf:
+    name: rsyslog-openssl
+    state: present
+  when: nist_log_collector | length > 0 and nist_fwd_tls_ready | default(false)
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Ensure the rsyslog certificate directory exists"
+  ansible.builtin.file:
+    path: /etc/pki/rsyslog
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: nist_log_collector | length > 0 and nist_fwd_tls_ready | default(false)
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Install the forwarding certificates"
+  ansible.builtin.copy:
+    content: "{{ item.content }}\n"
+    dest: "/etc/pki/rsyslog/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: ca.crt,   content: "{{ nist_fwd_ca | default('') }}",   mode: "0644" }
+    - { name: host.crt, content: "{{ nist_fwd_cert | default('') }}", mode: "0644" }
+    - { name: host.key, content: "{{ nist_fwd_key | default('') }}",  mode: "0600" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: nist_log_collector | length > 0 and nist_fwd_tls_ready | default(false)
+  notify: restart rsyslog
+  tags: ["03.03.05", "03.13.08"]
+
 - name: "03.03.05 | Forward audit records to the correlation collector"
   ansible.builtin.copy:
     dest: /etc/rsyslog.d/90-nist-forward.conf
     content: |
       # 03.03.05c  Correlate audit records across repositories.
       # Records are queued on disk so a collector outage does not lose them.
+      {% if nist_fwd_tls_ready %}
+      # 03.13.08  In transit under TLS with mutual x509 authentication: the
+      # collector must present a certificate for "{{ nist_log_collector_name }}"
+      # issued by the CA, and it verifies this host's certificate the same way.
+      global(DefaultNetstreamDriver="ossl"
+             DefaultNetstreamDriverCAFile="/etc/pki/rsyslog/ca.crt"
+             DefaultNetstreamDriverCertFile="/etc/pki/rsyslog/host.crt"
+             DefaultNetstreamDriverKeyFile="/etc/pki/rsyslog/host.key")
+      action(type="omfwd" target="{{ nist_fwd_host }}" port="{{ nist_fwd_port }}" protocol="tcp"
+             StreamDriver="ossl" StreamDriverMode="1"
+             StreamDriverAuthMode="x509/name"
+             StreamDriverPermittedPeers="{{ nist_log_collector_name }}"
+             queue.type="LinkedList" queue.filename="nistfwd"
+             queue.saveOnShutdown="on" action.resumeRetryCount="-1")
+      {% else %}
+      # Plaintext: nist_log_tls is false. Acceptable only on an isolated
+      # network; the assessor reports it under 03.13.08.
       $ActionQueueType LinkedList
       $ActionQueueFileName nistfwd
       $ActionResumeRetryCount -1
       $ActionQueueSaveOnShutdown on
-      *.* @@{{ nist_log_collector }}
+      *.* @@{{ nist_fwd_host }}:{{ nist_fwd_port }}
+      {% endif %}
     owner: root
     group: root
     mode: "0600"
-  when: nist_log_collector | length > 0
+  when: nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
   notify: restart rsyslog
-  tags: ["03.03.05"]
+  tags: ["03.03.05", "03.13.08"]
 
-- name: "03.03.05 | Record that no collector is configured"
+- name: "03.03.05 | Remove a forwarding rule that can no longer be honoured"
+  # A collector is named but TLS is required and the certificates are absent:
+  # a stale rule from an earlier run must not keep sending in the clear.
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/90-nist-forward.conf
+    state: absent
+  when: nist_log_collector | length == 0 or (nist_log_tls and not nist_fwd_tls_ready | default(false))
+  notify: restart rsyslog
+  tags: ["03.03.05", "03.13.08"]
+
+- name: "03.03.05 | Record the forwarding status"
+  # Read by the assessor (au-05-forward-established, sc-08-forward-encrypted)
+  # and by the SSP generator.
   ansible.builtin.copy:
     dest: "{{ nist_conf_dir }}/log-forwarding-status"
     content: |
-      # 03.03.05c Audit record correlation
-      # No collector is configured (nist_log_collector is empty), so records are
-      # retained locally only. Set nist_log_collector to the collector address
-      # to enable forwarding. The auditor reports this as a deviation.
+      # 03.03.05c Audit record correlation - forwarding side.
+      #   local-only               no collector is configured (single node)
+      #   tls-certificate-missing  a collector is configured, TLS is required,
+      #                            and this host has no certificate: nothing
+      #                            is forwarded. A deviation, not a fallback.
+      #   forwarding               records go to the collector below
+      {% if nist_log_collector | length == 0 %}
       status=local-only
+      {% elif nist_log_tls and not nist_fwd_tls_ready %}
+      status=tls-certificate-missing
+      collector={{ nist_fwd_host }}
+      {% else %}
+      status=forwarding
+      collector={{ nist_fwd_host }}
+      port={{ nist_fwd_port }}
+      transport={{ 'tls' if nist_fwd_tls_ready else 'plain' }}
+      {% endif %}
     owner: root
     group: root
     mode: "0644"
-  when: nist_log_collector | length == 0
-  tags: ["03.03.05"]
+  tags: ["03.03.05", "03.13.08"]
 
 # ===========================================================================
 # 03.03.07 Time Stamps

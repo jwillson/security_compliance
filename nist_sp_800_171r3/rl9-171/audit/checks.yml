@@ -542,8 +542,10 @@ checks:
 
   - id: au-05-rsyslog-forwarding
     description: Records are forwarded for cross-repository correlation
-    command: "grep -rhE '^\\s*\\*\\.\\*\\s+@' /etc/rsyslog.d/ /etc/rsyslog.conf 2>/dev/null | head -1"
-    expect_match: "@"
+    # Anchored to the line start: the stock rsyslog.conf ships a commented
+    # `#action(type="omfwd"` example that must not count.
+    command: "grep -rhE '^\\s*(\\*\\.\\*\\s+@|action\\(type=\"omfwd\")' /etc/rsyslog.d/ /etc/rsyslog.conf 2>/dev/null | head -1"
+    expect_match: "@|omfwd"
     manual_if_absent: true
 
   - id: au-05-forward-established
@@ -552,20 +554,23 @@ checks:
       # The rule above only proves a line was written. rsyslog queues to disk
       # when the collector is unreachable, so a host can look configured and
       # be forwarding nothing. Read the socket instead.
-      rule=$(grep -rhoE '^[[:space:]]*\*\.\*[[:space:]]+@@?[^[:space:]]+' \
+      # A collector that is configured but cannot be used (TLS required, no
+      # certificate) is a deviation, not the single-node case.
+      status=$(sed -n 's/^status=//p' /etc/nist-800-171/log-forwarding-status 2>/dev/null)
+      [ "$status" = tls-certificate-missing ] && { echo "collector configured, no certificate"; exit 0; }
+      conf=$(grep -rlE '^[[:space:]]*(\*\.\*[[:space:]]+@|action\(type="omfwd")' \
                /etc/rsyslog.d/ /etc/rsyslog.conf 2>/dev/null | head -1)
       # No collector configured is not a failure of this host - it is the
       # single-node case. Exit non-zero so manual_if_absent reports MANUAL.
-      [ -n "$rule" ] || { echo "no collector configured"; exit 1; }
-      target=${rule##*@}
-      case "$target" in
-        *:*) port=${target##*:} ;;
-        *)   port=514 ;;
-      esac
+      [ -n "$conf" ] || { echo "no collector configured"; exit 1; }
+      # Either syntax: action(... port="6514") or the legacy *.* @@host:port.
+      port=$(grep -oE 'port="[0-9]+"' "$conf" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+      [ -n "$port" ] || port=$(grep -oE '@@?[^[:space:]]+' "$conf" | head -1 | grep -oE ':[0-9]+$' | tr -d :)
+      port=${port:-514}
       if ss -tnH state established "( dport = :$port )" 2>/dev/null | grep -q .; then
         echo established
       else
-        echo "not established to $target"
+        echo "not established on port $port"
       fi
     expect_output: "established"
     manual_if_absent: true
@@ -1595,6 +1600,23 @@ checks:
         cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
       done | sort -u | grep -v aes-xts || true
     expect_empty: true
+
+  - id: sc-08-forward-encrypted
+    description: Forwarded audit records leave the host under TLS
+    command: |
+      # The role writes status=forwarding|local-only|tls-certificate-missing
+      # and transport=tls|plain. No collector is the single-node case and
+      # reports MANUAL; a collector without a usable certificate, or plain
+      # forwarding, is a finding.
+      f=/etc/nist-800-171/log-forwarding-status
+      status=$(sed -n 's/^status=//p' $f 2>/dev/null)
+      case "$status" in
+        forwarding) sed -n 's/^transport=//p' $f ;;
+        tls-certificate-missing) echo "none (collector configured, no certificate)" ;;
+        *) echo "not forwarding"; exit 1 ;;
+      esac
+    expect_output: "tls"
+    manual_if_absent: true
 
   - id: sc-08-no-cleartext-services
     description: No cleartext transmission service is installed

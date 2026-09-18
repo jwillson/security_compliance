@@ -1356,7 +1356,7 @@ requirements:
       approved cipher with the key never stored in cleartext on the device.
     checks: [sc-08-crypto-policy, sc-08-luks-encrypted, sc-08-luks-cipher,
              sc-08-no-cleartext-services, sc-08-ssh-ciphers-approved,
-             sc-08-gnutls-policy]
+             sc-08-gnutls-policy, sc-08-forward-encrypted]
 
   - id: "03.13.09"
     title: Network Disconnect

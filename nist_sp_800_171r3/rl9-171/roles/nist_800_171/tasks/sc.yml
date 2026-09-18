@@ -142,6 +142,31 @@
   register: nist_zone_service_removals
   tags: ["03.13.01", "03.13.06"]
 
+- name: "03.13.06 | Close firewall ports nothing on this host declares"
+  # A role that opens a port declares it in authorized-ports.d (the
+  # collector's listener, for instance). A port left open by an earlier
+  # configuration - the collector moved from 514 to 6514 - is no longer
+  # declared, so it is closed here rather than left for the assessor to
+  # report. Services are handled above; this is the raw port list.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      auth=$(cat {{ nist_conf_dir }}/authorized-ports.d/* 2>/dev/null | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      auth=${auth:-22}
+      changed=0
+      for scope in "--permanent" ""; do
+        for p in $(firewall-cmd $scope --zone={{ nist_firewall_zone }} --list-ports 2>/dev/null); do
+          echo "$p" | grep -qE "^(${auth})/(tcp|udp)$" && continue
+          firewall-cmd $scope --zone={{ nist_firewall_zone }} --remove-port="$p" >/dev/null && changed=1
+        done
+      done
+      echo "changed=$changed"
+    executable: /bin/bash
+  when: nist_firewalld_ready
+  register: nist_undeclared_ports
+  changed_when: "'changed=1' in nist_undeclared_ports.stdout"
+  tags: ["03.13.01", "03.13.06"]
+
 - name: "03.13.06 | Remove any source or interface exempted via the trusted zone"
   # The trusted zone accepts everything, so anything in it is outside the
   # deny-by-default policy. The runbook's lockout recovery puts the operator's

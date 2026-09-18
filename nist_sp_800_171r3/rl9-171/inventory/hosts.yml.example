@@ -23,6 +23,13 @@
 # A host in the `log_hosts` group additionally receives forwarded audit records
 # (03.03.05c); site.yml's second play targets that group. inventory.py sets
 # `nist_log_collector` on the forwarders, so do not set it by hand.
+#
+# Forwarding is TLS with mutual x509 authentication on 6514 (03.13.08). Every
+# host, forwarder or collector, needs ca.crt and HOST.crt/HOST.key in
+# NIST_PKI_DIR (or .secrets/pki), where HOST is its inventory name: from your
+# PKI, or `make pki` for a lab authority. Without them the forwarder records
+# the missing certificate and verify.sh reports it; nothing falls back to
+# plaintext. `nist_log_tls: false` is the explicit opt-out.
 
 cui_hosts:
   hosts:

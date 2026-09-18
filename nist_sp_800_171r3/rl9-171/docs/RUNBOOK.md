@@ -308,7 +308,7 @@ A healthy reference VM reports:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 329 checks run, 0 failed
+ 97 requirements assessed, 330 checks run, 0 failed
 ```
 
 36 rather than 37 satisfied because 03.14.02 reports partial: fapolicyd
@@ -389,12 +389,24 @@ Removing the collector unwires them. The collector never forwards to itself.
 
 The collector is hardened by the same overlay — it holds other systems' audit
 records, so it is a CUI host. `roles/nist_log_collector` adds only the
-receiving half: rsyslog on 514/tcp, one directory per sending host at mode
-0700, rotation at the same `audit_retention_days` the records had at origin.
+receiving half: rsyslog on 6514/tcp under TLS with mutual x509
+authentication, one directory per sending host at mode 0700, rotation at the
+same `audit_retention_days` the records had at origin.
 
-514/tcp is plain. That is acceptable only because the lab network is isolated
-(03.13.01). For a real deployment use 6514 with TLS; the role does not
-provision the certificates.
+Both sides need certificates: `ca.crt` and `HOST.crt`/`HOST.key` per host in
+`NIST_PKI_DIR` (default `.secrets/pki`), `HOST` being the inventory name.
+`make pki` mints a lab authority after the hosts are in the inventory; a
+real deployment uses its own PKI's files in the same layout. Run it before
+`./apply.sh`, or the forwarders record `tls-certificate-missing`, forward
+nothing, and `verify.sh` reports them - there is no plaintext fallback.
+`nist_log_tls: false` in the inventory is the explicit opt-out to 514 plain,
+which `sc-08-forward-encrypted` then reports on every forwarder.
+
+The forwarder authenticates the collector by the name in its certificate
+(`nist_log_collector_name`, the `log_hosts` member by default), and the
+collector accepts only certificates naming a `cui_hosts` member of the
+inventory it was applied from. Moving the collector's port closes the old
+one: ports no `authorized-ports.d` fragment declares are removed on apply.
 
 ---
 

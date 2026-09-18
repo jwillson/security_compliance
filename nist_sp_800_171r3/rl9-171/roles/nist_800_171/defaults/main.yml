@@ -25,7 +25,22 @@ nist_report_dir: /var/log/nist-800-171
 nist_audit_mail_acct: root
 nist_alert_mail: root
 # Set to a collector to enable rsyslog forwarding (03.03.05c). Empty disables it.
+# HOST or HOST:PORT; the port defaults to 6514 under TLS, 514 without.
 nist_log_collector: ""
+
+# --- 03.03.05c transport (03.13.08) ---
+# Records leave the host over TLS with mutual x509 authentication (rsyslog's
+# ossl driver) unless this is false. The CA and this host's own certificate
+# come from nist_pki_dir: NIST_PKI_DIR in the environment first, .secrets/pki
+# (make pki) as the lab fallback. Without them forwarding is not configured,
+# the gap is recorded on the host and the assessor reports it; nothing falls
+# back to plaintext on its own.
+nist_log_tls: true
+nist_pki_dir: "{{ lookup('env', 'NIST_PKI_DIR') or (playbook_dir + '/.secrets/pki') }}"
+# The name the collector's certificate carries (CN and SAN), which the
+# forwarder checks against the peer it is talking to. Defaults to the
+# inventory name of the log_hosts member.
+nist_log_collector_name: "{{ (groups['log_hosts'] | default([]) | first) | default('', true) }}"
 
 # --- Scheduling (03.03.05, 03.11.02, 03.12.01, 03.12.03) ---
 nist_aide_check_schedule: "*-*-* 04:00:00"

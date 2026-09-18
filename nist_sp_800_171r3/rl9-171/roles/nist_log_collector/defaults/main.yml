@@ -6,10 +6,15 @@
 # separate /var/log filesystem, so remote records cannot fill /.
 nist_remote_log_dir: /var/log/nist-remote
 
-# 514/tcp plain. The lab network is isolated (03.13.01), which is what makes
-# that acceptable there. On a real deployment use 6514 with TLS - rsyslog
-# needs gtls and a certificate pair, which this role does not provision.
-nist_collector_port: 514
+# TLS with mutual x509 authentication on 6514 (03.13.08) unless nist_log_tls
+# is false, in which case 514 plain - acceptable only on an isolated network,
+# and reported by the assessor on every forwarder. The CA and this host's
+# certificate come from nist_pki_dir (NIST_PKI_DIR, or .secrets/pki from
+# `make pki`); a forwarder is accepted only if its certificate names a
+# cui_hosts member. These two mirror nist_800_171's defaults.
+nist_log_tls: true
+nist_pki_dir: "{{ lookup('env', 'NIST_PKI_DIR') or (playbook_dir + '/.secrets/pki') }}"
+nist_collector_port: "{{ 6514 if nist_log_tls else 514 }}"
 
 # firewalld zone the enclave arrives on.
 nist_collector_zone: public

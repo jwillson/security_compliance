@@ -21,6 +21,69 @@
     mode: "0700"
   tags: ["03.03.05", "03.03.08"]
 
+- name: Read this host's certificate for the TLS listener
+  ansible.builtin.set_fact:
+    nist_col_ca:   "{{ lookup('file', nist_pki_dir + '/ca.crt', errors='ignore') or '' }}"
+    nist_col_cert: "{{ lookup('file', nist_pki_dir + '/' + inventory_hostname + '.crt', errors='ignore') or '' }}"
+    nist_col_key:  "{{ lookup('file', nist_pki_dir + '/' + inventory_hostname + '.key', errors='ignore') or '' }}"
+  no_log: true
+  tags: ["03.03.05", "03.13.08"]
+
+- name: Note whether the TLS listener can be configured
+  ansible.builtin.set_fact:
+    nist_col_tls_ready: >-
+      {{ nist_log_tls and nist_col_ca | length > 0
+         and nist_col_cert | length > 0 and nist_col_key | length > 0 }}
+    # Every forwarder in the inventory, by the name its certificate carries.
+    nist_col_peers: "{{ groups['cui_hosts'] | default([]) | difference([inventory_hostname]) }}"
+  tags: ["03.03.05", "03.13.08"]
+
+- name: Warn that the collector cannot listen for lack of certificates
+  ansible.builtin.debug:
+    msg: >-
+      nist_log_tls is true but {{ nist_pki_dir }} does not hold ca.crt,
+      {{ inventory_hostname }}.crt and {{ inventory_hostname }}.key, so no
+      listener is configured. Supply them (make pki for the lab) and
+      re-apply; until then every forwarder reports its connection as not
+      established.
+  when: nist_log_tls and not nist_col_tls_ready
+  tags: ["03.03.05", "03.13.08"]
+
+- name: Install the rsyslog TLS driver
+  ansible.builtin.dnf:
+    name: rsyslog-openssl
+    state: present
+  when: nist_col_tls_ready
+  tags: ["03.03.05", "03.13.08"]
+
+- name: Ensure the rsyslog certificate directory exists
+  ansible.builtin.file:
+    path: /etc/pki/rsyslog
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: nist_col_tls_ready
+  tags: ["03.03.05", "03.13.08"]
+
+- name: Install the listener certificates
+  ansible.builtin.copy:
+    content: "{{ item.content }}\n"
+    dest: "/etc/pki/rsyslog/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: ca.crt,   content: "{{ nist_col_ca }}",   mode: "0644" }
+    - { name: host.crt, content: "{{ nist_col_cert }}", mode: "0644" }
+    - { name: host.key, content: "{{ nist_col_key }}",  mode: "0600" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: nist_col_tls_ready
+  notify: restart rsyslog collector
+  tags: ["03.03.05", "03.13.08"]
+
 - name: Configure rsyslog to receive forwarded records
   ansible.builtin.template:
     src: rsyslog-collector.conf.j2
@@ -29,6 +92,15 @@
     group: root
     mode: "0600"
     validate: "rsyslogd -N1 -f %s"
+  when: nist_col_tls_ready or not nist_log_tls
+  notify: restart rsyslog collector
+  tags: ["03.03.05"]
+
+- name: Remove a listener that can no longer be honoured
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/10-nist-collector.conf
+    state: absent
+  when: nist_log_tls and not nist_col_tls_ready
   notify: restart rsyslog collector
   tags: ["03.03.05"]
 
@@ -82,8 +154,9 @@
     dest: "{{ nist_conf_dir }}/log-collector-status"
     content: |
       # 03.03.05c Audit record correlation - receiving side
-      status=collector
+      status={{ 'collector' if (nist_col_tls_ready or not nist_log_tls) else 'tls-certificate-missing' }}
       port={{ nist_collector_port }}/tcp
+      transport={{ 'tls' if nist_col_tls_ready else 'plain' }}
       directory={{ nist_remote_log_dir }}
       retention_days={{ odp.audit_retention_days }}
     owner: root
