@@ -617,16 +617,27 @@ No amount of testing substitutes for these. Each is a live commitment.
       as `ca.crt` alongside a certificate the SIEM will accept for each
       host. Needs the SIEM.
 
-- [ ] **6.3 Generate and review the SSP.** `sudo nist-generate-ssp`, then read
-      `/etc/nist-800-171/system-security-plan.md`. It is generated from live
-      state; the threat description, role assignments and approval are yours
-      to author.
+- [ ] **6.3 Generate and review the SSP.** *Generated and read on
+      `byo-rl9-01`; the authoring is yours.* `sudo nist-generate-ssp` writes
+      92 lines: sections 1, 4, 5, 6 and 8 are generated from live state
+      (components, listening services, the requirement overview, safeguards,
+      the organizational register). Three are marked AUTHOR and are empty:
+      **2. Information types**, **3. Threats of concern**, and **7. Roles and
+      responsibilities** (the System Owner row, who accepts residual risk and
+      approves the plan). Nothing on the host can fill those in.
 
-- [ ] **6.4 Open POA&M items for every remaining gap.**
-      `sudo nist-generate-poam` turns failed checks into a CSV. The 28
-      organizational requirements and 32 partial residual obligations are not
-      in it — they come from `organizational-requirements.md`, which since
-      4.4 includes the seven that used to hide behind a PASS.
+- [ ] **6.4 Open POA&M items for every remaining gap.** *Generated on
+      `byo-rl9-01`:* `sudo nist-generate-poam` reads the timer's
+      `assessment-latest.json` and wrote 5 open items, one per failing
+      requirement (03.01.18, 03.04.06, 03.08.03, 03.08.09, 03.13.08 - the
+      retrofit limits of 2.2), with First Observed set and the Scheduled
+      Completion, Responsible Party, Resources and Milestones columns empty
+      for the owner. The 28 organizational requirements and 32 partial
+      residual obligations are not in it - they come from
+      `organizational-requirements.md`, which since 4.4 includes the seven
+      that used to hide behind a PASS. (Run the generators with their full
+      path, `/usr/local/sbin/nist-generate-poam`, from automation; a login
+      shell's PATH finds them by name.)
 
 - [ ] **6.5 Re-read the caveat that matters.** Passing every check means the
       host-enforceable controls are in place. It does not mean the system is
