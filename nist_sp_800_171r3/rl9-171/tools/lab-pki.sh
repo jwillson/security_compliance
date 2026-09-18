@@ -35,7 +35,7 @@ import json, sys
 d = json.load(sys.stdin)
 hv = d.get("_meta", {}).get("hostvars", {})
 for h in d.get("cui_hosts", {}).get("hosts", []):
-    print(f"{h}={hv.get(h, {}).get(\"ansible_host\", \"\")}".rstrip("="))
+    print((h + "=" + hv.get(h, {}).get("ansible_host", "")).rstrip("="))
 ')
   set -- "${HOSTS[@]}"
 fi
