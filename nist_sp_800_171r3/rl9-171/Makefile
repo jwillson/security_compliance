@@ -42,9 +42,7 @@ secrets: .secrets/id_rsa
 # into NIST_PKI_DIR instead. Re-run after adding a host; existing ones are kept.
 pki:
 	@[ -f inventory/hosts.yml ] || { echo "no inventory/hosts.yml"; exit 1; }
-	@./tools/lab-pki.sh $$(ansible-inventory --list 2>/dev/null | python3 -c \
-	  'import json,sys; d=json.load(sys.stdin); hv=d["_meta"]["hostvars"]; \
-	   print(" ".join(f"{h}={hv[h][\"ansible_host\"]}" for h in d["cui_hosts"]["hosts"]))')
+	@./tools/lab-pki.sh --inventory
 
 .secrets/id_rsa:
 	@mkdir -p .secrets && chmod 700 .secrets

@@ -4,6 +4,7 @@
 # audit-record forwarding path (03.03.05c over 03.13.08).
 #
 #   tools/lab-pki.sh [-d DIR] HOST[=IP] ...
+#   tools/lab-pki.sh [-d DIR] --inventory      every cui_hosts member, by name and address
 #
 # DIR defaults to $NIST_PKI_DIR, then .secrets/pki. The CA is created once
 # and reused; a host whose certificate already exists is left alone. Each
@@ -17,14 +18,28 @@
 set -euo pipefail
 
 DIR="${NIST_PKI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.secrets/pki}"
+FROM_INVENTORY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d) DIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --inventory) FROM_INVENTORY=1; shift ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) break ;;
   esac
 done
-[[ $# -gt 0 ]] || { echo "usage: $0 [-d DIR] HOST[=IP] ..." >&2; exit 1; }
+if [[ $FROM_INVENTORY -eq 1 ]]; then
+  # HOST=IP for every cui_hosts member of inventory/hosts.yml (ansible.cfg
+  # names it), so the certificate carries the inventory name and the address.
+  mapfile -t HOSTS < <(cd "$(dirname "${BASH_SOURCE[0]}")/.." && ansible-inventory --list 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+hv = d.get("_meta", {}).get("hostvars", {})
+for h in d.get("cui_hosts", {}).get("hosts", []):
+    print(f"{h}={hv.get(h, {}).get(\"ansible_host\", \"\")}".rstrip("="))
+')
+  set -- "${HOSTS[@]}"
+fi
+[[ $# -gt 0 ]] || { echo "usage: $0 [-d DIR] HOST[=IP] ... | --inventory" >&2; exit 1; }
 
 umask 077
 mkdir -p "$DIR"
