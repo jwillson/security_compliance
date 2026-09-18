@@ -527,7 +527,8 @@ requirements:
       profile regeneration, and applied to root as well (even_deny_root).
     checks: [ac-08-faillock-deny, ac-08-faillock-interval,
              ac-08-faillock-unlock, ac-08-faillock-even-deny-root,
-             ac-08-faillock-in-pam, ac-08-faillock-dir]
+             ac-08-faillock-in-pam, ac-08-faillock-dir,
+             ac-08-faillock-dir-context]
 
   - id: "03.01.09"
     title: System Use Notification
@@ -760,7 +761,9 @@ requirements:
       This overlay is the baseline configuration, and it is under version
       control. On the host, AIDE captures the as-built state of every baseline
       file into an integrity database, and a component manifest records the
-      exact package set, kernel, and configuration digest at build time.
+      exact package set, kernel, and configuration digest at build time - or
+      at first apply, for a host this toolkit did not build, in which case
+      build-info says so rather than claiming a kickstart install.
     residual: >
       Reviewing and updating the baseline at the ODP frequency (statement b) is
       a process; the manifest and AIDE database are the artifacts it consumes.

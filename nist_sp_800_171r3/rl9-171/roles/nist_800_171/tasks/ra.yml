@@ -50,6 +50,7 @@
 
         [Install]
         WantedBy=timers.target
+  register: nist_vuln_scan_units
   notify: reload systemd
   tags: ["03.11.02"]
 
@@ -59,6 +60,7 @@
     enabled: true
     state: started
     daemon_reload: true
+  when: not (ansible_check_mode and (nist_vuln_scan_units | default({})) is changed)
   tags: ["03.11.02", "03.12.03"]
 
 - name: "03.11.02 | Keep advisory metadata current so new CVEs enter scope"

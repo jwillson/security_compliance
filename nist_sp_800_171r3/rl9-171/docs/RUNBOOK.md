@@ -73,15 +73,20 @@ only need it if you change the extractor or substitute a different revision.
 
 ### An existing Rocky 9 host
 
-The VM targets are **not** a prerequisite. `make secrets` is: 03.08.09 formats
-the encrypted CUI volumes with the passphrase it generates, so an apply without
-it fails mid-run on any host with free volume-group space.
+Neither the VM targets nor `.secrets/` are prerequisites. The role consumes
+two secrets, and a host you bring supplies them from the environment:
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml
 $EDITOR inventory/hosts.yml
-make secrets
+export NIST_BECOME_PASSWORD=...  # sudo, if the host asks for one
+export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
+export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
 ```
+
+Leave one unset and the control it feeds is skipped with a warning and
+reported by `./verify.sh` as a deviation; the run does not abort. `.secrets/`
+is read only when the environment says nothing, which is how the lab works.
 
 Install-time controls the role cannot retrofit — a separate `/var/log/audit`
 filesystem, FIPS from first boot — will be reported as deviations rather than

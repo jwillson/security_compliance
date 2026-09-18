@@ -8,6 +8,7 @@
   ansible.builtin.dnf:
     name: aide
     state: present
+  register: nist_aide_pkg
   tags: ["03.04.01"]
 
 - name: "03.04.01 | Configure AIDE to cover the baseline files"
@@ -38,6 +39,8 @@
       /usr/lib/      NORMAL
       /usr/lib64/    NORMAL
       {{ nist_conf_dir }}/  NORMAL
+  # /etc/aide.conf belongs to the package; check mode cannot install it.
+  when: not (ansible_check_mode and (nist_aide_pkg | default({})) is changed)
   tags: ["03.04.01"]
 
 - name: "03.04.01 | Check whether the AIDE database already exists"
@@ -55,6 +58,27 @@
     executable: /bin/bash
   when: not nist_aide_db.stat.exists
   changed_when: true
+  tags: ["03.04.01"]
+
+- name: "03.04.01 | Record the baseline for a host this toolkit did not build"
+  # The kickstart writes build-info in %post, and cm-01-baseline-manifest
+  # asserts it exists. A host brought from elsewhere has no install-time
+  # record, so the first apply writes one that says exactly that: which
+  # baseline was applied and when, never a claim about how the host was
+  # installed. Create-only, so the date does not drift and a kickstart's
+  # record is never overwritten.
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/build-info"
+    content: |
+      build_date={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(utc=true) }}
+      kickstart=none (retrofit: this host was not built by rl9-171)
+      overlay_version={{ meta.version }}
+      baseline={{ meta.baseline }}
+      hostname={{ ansible_facts['hostname'] }}
+    force: false
+    owner: root
+    group: root
+    mode: "0644"
   tags: ["03.04.01"]
 
 - name: "03.04.01 | Protect the AIDE database"
@@ -102,6 +126,7 @@
 
         [Install]
         WantedBy=timers.target
+  register: nist_aide_check_units
   notify: reload systemd
   tags: ["03.04.01", "03.14.06"]
 
@@ -111,6 +136,7 @@
     enabled: true
     state: started
     daemon_reload: true
+  when: not (ansible_check_mode and (nist_aide_check_units | default({})) is changed)
   tags: ["03.04.01", "03.12.03", "03.14.06"]
 
 # ===========================================================================
@@ -336,6 +362,7 @@
     name: fapolicyd
     state: present
   when: nist_fapolicyd_enabled
+  register: nist_fapolicyd_pkg
   tags: ["03.04.08"]
 
 - name: "03.04.08 | Set fapolicyd to deny execution by default"
@@ -352,7 +379,10 @@
     - { key: trust,      value: "rpmdb,file" }
     - { key: integrity,  value: "sha256" }
     - { key: syslog_format, value: "rule,dec,perm,auid,pid,exe,:,path,ftype,trust" }
-  when: nist_fapolicyd_enabled
+  when:
+    - nist_fapolicyd_enabled
+    # The file belongs to the package; check mode cannot install it.
+    - not (ansible_check_mode and (nist_fapolicyd_pkg | default({})) is changed)
   notify: restart fapolicyd
   tags: ["03.04.08"]
 
@@ -366,7 +396,13 @@
     owner: root
     group: fapolicyd
     mode: "0644"
-  when: nist_fapolicyd_enabled
+  when:
+    - nist_fapolicyd_enabled
+    # The group and the restart handler both need the package. In check mode
+    # this would still notify the handler, which then restarts a unit that
+    # does not exist yet - so it is skipped on the same condition as its
+    # neighbours.
+    - not (ansible_check_mode and (nist_fapolicyd_pkg | default({})) is changed)
   notify: restart fapolicyd
   tags: ["03.04.08"]
 
@@ -375,7 +411,9 @@
     name: fapolicyd
     enabled: true
     state: started
-  when: nist_fapolicyd_enabled
+  when:
+    - nist_fapolicyd_enabled
+    - not (ansible_check_mode and (nist_fapolicyd_pkg | default({})) is changed)
   tags: ["03.04.08"]
 
 # ===========================================================================
@@ -426,6 +464,7 @@
 
         [Install]
         WantedBy=timers.target
+  register: nist_inventory_units
   notify: reload systemd
   tags: ["03.04.10"]
 
@@ -435,6 +474,7 @@
     enabled: true
     state: started
     daemon_reload: true
+  when: not (ansible_check_mode and (nist_inventory_units | default({})) is changed)
   tags: ["03.04.10"]
 
 - name: "03.04.10 | Install the dnf post-transaction plugin"

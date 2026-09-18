@@ -55,9 +55,9 @@ had served its purpose. They remain in git history if ever needed.
 - Never commit key material (`.secrets/`), live inventories, ISOs, qcow2
   images, or generated reports. The repo's history is clean of all of these —
   keep it that way.
-- Git author must match `main`:
-  `Jason Willson <jason.willson@gmail.com>`. Do not invent
-  `@users.noreply.github.com` addresses.
+- Git author is the repository owner's GitHub identity,
+  `Jason Willson <jason.willson@gmail.com>`, on every commit. Do not invent
+  `@users.noreply.github.com` addresses or use any other address.
 - `roles/nist_800_171/tasks/main.yml` uses `import_tasks`, never
   `include_tasks`. An include is resolved at run time, so the tag filter sees
   only the family tag on the include statement and `--tags 03.05.07` silently
@@ -86,15 +86,19 @@ make help                        # the whole pipeline
 ./verify.sh --failed-only        # assess, show deviations only
 ```
 
-Hardening an existing host does not need the VM or ISO targets, but it does
-need `make secrets`: 03.08.09 formats the encrypted CUI volumes with the
-passphrase it generates, so an apply without it fails mid-run on any host with
-free volume-group space.
+Hardening an existing host needs neither the VM targets nor `.secrets/`. The
+role reads its two secrets from `NIST_GRUB_PASSWORD` (03.10.07) and
+`NIST_LUKS_PASSPHRASE` (03.08.09) first, and from `.secrets/` only as the lab
+fallback; unset, the control is skipped with a warning and reported, and the
+run does not abort. `./apply.sh --check --diff` completes on a host that has
+never been applied: a task that needs a package or unit an earlier task
+provides is skipped in check mode only while that prerequisite is outstanding
+(the idiom is explained at the top of `roles/nist_800_171/tasks/main.yml`).
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml   # edit for your host
-make secrets
-./apply.sh && ./verify.sh
+export NIST_BECOME_PASSWORD=... NIST_GRUB_PASSWORD=...
+./apply.sh --check --diff && ./apply.sh && ./verify.sh
 ```
 
 `site.yml` has two plays: the overlay over `cui_hosts`, then

@@ -230,6 +230,17 @@ checks:
     command: "grep -lc pam_faillock /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null | wc -l"
     expect_int: ">= 2"
 
+  - id: ac-08-faillock-dir-context
+    description: The faillock state directory carries the label pam_faillock may write to
+    command: |
+      # The tally is kept under /var/log so it survives a reboot. Under the
+      # targeted policy that path is var_log_t, and pam_faillock is confined
+      # to faillog_t: with the wrong label the first failed authentication
+      # creates a tally no PAM stack can read again, and sudo stops working.
+      d=$(grep -oP '(?<=^dir\s=\s).*|(?<=^dir=).*' /etc/security/faillock.conf | head -1)
+      stat -c '%C' "${d:-/var/run/faillock}" 2>/dev/null | grep -o 'faillog_t'
+    expect_output: "faillog_t"
+
   - id: ac-08-faillock-dir
     description: The faillock state directory exists
     command: "test -d /var/log/faillock && echo present"
@@ -1621,6 +1632,9 @@ checks:
         case "$type" in
           *ED25519*) ;;
           *RSA*) [ "$bits" -ge 3072 ] || echo "weak:$k:$bits";;
+          # ssh-keygen refuses to read a key type the active crypto policy
+          # excludes (ed25519 under FIPS), and sshd cannot load it either.
+          "") echo "unreadable-under-crypto-policy:$k";;
           *) echo "unapproved:$k:$type";;
         esac
       done

@@ -4,15 +4,24 @@
 # Only the boot path is host-enforceable (03.10.07). Everything else in this
 # family is a facility control.
 
+- name: "03.10.07 | Warn if no GRUB superuser password was supplied"
+  ansible.builtin.debug:
+    msg: >-
+      No GRUB superuser password: NIST_GRUB_PASSWORD is not set and
+      .secrets/admin_password does not exist. The boot path is left as it
+      is, and the assessor will report pe-07-grub-password as a deviation.
+  when: nist_set_grub_password and nist_grub_password | length == 0
+  tags: ["03.10.07"]
+
 - name: "03.10.07 | Stage the GRUB superuser password"
   ansible.builtin.copy:
-    content: "{{ lookup('file', playbook_dir + '/.secrets/admin_password') | trim }}"
+    content: "{{ nist_grub_password | trim }}"
     dest: /root/.grub-pw
     owner: root
     group: root
     mode: "0400"
   no_log: true
-  when: nist_set_grub_password
+  when: nist_set_grub_password and nist_grub_password | length > 0
   tags: ["03.10.07"]
 
 - name: "03.10.07 | Set a GRUB superuser password"
@@ -48,7 +57,7 @@
       echo 'GRUB_ENABLE_BLSCFG=true' >> /etc/default/grub
       echo changed=1
     executable: /bin/bash
-  when: nist_set_grub_password
+  when: nist_set_grub_password and nist_grub_password | length > 0
   register: nist_grub_pw
   changed_when: "'changed=1' in nist_grub_pw.stdout"
   notify: update grub config
@@ -60,7 +69,7 @@
     regexp: '^\s*CLASS="--class gnu-linux'
     line: 'CLASS="--class gnu-linux --class gnu --class os --unrestricted"'
     backrefs: false
-  when: nist_set_grub_password
+  when: nist_set_grub_password and nist_grub_password | length > 0
   failed_when: false
   notify: update grub config
   tags: ["03.10.07"]

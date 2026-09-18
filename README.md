@@ -31,6 +31,11 @@ open defect, see [TASKS.md](TASKS.md) 4.4.
 
 See its [README](nist_sp_800_171r3/rl9-171/README.md) for the full design.
 
+The same overlay applied to a stock Rocky 9 cloud image it did not build
+reports **41 satisfied, 23 partial, 5 not satisfied, 28 organizational**: the
+five are the separate filesystems and LUKS volumes only an install can
+create, and the role records them rather than hiding them.
+
 Open work is tracked in [TASKS.md](TASKS.md) — what is proven against a
 running host, what is written but not yet executed, and the decisions that
 need a system owner rather than a test.

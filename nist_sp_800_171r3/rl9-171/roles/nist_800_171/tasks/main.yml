@@ -11,6 +11,20 @@
 # skip the include and run nothing at all. import_tasks is resolved when the
 # playbook is parsed, so each task's own requirement tag is visible to the
 # filter. The family tag here is inherited by every task in the file.
+#
+# Check mode on a host that has never been applied: `--check` installs no
+# package and writes no unit, so a task that enables a unit or edits a file
+# an earlier task provides would fail with "Could not find the requested
+# service" or "Destination ... does not exist" - not a finding, just a
+# prerequisite that check mode cannot create. Those tasks register the
+# providing task and carry
+#
+#   when: not (ansible_check_mode and (nist_x | default({})) is changed)
+#
+# so they are skipped only in check mode, and only while the prerequisite is
+# still outstanding. On an applied host they run in check mode as before and
+# a disabled timer is still reported as drift. The default({}) keeps the
+# expression defined when --tags selects the consumer but not the provider.
 
 - name: Prepare the toolkit directories
   ansible.builtin.file:
@@ -29,12 +43,17 @@
   # A minimal Rocky 9 install ships several of these only when the owning
   # package creates them, so they are established up front rather than being
   # discovered one failure at a time.
+  #
+  # No owner, group or mode: several are package-owned (openssh-server
+  # declares sshd_config.d 0700, fapolicyd declares rules.d root:fapolicyd),
+  # and imposing 0755 root:root here meant the package install or upgrade
+  # later in the same run reset them, so the next run changed them back and
+  # the role was not idempotent on a host it hardened from stock. Only
+  # existence is required; a directory created here gets the umask default,
+  # and one a package created keeps the package's choice.
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
   loop:
     - /etc/systemd/coredump.conf.d
     - /etc/systemd/journald.conf.d

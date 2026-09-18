@@ -177,18 +177,24 @@
     - restart sshd
   tags: ["03.05.04", "03.13.10", "03.13.11", "03.13.15"]
 
-- name: "03.05.04 | Stop sshd regenerating the weak host key types"
+- name: "03.05.04 | Stop sshd regenerating the host key types the baseline excludes"
   # Deleting the key is not enough: sshd-keygen@.service recreates it on the
   # next start, so the removal silently undoes itself. Masking the generator
   # for those types makes the removal stick.
+  #
+  # ed25519 is not weak, but the FIPS policy this baseline enforces
+  # (03.13.11) does not permit it: sshd cannot load the key and ssh-keygen
+  # cannot read it. A kickstart host never has one because sshd-keygen skips
+  # it under FIPS; a host that had FIPS enabled by this role keeps the key it
+  # generated before, which the assessor can then only report as unreadable.
   ansible.builtin.systemd:
     name: "sshd-keygen@{{ item }}.service"
     masked: true
-  loop: [ecdsa, dsa]
+  loop: [ecdsa, dsa, ed25519]
   failed_when: false
   tags: ["03.05.04", "03.13.10"]
 
-- name: "03.05.04 | Remove weak SSH host keys"
+- name: "03.05.04 | Remove the SSH host keys the baseline excludes"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
@@ -197,6 +203,8 @@
     - /etc/ssh/ssh_host_dsa_key.pub
     - /etc/ssh/ssh_host_ecdsa_key
     - /etc/ssh/ssh_host_ecdsa_key.pub
+    - /etc/ssh/ssh_host_ed25519_key
+    - /etc/ssh/ssh_host_ed25519_key.pub
   notify: restart sshd
   tags: ["03.05.04", "03.13.10"]
 

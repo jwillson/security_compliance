@@ -116,6 +116,22 @@ nist_fapolicyd_permissive: false
 # --- 03.10.07 Boot path protection ---
 nist_set_grub_password: true
 
+# --- Secrets the role consumes (03.08.09 / 03.13.08, 03.10.07) ---
+# The lab build keeps these in .secrets/ (make secrets). A host you bring
+# supplies its own: export NIST_GRUB_PASSWORD and NIST_LUKS_PASSPHRASE, or
+# pass them with -e. .secrets/ is read only when the environment says
+# nothing, and an empty value means the control is skipped and recorded
+# rather than the run aborting - the assessor then reports the deviation.
+# Neither is ever logged; the tasks that consume them carry no_log.
+nist_grub_password: >-
+  {{ lookup('env', 'NIST_GRUB_PASSWORD')
+     or lookup('file', playbook_dir + '/.secrets/admin_password', errors='ignore')
+     or '' }}
+nist_luks_passphrase: >-
+  {{ lookup('env', 'NIST_LUKS_PASSPHRASE')
+     or lookup('file', playbook_dir + '/.secrets/luks_passphrase', errors='ignore')
+     or '' }}
+
 # --- 03.16.02 Supported components ---
 nist_supported_minor_version: "9.8"
 

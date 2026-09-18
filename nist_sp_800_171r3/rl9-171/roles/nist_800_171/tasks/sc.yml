@@ -8,6 +8,7 @@
   ansible.builtin.dnf:
     name: firewalld
     state: present
+  register: nist_firewalld_pkg
   tags: ["03.13.01", "03.13.06"]
 
 - name: "03.13.01 | Use the nftables backend"
@@ -18,6 +19,8 @@
     owner: root
     group: root
     mode: "0600"
+  # The file belongs to the package; check mode cannot install it.
+  when: not (ansible_check_mode and (nist_firewalld_pkg | default({})) is changed)
   notify: restart firewalld
   tags: ["03.13.01"]
 
@@ -29,6 +32,7 @@
     owner: root
     group: root
     mode: "0600"
+  when: not (ansible_check_mode and (nist_firewalld_pkg | default({})) is changed)
   notify: restart firewalld
   tags: ["03.13.01", "03.14.06"]
 
@@ -37,6 +41,23 @@
     name: firewalld
     enabled: true
     state: started
+  when: not (ansible_check_mode and (nist_firewalld_pkg | default({})) is changed)
+  register: nist_firewalld_svc
+  tags: ["03.13.01", "03.13.06"]
+
+- name: "03.13.01 | Note whether the firewall can be queried in this run"
+  # firewall-cmd talks to the running daemon. A stock image may ship with
+  # firewalld inactive, or without it at all (the GenericCloud image has no
+  # firewalld). A real run has just installed and started it; a check-mode
+  # run has not, so every query below would fail with "FirewallD is not
+  # running" - the absence of a prerequisite, not a finding. The zone tasks
+  # are skipped only in check mode, and only while the daemon is not yet
+  # running. On an applied host they run in check mode as before.
+  ansible.builtin.set_fact:
+    nist_firewalld_ready: >-
+      {{ not (ansible_check_mode and
+              ((nist_firewalld_pkg | default({})) is changed or
+               (nist_firewalld_svc | default({})) is changed)) }}
   tags: ["03.13.01", "03.13.06"]
 
 - name: "03.13.06 | Set the default zone"
@@ -53,6 +74,7 @@
   register: nist_zone_target_current
   changed_when: false
   check_mode: false
+  when: nist_firewalld_ready
   tags: ["03.13.06"]
 
 - name: "03.13.06 | Make the default zone deny by default"
@@ -60,7 +82,9 @@
   # current target is read first.
   ansible.builtin.command:
     cmd: "firewall-cmd --permanent --zone={{ nist_firewall_zone }} --set-target=DROP"
-  when: nist_zone_target_current.stdout | trim != 'DROP'
+  when:
+    - nist_firewalld_ready
+    - nist_zone_target_current.stdout | trim != 'DROP'
   changed_when: true
   register: nist_zone_target
   tags: ["03.13.06"]
@@ -71,12 +95,15 @@
   register: nist_default_zone_current
   changed_when: false
   check_mode: false
+  when: nist_firewalld_ready
   tags: ["03.13.06"]
 
 - name: "03.13.06 | Set the default zone for unassigned interfaces"
   ansible.builtin.command:
     cmd: "firewall-cmd --set-default-zone={{ nist_firewall_zone }}"
-  when: nist_default_zone_current.stdout | trim != nist_firewall_zone
+  when:
+    - nist_firewalld_ready
+    - nist_default_zone_current.stdout | trim != nist_firewall_zone
   changed_when: true
   register: nist_default_zone
   tags: ["03.13.06"]
@@ -89,6 +116,7 @@
     immediate: true
     state: enabled
   loop: "{{ nist_firewall_allowed_services }}"
+  when: nist_firewalld_ready
   tags: ["03.13.01", "03.13.06"]
 
 - name: "03.13.06 | List services currently permitted in the zone"
@@ -97,6 +125,7 @@
   register: nist_zone_services
   changed_when: false
   check_mode: false
+  when: nist_firewalld_ready
   tags: ["03.13.01", "03.13.06"]
 
 - name: "03.13.06 | Remove services that are not in the authorized set"
@@ -109,6 +138,7 @@
   loop: >-
     {{ (nist_zone_services.stdout | default('') | split)
        | difference(nist_firewall_allowed_services) }}
+  when: nist_firewalld_ready
   register: nist_zone_service_removals
   tags: ["03.13.01", "03.13.06"]
 

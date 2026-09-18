@@ -9,9 +9,11 @@
 # Rocky Linux 9 and reachable over SSH with sudo can be hardened; the VM and
 # ISO make targets exist to build a reference machine, not as a prerequisite.
 #
-# `make secrets` IS a prerequisite: 03.08.09 formats the encrypted CUI volumes
-# with .secrets/luks_passphrase, so an apply without it fails mid-run on any
-# host with free volume-group space.
+# `make secrets` is not a prerequisite either. The role consumes two secrets,
+# a GRUB superuser password (03.10.07) and a LUKS passphrase (03.08.09), and
+# reads .secrets/ only when NIST_GRUB_PASSWORD / NIST_LUKS_PASSPHRASE are not
+# in the environment. Unset, the control is skipped with a warning and
+# verify.sh reports it; the run does not abort.
 #
 # vm/build-vm.sh registers each guest through tools/inventory.py, which adds
 # and removes hosts rather than overwriting the file — so building a second VM

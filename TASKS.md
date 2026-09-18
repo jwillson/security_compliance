@@ -13,10 +13,11 @@ system owner can make.
 
 Be honest about the difference — most of what follows exists to close the gap.
 
-**Proven against running hosts (`rl9-cui-01`, `rl9-cui-02`, `rl9-log-01`)**
+**Proven against running hosts (`rl9-cui-01`, `rl9-cui-02`, `rl9-log-01`, and
+the retrofit host `byo-rl9-01`)**
 
 - `make catalog` reproduces `catalog/requirements.json` byte for byte from the PDF
-- `make validate` — 97 requirements, 327 checks, 29 + 47 ODPs, all consistent
+- `make validate` — 97 requirements, 328 checks, 29 + 47 ODPs, all consistent
 - `./apply.sh` is idempotent (`changed=0` on re-run); `--check --diff` is a real drift detector
 - `./verify.sh` — **all three hosts** 97 assessed, 327 checks, 0 failed, 43 / 26 / 0 / 28,
   three report pairs from one run
@@ -31,13 +32,21 @@ Be honest about the difference — most of what follows exists to close the gap.
 - `tools/inventory.py` driven by real builds and destroys: adding a second
   host preserves the first, destroying one rewires the survivors
 
+- **The BYO-host path is proven** (Phase 2): a stock Rocky 9 GenericCloud
+  guest this toolkit did not build, driven from a second control workstation
+  (an Ubuntu laptop) with no `.secrets/` at all. `--check --diff` completes on
+  the never-applied host, the apply completes, one reboot, and the assessment
+  reports **41 / 23 / 5 / 28, 328 checks, 6 failed** — every failure a
+  documented retrofit limit (2.2). The apply after the reboot settles the
+  kernel record and one log file; the apply after that is `changed=0`, and
+  so is `--check` on the applied host. Eight defects had to be fixed
+  to get there (2b); the claim was false as shipped
+- **FIPS retrofits.** The expected "FIPS from first boot" gap did not
+  materialize: `fips-mode-setup --enable` plus the reboot the run flags
+  passes every 03.13.11 check on a host installed with FIPS off
+
 **Written but never executed**
 
-- The whole BYO-host path (`inventory/hosts.yml.example`) — the headline
-  portability claim, never run against a machine this toolkit did not build.
-  Note that `make secrets` turns out to be a prerequisite after all (03.08.09
-  reads `.secrets/luks_passphrase`); that trap is now documented but still
-  untested in anger
 - Every lockout recovery procedure in the runbook
 
 ---
@@ -156,64 +165,177 @@ Found by building a second host. Each was invisible with one VM.
 ## Phase 2 — prove the portability claim
 
 The stated goal is a single portable tool that can harden *any* Rocky 9 host.
-Nothing has tested that outside the kickstart VMs.
+Until Phase 2 nothing had tested that outside the kickstart VMs, and the
+claim was false as shipped: eight defects (2b) separated the code from the
+result below, and each was invisible on a host the kickstart had built.
 
-- [~] **2.1 Harden a Rocky 9 host this toolkit did not build.** *In progress —
-      paused mid-task.* A stock Rocky 9 GenericCloud image (`byo-rl9-01`,
-      192.168.171.151, user `byoadmin`, UEFI, single 19 GB root, FIPS off,
-      firewalld inactive) was booted with cloud-init — deliberately not via
-      `build-vm.sh`. It found three real defects; the portability claim was
-      false as shipped.
+- [x] **2.1 Harden a Rocky 9 host this toolkit did not build.** *Done, from
+      scratch, twice.* A stock Rocky 9.8 GenericCloud image (`byo-rl9-01`:
+      UEFI, one 19 GB root partition, no LVM, FIPS off, firewalld not even
+      installed, sudo asks for a password) booted with cloud-init on an Ubuntu
+      laptop — a second control workstation with no `.secrets/`, ansible in a
+      venv, the key from `~/.ssh`, the become password from the environment.
+      Deliberately nothing from `vm/build-vm.sh`.
 
-      * **FIXED and proven — `site.yml` only worked on hosts its own kickstart
-        built.** The `pre_task` that records the overlay version writes into
-        `/etc/nist-800-171/`, and the role task that *creates* that directory
-        runs in `roles:`, i.e. after `pre_tasks:`. The kickstart does
-        `mkdir -p /etc/nist-800-171` in `%post`
-        (`vm/kickstart/rl9-cui.ks.j2:145`), so lab hosts had it already and
-        the bug was invisible. On the BYO host the play died on its second
-        task: *"Destination directory /etc/nist-800-171 does not exist"*.
-        The pre_task now creates it. Proven: the apply went from `ok=2` to
-        `ok=87, changed=53`.
+      * `./apply.sh --check --diff` on the never-applied host: `ok=171
+        changed=116 failed=0`.
+      * `./apply.sh`: `ok=226 changed=149 failed=0`, `Reboot required: True`.
+        The 03.04.06 mount task found none of the five kickstart volumes,
+        hardened nothing by device path, wrote `unretrofittable-mounts`
+        naming all five, and the play went on — the fix Opus left unverified
+        is proven.
+      * After the reboot FIPS is on, sshd enforces `publickey,password` and
+        the operator's own askpass supplies the second factor.
+      * `./verify.sh`: **41 / 23 / 5 / 28, 328 checks, 6 failed**, all six
+        the retrofit limits in 2.2.
+      * `./apply.sh` after the reboot: `changed=2` - `support-status` now
+        names the kernel the security updates installed, and 03.14.08
+        tightened the one 0440 service-group log the old rule let through.
+        The apply after that: `changed=0`; `--check --diff` on the applied
+        host, before and after another reboot: `changed=0`. (Shell tasks
+        such as 03.14.08 are skipped in check mode, so a real apply is what
+        proves that one.)
 
-      * **FIXED, NOT YET VERIFIED — mount hardening aborted the whole play.**
-        03.04.06 mounts the kickstart's LVM volumes
-        (`/dev/mapper/vg_sys-lv_home`, `-lv_tmp`, `-lv_vartmp`). On a
-        single-partition host those devices do not exist, the task failed, and
-        the play stopped — so the remaining overlay never applied and a BYO
-        host could not be hardened at all. The task now stats each device
-        first, hardens only what exists, and writes
-        `{{ nist_conf_dir }}/unretrofittable-mounts` naming the rest.
-        **This change is syntax-checked only. Re-run the BYO apply to confirm
-        it completes.**
+      Eight defects stood between the shipped code and that result — see 2b.
+      The first two were Opus's; the rest were invisible until the whole path
+      ran, and the last two until the host was rebooted and applied again.
 
-      * **OPEN — `./apply.sh --check --diff` cannot succeed on a host that has
-        never been applied.** Both README and RUNBOOK tell BYO operators to
-        dry-run first. In check mode the tasks that would create the systemd
-        units do not actually write, so the task that enables
-        `nist-audit-review.timer` fails with *"Could not find the requested
-        service"*. Verified asymmetry: `--check` succeeds on `rl9-cui-01`
-        (already applied, `changed=0`) and fails on `byo-rl9-01`.
-        *Fix:* guard service-enable tasks with `when: not ansible_check_mode`,
-        or make them tolerant of a unit that does not exist yet. Then correct
-        the docs, which currently promise a dry-run that cannot work.
+- [x] **2.2 Write down which requirements a retrofit cannot satisfy.**
+      Exactly five requirements, six checks, on a host with a single root
+      filesystem and no volume group. Both causes are install-time and the
+      role records them (`unretrofittable-mounts`, and the 03.08.09 warning)
+      rather than failing the run:
+      * **03.04.06** `cm-06-mount-options`, `cm-06-tmp-separate` — `/home`,
+        `/tmp`, `/var/tmp`, `/var/log`, `/var/log/audit` are not separate
+        filesystems. A playbook cannot repartition a running system.
+      * **03.01.18**, **03.08.03**, **03.08.09**, **03.13.08** — one LUKS check
+        each (`ac-18-luks-root-or-data`, `mp-03-luks-present`,
+        `mp-09-luks-cipher`, `sc-08-luks-encrypted`). The encrypted CUI and
+        backup volumes need free space in `vg_sys`; this host has no volume
+        group at all. A host with an LVM root and 3 GB free passes these on
+        a retrofit, given `NIST_LUKS_PASSPHRASE`.
+      Not on the list, contrary to expectation: FIPS (03.13.11) retrofits
+      cleanly with one reboot. Recorded in the README next to the lab numbers.
 
-      *Resume here:* re-run
-      `./apply.sh -i <byo-inventory> --limit byo-rl9-01` with
-      `NIST_BECOME_PASSWORD` exported, confirm it completes, then `./verify.sh`
-      and record the deviations for 2.2.
+- [x] **2.3 Confirm the non-lab connection path works.** *Proven by 2.1:* no
+      `.secrets/` existed on the control workstation at any point.
+      `lib/ssh-env.sh` fell through to `~/.ssh/known_hosts`, the key came from
+      `~/.ssh/id_rsa` (RSA-3072, so FIPS accepts it), sudo from
+      `NIST_BECOME_PASSWORD`, and after 03.05.03 the second SSH factor from an
+      operator-supplied `SSH_ASKPASS`. `apply.sh` re-recorded the host key in
+      `~/.ssh/known_hosts` after 03.13.10 rotated it, as designed.
 
-- [ ] **2.2 Write down which requirements a retrofit cannot satisfy.**
-  Expect the separate `/var/log/audit` filesystem (03.04.06) and FIPS from
-  first boot (03.13.11).
-  *Why:* this is the honest answer to "can I use this on my existing fleet?"
-  It belongs in the README next to the assessment numbers.
+---
 
-- [ ] **2.3 Confirm the non-lab connection path works.** No `.secrets/`, key
-  from `~/.ssh`, become password from the environment.
-  *Why:* `lib/ssh-env.sh` was changed to tolerate a missing `.secrets/`. That
-  change has been proven not to break the *lab*; it has not been proven to
-  *work* without one.
+## Phase 2b — defects Phase 2 uncovered
+
+Each was invisible on a kickstart-built host. Found by running the BYO path
+end to end; every fix was proven by reverting the guest to its pristine copy
+and running the whole path again.
+
+- [x] **2b.1 `site.yml` wrote into a directory only the kickstart created.**
+      (Opus, proven.) The pre_task now creates `/etc/nist-800-171`.
+
+- [x] **2b.2 03.04.06 aborted the play on a host without the LVM volumes.**
+      (Opus, now proven.) Stats each device, hardens what exists, records the
+      rest.
+
+- [x] **2b.3 `--check` could not complete on a never-applied host.** The
+      systemd failure Opus recorded was one of four kinds: enabling a unit
+      that check mode had not written or installed; `lineinfile` against a
+      package-owned file check mode had not installed (`fapolicyd.conf`,
+      `firewalld.conf`, `aide.conf`); `firewall-cmd` against a daemon that was
+      neither installed nor running; and a `restart fapolicyd` handler notified
+      by a task that reports a change in check mode. Verified locally first:
+      `copy` and `template` into a missing directory merely report a change,
+      so those needed nothing. The fix is one idiom, explained at the top of
+      `tasks/main.yml`: the providing task is registered and the consumer
+      carries `when: not (ansible_check_mode and (nist_x | default({})) is
+      changed)`, so it is skipped only in check mode and only while the
+      prerequisite is outstanding. On an applied host the tasks still run in
+      check mode and a disabled timer is still reported as drift — the
+      `--check` on the hardened host reports `changed=0`, not "skipped".
+      Widening a check or `failed_when: false` was not used.
+
+- [x] **2b.4 The role read the lab's `.secrets/` from inside two tasks**, so a
+      real apply on any host without one died at 03.10.07 (`admin_password`
+      as the GRUB superuser password) and would have died at 03.08.09 on a
+      host with volume-group space (`luks_passphrase`). Neither the README's
+      "make secrets is a prerequisite" note nor Opus's 2.1 note knew about the
+      first. Both are now role variables: `NIST_GRUB_PASSWORD` /
+      `NIST_LUKS_PASSPHRASE` from the environment, `.secrets/` only as the lab
+      fallback, and an explicit warning plus a reported deviation when
+      neither is present. A BYO host also should not get the lab admin
+      password as its bootloader password.
+
+- [x] **2b.5 Two checks failed for reasons that were the toolkit's, not the
+      host's.**
+      * `cm-01-baseline-manifest` asserted `/etc/nist-800-171/build-info`,
+        which only the kickstart's `%post` writes, so no retrofit host could
+        ever pass 03.04.01. The role now writes it, create-only, when absent —
+        and the record says `kickstart=none (retrofit ...)` rather than
+        claiming an install it did not do. The overlay's 03.04.01 text says
+        the same.
+      * `sc-10-host-key-strength` reported the stock image's ed25519 host key
+        as `unapproved:` with an empty type: under the FIPS policy this
+        baseline enforces, `ssh-keygen -l` refuses to read it and sshd cannot
+        load it. A kickstart host never has one (sshd-keygen skips it under
+        FIPS); a host that had FIPS turned on by the role keeps the key it
+        generated before. 03.05.04 now removes it and masks its generator
+        alongside dsa/ecdsa, and the check's evidence names the cause
+        (`unreadable-under-crypto-policy:`) instead of an empty string.
+
+- [x] **2b.6 Not idempotent on a host hardened from stock.** The second apply
+      re-set `/etc/ssh/sshd_config.d` and `/etc/fapolicyd/rules.d` to
+      `0755 root:root`: the drop-in pre-creation task imposed that mode before
+      the owning package was installed or upgraded later in the same run, and
+      the package (`0700`, and `root:fapolicyd`) reset it. The task now ensures
+      existence only; a package-created directory keeps the package's choice.
+      Invisible on the lab because the kickstart installs the packages first.
+      A third apply and a `--check` on the applied host both report
+      `changed=0`.
+
+- [x] **2b.7 Three more flip-flops, found by rebooting and applying again.**
+      The apply straight after a reboot changed five tasks; the next one
+      changed none. Each was read from evidence taken after the boot and
+      before the apply:
+      * `03.06.02` set `/var/log/journal` to 2750; systemd's own tmpfiles
+        entry resets it to 2755 at every boot. The task now matches the
+        vendor mode - the per-machine directory below is 2750 by the same
+        vendor rules and the journal files are 0640, so 2750 on the top
+        directory hid only the machine-id name.
+      * `03.14.08` chmod-ed `/var/log/firewalld` to 0600; firewalld reopens
+        it as 0640 root:root on every start (`os.fchmod` in its logger). The
+        rule is now "root and nobody else": 0600, or 0640 with group root.
+        The old test, numeric mode greater than 600, also let a 0440 file
+        owned by a service group through; it no longer does.
+      * `03.01.01` rewrote `/usr/sbin/nologin` to `/sbin/nologin` for an
+        account a package created later in the same run (clevis). The task
+        accepts both spellings, as the check has since 1b.2.
+      * Not defects: `03.16.02 support-status` records the running kernel and
+        the first apply installs a newer one, so the apply after that reboot
+        changes it once. With the new 03.14.08 rule, the apply after the
+        first reboot also tightened `/var/log/fapolicyd-access.log` (0440,
+        service group) once; fapolicyd does not reset it, and the apply
+        after a further reboot changed nothing.
+
+- [x] **2b.8 The first failed authentication on a hardened host broke sudo
+      for good.** `03.01.08` keeps the faillock tally under `/var/log/faillock`
+      so a lockout survives a reboot, but the targeted policy labels that path
+      `var_log_t` and pam_faillock is confined to `faillog_t`. Nothing fails
+      until an unsuccessful authentication creates a tally file there; from
+      then on SELinux denies every read of it, pam_faillock fails in sshd and
+      sudo alike, and sudo's stack fails before it asks for a password
+      (`pam_unix(sudo:auth): conversation failed`). One mistyped sudo
+      password on the retrofit host made sudo unusable, with root locked and
+      no lockout to wait out - recovered by reverting the guest. The lab
+      never saw it because no authentication ever failed there, which is
+      exactly what Phase 3.2 exists to try. The role now installs a
+      `faillog_t` file context for the directory and relabels it, and a new
+      check, `ac-08-faillock-dir-context`, reads the effective label so the
+      assessor would have reported it. Proven from scratch: after the fix a
+      deliberately wrong sudo password is recorded and the next correct one
+      is accepted.
 
 ---
 
@@ -226,6 +348,11 @@ so. Fix that on a throwaway guest, before needing it at 2am.
 - [ ] **3.1 Snapshot a guest.** `virsh snapshot-create-as rl9-cui-02 pre-lockout`
 - [ ] **3.2 Trigger a faillock lockout** (3 bad passwords) and recover with
       `faillock --user <name> --reset` from the console.
+      *Partly answered by accident in 2b.8:* before that fix, one bad password
+      did not lock the account - it broke sudo permanently, which no runbook
+      step covered. With the fix, one bad password is recorded and the next
+      good one works; the full three-strike lockout and the console reset are
+      still unrehearsed.
 - [ ] **3.3 Back MFA out from the console** and confirm you can log in with a
       key alone, then re-apply to restore it.
 - [ ] **3.4 Lock yourself out with the firewall** and recover via

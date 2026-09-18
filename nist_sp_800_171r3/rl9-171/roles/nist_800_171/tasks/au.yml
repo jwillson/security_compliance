@@ -11,6 +11,7 @@
       - audit-libs
       - rsyslog
     state: present
+  register: nist_audit_pkgs
   tags: ["03.03.01"]
 
 - name: "03.03.01 | Remove the stock placeholder rule file"
@@ -87,6 +88,9 @@
   loop:
     - auditd
     - rsyslog
+  # Check mode installs nothing, so on a host without the package there is
+  # no unit to evaluate. Skipped only then; see the note in main.yml.
+  when: not (ansible_check_mode and (nist_audit_pkgs | default({})) is changed)
   tags: ["03.03.01"]
 
 # The rule set itself is deployed by ac.yml (tagged 03.01.07 and 03.03.01) so
@@ -157,6 +161,7 @@
 
         [Install]
         WantedBy=timers.target
+  register: nist_audit_review_units
   notify: reload systemd
   tags: ["03.03.05"]
 
@@ -166,6 +171,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  # Check mode writes nothing, so on a host that lacks the unit there is
+  # nothing to enable. Skipped only then; see the note in main.yml.
+  when: not (ansible_check_mode and (nist_audit_review_units | default({})) is changed)
   tags: ["03.03.05", "03.12.03"]
 
 - name: "03.03.05 | Forward audit records to the correlation collector"
@@ -208,6 +216,7 @@
   ansible.builtin.dnf:
     name: chrony
     state: present
+  register: nist_chrony_pkg
   tags: ["03.03.07"]
 
 - name: "03.03.07 | Point the clock at authorized time sources"
@@ -230,6 +239,7 @@
     name: chronyd
     enabled: true
     state: started
+  when: not (ansible_check_mode and (nist_chrony_pkg | default({})) is changed)
   tags: ["03.03.07"]
 
 # ===========================================================================

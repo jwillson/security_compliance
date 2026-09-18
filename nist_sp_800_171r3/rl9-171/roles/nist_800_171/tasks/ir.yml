@@ -6,12 +6,19 @@
 # the pieces specific to incident monitoring.
 
 - name: "03.06.02 | Ensure the journal directory exists and is persistent"
+  # Existence is what makes journald persist (Storage=auto). The mode matches
+  # systemd's own tmpfiles entry (`z /var/log/journal 2755 root
+  # systemd-journal`), which is reapplied at every boot: the 2750 this task
+  # used to set was reverted by the next reboot and re-set by the next apply,
+  # for nothing - the per-machine directory below is 2750 by the same vendor
+  # rules and the journal files are 0640, so the top directory exposes only
+  # the machine-id name.
   ansible.builtin.file:
     path: /var/log/journal
     state: directory
     owner: root
     group: systemd-journal
-    mode: "2750"
+    mode: "2755"
   notify: restart journald
   tags: ["03.06.02"]
 

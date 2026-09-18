@@ -72,8 +72,11 @@
       changed=0
       while IFS=: read -r user _ uid _ _ _ shell; do
         # System accounts below UID_MIN must not be able to start a shell.
-        if [ "$uid" -lt 1000 ] && [ "$user" != "root" ] && [ "$user" != "sync" ] \
-           && [ "$shell" != "/sbin/nologin" ] && [ "$shell" != "/bin/false" ]; then
+        # /usr/sbin/nologin is the same binary under the /usr merge (clevis
+        # ships it); rewriting it to /sbin/nologin is not a hardening change
+        # and made the run after a package install report one.
+        case "$shell" in /sbin/nologin|/usr/sbin/nologin|/bin/false|/usr/bin/false) continue;; esac
+        if [ "$uid" -lt 1000 ] && [ "$user" != "root" ] && [ "$user" != "sync" ]; then
           usermod -s /sbin/nologin "$user" && changed=1
         fi
       done < /etc/passwd
@@ -401,6 +404,38 @@
     owner: root
     group: root
     mode: "0750"
+  tags: ["03.01.08"]
+
+# The tally lives under /var/log so a lockout survives a reboot, but the
+# policy labels that path var_log_t and pam_faillock may only touch
+# faillog_t. Nothing fails until the first unsuccessful authentication
+# creates a tally file there; from then on SELinux denies every read of it,
+# pam_faillock fails in sshd and sudo alike, and sudo's stack fails before it
+# can even ask for a password. Proven on the retrofit host: one mistyped
+# sudo password made sudo unusable for good. The lab never saw it because no
+# authentication ever failed there.
+- name: "03.01.08 | Install the SELinux management tools"
+  ansible.builtin.dnf:
+    name: policycoreutils-python-utils
+    state: present
+  register: nist_semanage_pkg
+  tags: ["03.01.08"]
+
+- name: "03.01.08 | Label the faillock state directory for pam_faillock"
+  community.general.sefcontext:
+    target: "/var/log/faillock(/.*)?"
+    setype: faillog_t
+    state: present
+  # semanage comes with the package; check mode cannot install it.
+  when: not (ansible_check_mode and (nist_semanage_pkg | default({})) is changed)
+  register: nist_faillock_fcontext
+  tags: ["03.01.08"]
+
+- name: "03.01.08 | Apply the label to the directory and any existing tally"
+  ansible.builtin.command:
+    cmd: restorecon -Rv /var/log/faillock
+  register: nist_faillock_restorecon
+  changed_when: nist_faillock_restorecon.stdout | trim | length > 0
   tags: ["03.01.08"]
 
 - name: "03.01.08 | Enable faillock in the PAM stack via authselect"

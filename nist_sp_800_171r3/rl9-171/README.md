@@ -108,7 +108,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-327 checks cover the 69 enforceable requirements. Each declares exactly one
+328 checks cover the 69 enforceable requirements. Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -166,20 +166,46 @@ exactly the tasks implementing Password Management and nothing else.
 
 ### Applying to an existing host
 
-The role is not VM-specific, and the VM targets are not a prerequisite. Point
-the inventory at any Rocky 9 host reachable over SSH with sudo:
+The role is not VM-specific, and neither the VM targets nor `.secrets/` are
+prerequisites. Point the inventory at any Rocky 9 host reachable over SSH
+with sudo, and supply the two secrets the role consumes from your own
+environment:
 
 ```bash
 cp inventory/hosts.yml.example inventory/hosts.yml
 $EDITOR inventory/hosts.yml
-make secrets                     # 03.08.09 reads .secrets/luks_passphrase
-./apply.sh --check --diff        # see what would change first
+export NIST_BECOME_PASSWORD=...  # sudo, if the host asks for one
+export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
+export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
+./apply.sh --check --diff        # dry run; completes on a host never applied
 ./apply.sh && ./verify.sh
 ```
 
-The VM and ISO targets are not prerequisites, but `make secrets` is: 03.08.09
-formats the encrypted CUI volumes with the passphrase it generates, so an
-apply without it fails mid-run on any host with free volume-group space.
+Without `NIST_GRUB_PASSWORD` the bootloader is left as it is and
+`pe-07-grub-password` is reported as a deviation; without
+`NIST_LUKS_PASSPHRASE` on a host with room for the CUI volumes, 03.08.09 and
+03.13.08 are skipped and reported. Neither aborts the run. The lab build
+supplies both from `.secrets/` (`make secrets`), which the role reads only
+when the environment says nothing.
+
+**What a retrofit reports.** Proven against a stock Rocky 9.8 GenericCloud
+guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
+an Ubuntu workstation with no `.secrets/`: the dry run completes on the
+never-applied host, the apply completes with one reboot, and the assessment
+reports **41 satisfied, 23 partial, 5 not satisfied, 28 organizational** —
+328 checks, 6 failed — against 43 / 26 / 0 / 28 on the kickstart-built lab.
+Every failure is an install-time limit the role records rather than hides:
+
+| Requirement | Check | Why a retrofit cannot satisfy it |
+|---|---|---|
+| 03.04.06 | `cm-06-mount-options`, `cm-06-tmp-separate` | `/home`, `/tmp`, `/var/tmp`, `/var/log`, `/var/log/audit` are not separate filesystems; the role writes `unretrofittable-mounts` naming them |
+| 03.01.18, 03.08.03, 03.08.09, 03.13.08 | one LUKS check each | the encrypted CUI and backup volumes need free space in `vg_sys`; this host has no volume group |
+
+FIPS (03.13.11) is *not* on that list: it retrofits with one reboot. A host
+with an LVM root and 3 GB free passes the LUKS checks too, given
+`NIST_LUKS_PASSPHRASE`. The apply after the reboot records the kernel the
+security updates installed and is otherwise settled; the apply after that
+reports `changed=0`, and so does `./apply.sh --check` on the hardened host.
 
 ```yaml
 # inventory/hosts.yml
@@ -349,7 +375,7 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               327 check definitions
+│   └── checks.yml               328 check definitions
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls

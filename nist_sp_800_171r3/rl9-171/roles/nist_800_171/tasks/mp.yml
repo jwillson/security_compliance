@@ -33,20 +33,42 @@
 
 - name: "03.08.09 | Record whether encrypted volumes can be created"
   ansible.builtin.set_fact:
-    nist_can_encrypt: >-
+    nist_vg_has_space: >-
       {{ (nist_vg_free.rc | default(1)) == 0 and
          (nist_vg_free.stdout | default('0') | trim | float) >= 3.0 }}
+    nist_can_encrypt: >-
+      {{ (nist_vg_free.rc | default(1)) == 0 and
+         (nist_vg_free.stdout | default('0') | trim | float) >= 3.0 and
+         (nist_luks_passphrase | length > 0) }}
+  tags: ["03.08.09", "03.13.08"]
+
+- name: "03.08.09 | Warn if no LUKS passphrase was supplied"
+  ansible.builtin.debug:
+    msg: >-
+      Volume group {{ nist_vg_name }} has room for the CUI and backup volumes,
+      but no passphrase was supplied: NIST_LUKS_PASSPHRASE is not set and
+      .secrets/luks_passphrase does not exist (make secrets). 03.08.09 and
+      03.13.08 are skipped, not silently passed - the assessor will report
+      them.
+  when: nist_vg_has_space and nist_luks_passphrase | length == 0
   tags: ["03.08.09", "03.13.08"]
 
 - name: "03.08.09 | Warn if there is not enough free space for encrypted volumes"
   ansible.builtin.debug:
     msg: >-
+      {% if (nist_vg_free.rc | default(1)) != 0 -%}
+      Volume group {{ nist_vg_name }} does not exist on this host (or lvm2 is
+      not installed), so there is nowhere to create the CUI and backup
+      volumes.
+      {%- else -%}
       Volume group {{ nist_vg_name }} has
       {{ nist_vg_free.stdout | default('0') | trim }} GB free, which is not
-      enough for the CUI and backup volumes. 03.13.08 (storage confidentiality)
-      and 03.08.09 (backup encryption) cannot be satisfied until space is
-      available. The auditor will report both as failing.
-  when: not nist_can_encrypt
+      enough for the CUI and backup volumes.
+      {%- endif %}
+      03.13.08 (storage confidentiality) and 03.08.09 (backup encryption)
+      cannot be satisfied until space is available. The auditor will report
+      both as failing.
+  when: not nist_vg_has_space
   tags: ["03.08.09", "03.13.08"]
 
 - name: "03.08.09 | Create the encrypted volumes"
@@ -67,7 +89,7 @@
 
     - name: "03.08.09 | Stage the LUKS key file"
       ansible.builtin.copy:
-        content: "{{ lookup('file', playbook_dir + '/.secrets/luks_passphrase') }}"
+        content: "{{ nist_luks_passphrase }}"
         dest: /root/.luks-key
         owner: root
         group: root

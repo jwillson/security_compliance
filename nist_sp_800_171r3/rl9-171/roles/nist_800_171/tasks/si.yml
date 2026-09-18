@@ -8,6 +8,7 @@
   ansible.builtin.dnf:
     name: dnf-automatic
     state: present
+  register: nist_dnf_automatic_pkg
   tags: ["03.14.01"]
 
 - name: "03.14.01 | Apply security updates automatically"
@@ -42,6 +43,8 @@
     enabled: true
     state: started
     daemon_reload: true
+  # The timer ships with the package; check mode cannot install it.
+  when: not (ansible_check_mode and (nist_dnf_automatic_pkg | default({})) is changed)
   tags: ["03.14.01"]
 
 - name: "03.14.01 | Apply outstanding security updates now"
@@ -325,15 +328,26 @@
   tags: ["03.14.08", "03.03.08", "03.06.02"]
 
 - name: "03.14.08 | Tighten permissions on existing log files"
+  # A log file may be read by root and nobody else. That is 0600, or 0640
+  # with group root, which exposes nothing further: firewalld reopens
+  # /var/log/firewalld as 0640 root:root on every start (os.fchmod in its
+  # logger), so chmod-ing it to 0600 here was undone by the next boot and
+  # redone by the next apply. Anything readable by another group or by
+  # others is tightened. The old test, "numeric mode greater than 600",
+  # also let a 0440 file owned by a service group through.
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
       changed=0
       while read -r f; do
         [ -f "$f" ] || continue
-        if [ "$(stat -c %a "$f")" -gt 600 ] 2>/dev/null; then
-          chmod 0600 "$f"; changed=1
+        read -r mode group <<<"$(stat -c '%a %G' "$f")"
+        gopl=$(( 8#$mode & 8#077 ))          # group + other bits
+        [ "$gopl" -eq 0 ] && continue
+        if [ "$group" = root ] && [ $(( gopl & 8#037 )) -eq 0 ]; then
+          continue                          # group read only, group root
         fi
+        chmod 0600 "$f"; changed=1
       done < <(find /var/log -maxdepth 1 -type f)
       echo "changed=$changed"
     executable: /bin/bash
