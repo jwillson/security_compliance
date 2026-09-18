@@ -414,8 +414,13 @@ copies make a failed one cheap.
 
 No amount of testing substitutes for these. Each is a live commitment.
 
-- [ ] **4.1 Review all 29 machine ODPs and all 47 organizational ODPs** in
-      `catalog/overlay-rocky9.yml`.
+- [ ] **4.1 Review all 28 machine ODPs and all 47 organizational ODPs** in
+      `catalog/overlay-rocky9.yml`. *Decision list ready:*
+      `rl9-171/docs/ODP-REVIEW.md` maps all 80 decision points in the 97
+      statements to the register, states every finding of 4.1b with the
+      current value, a recommended value, and a decision line, and adds
+      the 13 assignments that had no ODP at all. When the decision lines
+      are filled in, the overlay, checks and tasks are changed to match.
       *Why:* they are defaults drawn from common DoD CUI practice, not your
       organization's values. `make validate` confirms nothing references a
       parameter that does not exist — it cannot tell you a number is wrong.
