@@ -32,6 +32,7 @@ never been applied.
 | BYO retrofit, no `.secrets/` at all (2.1) | `byo-rl9-01` and `byo-log-01` 34/30/5/28 — 6 checks failed, **all five requirements documented retrofit limits** (2.2) |
 | BYO pair, 2026-09-25, after a week powered off | 33/30/6/28 on both — the five retrofit limits plus `si-01`: 21 security advisories pending. A host finding, cleared by the next apply |
 | `byo-rl9-02`, first cycle, 2026-09-25 (`tools/harden-cycle.sh`) | **35/31/3/28**, 6 checks failed: 03.01.01 and 03.05.12 (6b.4 — the checks catch it) and 03.04.06 (no separate `/tmp`, the retrofit limit). Dry run, apply, reboot, apply, then `changed=0`. The LUKS requirements PASS with the key in cleartext beside the volumes (6b.5), and 03.10.07 PASSes with no GRUB password (6b.2) |
+| `byo-rl9-02`, from `fresh` at `f96ae2b` (6b.2, 6b.3, 6b.4, 6b.6 fixed) | **35/33/1/28**, 2 checks failed — both 03.04.06, the retrofit limit (no separate `/tmp`). Dry run on the stock host `failed=0`, reboot unattended, then `changed=0`. The before/after evidence shows each fix; 6b.5 (LUKS key placement, TPM bind) is unchanged and still passes checks it should not |
 | `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
 
 **Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
