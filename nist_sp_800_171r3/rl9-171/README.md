@@ -424,7 +424,8 @@ rl9-171/
 │   ├── inventory.py             owns inventory/hosts.yml across VMs
 │   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
 │   ├── probe.sh, probes/        read-only evidence probes run on hosts
-│   └── assessor-parity.sh       two assessor versions, same hosts, every check compared
+│   ├── assessor-parity.sh       two assessor versions, same hosts, every check compared
+│   └── harden-cycle.sh          one recorded apply/reboot/apply/verify cycle on a host
 ├── lib/ssh-env.sh               supplies the MFA knowledge factor to ssh
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile

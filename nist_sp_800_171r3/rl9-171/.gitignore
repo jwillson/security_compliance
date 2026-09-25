@@ -9,6 +9,10 @@ iso/CHECKSUM
 inventory/hosts.yml
 reports/*.json
 reports/*.html
+# tools/harden-cycle.sh: one directory of logs and evidence per run.
+reports/runs/
+# Python bytecode from running tools/ and tests/.
+__pycache__/
 
 # Derived from the PDF; regenerate with `make catalog`.
 # Tracked deliberately so the mapping can be reviewed in diffs:

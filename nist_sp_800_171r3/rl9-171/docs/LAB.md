@@ -121,6 +121,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 
 | Script | Use |
 | --- | --- |
+| `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind TASKS 6b.2–6b.6; run it before and after a fix and diff. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
 
@@ -128,9 +129,12 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 
 ```bash
 ./vm/byo-snapshot.sh revert byo-rl9-02 fresh
-./apply.sh --check --diff --limit byo-rl9-02
-./apply.sh --limit byo-rl9-02            # then reboot, as apply.sh reports
-./apply.sh --limit byo-rl9-02            # settles; the next one is changed=0
-./verify.sh --host byo-rl9-02
-./vm/byo-snapshot.sh save byo-rl9-02 hardened
+./tools/harden-cycle.sh byo-rl9-02 --snapshot hardened
 ```
+
+**A new forwarder must be admitted by the collector.** The collector's TLS
+listener accepts only the certificate names in `nist_col_peers`, which is
+`cui_hosts` as it stood when the collector was last applied. A host added to
+the inventory afterwards is refused until the collector's 03.03.05 tasks run
+again; `harden-cycle.sh` does that step (`apply.sh --limit COLLECTOR --tags
+03.03.05`) whenever the host forwards to an inventory collector.

@@ -264,8 +264,12 @@ cmd_build() {
 cmd_check() {
   local name=${1:?name}; local ip; ip=$(guest_ip "$name")
   say "$name ($ip)"
-  # sudo reads byoadmin's password on stdin; nothing is changed.
-  "${SSH[@]}" "byoadmin@$ip" 'sudo -S -p "" bash -s' < <(cat "$LAB/byoadmin_password"; cat <<'EOF'
+  # Through ansible, not ssh: the inventory carries the second factor and
+  # become, so this works on a stock guest and on a hardened one alike.
+  # Read-only.
+  local probe; probe=$(mktemp); trap 'rm -f "$probe"' RETURN
+  cat > "$probe" <<'EOF'
+#!/bin/bash
 echo "release       $(cat /etc/rocky-release)"
 echo "openssh       $(rpm -q --qf '%{VERSION}' openssh-server)"
 echo "accounts      $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){printf "%s ", $1}' /etc/passwd)"
@@ -273,8 +277,13 @@ echo "vg_sys free   $(vgs --noheadings --units g -o vg_free vg_sys 2>/dev/null |
 echo "tpm           $( [ -e /dev/tpmrm0 ] && echo present || echo none)"
 sb=$(od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-* 2>/dev/null | awk '{print $NF}')
 echo "secure boot   $( [ "$sb" = 1 ] && echo enabled || echo "disabled/unknown")"
+echo "fips          $(cat /proc/sys/crypto/fips_enabled 2>/dev/null)"
 EOF
-)
+  (cd "$ROOT" && ansible "$name" -b -m ansible.builtin.script -a "$probe" -o 2>/dev/null) \
+    | python3 -c 'import json,re,sys
+for l in sys.stdin:
+    m = re.search(r"=> (\{.*\})\s*$", l)
+    print((json.loads(m.group(1)).get("stdout") or json.loads(m.group(1)).get("msg","")).strip() if m else l.rstrip())'
 }
 
 cmd_destroy() {

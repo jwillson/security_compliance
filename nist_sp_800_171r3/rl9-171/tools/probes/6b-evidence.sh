@@ -47,6 +47,19 @@ for d in $(lsblk -pnlo NAME,TYPE 2>/dev/null | awk '$2=="lvm"{print $1}'); do
   p 6b.5 "clevis:$(basename "$d")" "$(clevis luks list -d "$d" 2>/dev/null | awk '{print $2}' | paste -sd, - || true)"
 done
 p 6b.5 tpm "$( [ -e /dev/tpmrm0 ] && echo present || echo none)"
+# Why a clevis tpm2 bind would fail: the tooling the role installs with
+# failed_when: false, and whether the TPM answers a read of the PCR the
+# role seals to (PCR 7). Both read-only.
+p 6b.5 clevis-packages "$(rpm -q clevis clevis-luks clevis-systemd clevis-dracut tpm2-tools 2>&1 | sed 's/ is not installed/:MISSING/;s/-[0-9].*//' | paste -sd' ' -)"
+if [ -e /dev/tpmrm0 ] && command -v tpm2_pcrread >/dev/null; then
+  p 6b.5 tpm-pcr7 "$(tpm2_pcrread sha256:7 2>&1 | awk '/7 *:/ {print "readable"; f=1} END {if (!f) print "UNREADABLE"}')"
+  # Seal a throwaway string with the role's exact pin and policy. It writes
+  # nothing to disk or to the LUKS headers; only a transient TPM object.
+  if command -v clevis >/dev/null; then
+    err=$(echo probe | clevis encrypt tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' 2>&1 >/dev/null)
+    p 6b.5 clevis-tpm2-seal "$([ $? -eq 0 ] && echo works || echo "FAILS: $(echo "$err" | tail -1)")"
+  fi
+fi
 
 # --- 6b.6 03.03.05c audit records reaching the collector -------------------
 p 6b.6 local-audit-records "$(wc -l < /var/log/audit/audit.log 2>/dev/null || echo 0)"

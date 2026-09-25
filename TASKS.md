@@ -31,6 +31,7 @@ never been applied.
 | Kickstart, rebuilt with rotated secrets (5.1) | `rl9-cui-01` 36/33/0/28, `rl9-log-01` 35/34/0/28 — 334 checks, **0 failed** both |
 | BYO retrofit, no `.secrets/` at all (2.1) | `byo-rl9-01` and `byo-log-01` 34/30/5/28 — 6 checks failed, **all five requirements documented retrofit limits** (2.2) |
 | BYO pair, 2026-09-25, after a week powered off | 33/30/6/28 on both — the five retrofit limits plus `si-01`: 21 security advisories pending. A host finding, cleared by the next apply |
+| `byo-rl9-02`, first cycle, 2026-09-25 (`tools/harden-cycle.sh`) | **35/31/3/28**, 6 checks failed: 03.01.01 and 03.05.12 (6b.4 — the checks catch it) and 03.04.06 (no separate `/tmp`, the retrofit limit). Dry run, apply, reboot, apply, then `changed=0`. The LUKS requirements PASS with the key in cleartext beside the volumes (6b.5), and 03.10.07 PASSes with no GRUB password (6b.2) |
 | `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
 
 **Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
@@ -204,8 +205,16 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       tpm2` (PCR 7), best-effort with `failed_when: false`. But a successful
       bind leaves the key file on disk and `crypttab` still pointing at it,
       and the task's comment — "a host without a TPM keeps the key file,
-      which the auditor reports" — is false: no check reports it. The lab
-      guests have no TPM, so the bind has never run.
+      which the auditor reports" — is false: no check reports it.
+      *And the bind does not work where there is a TPM.* On `byo-rl9-02`
+      (TPM 2.0, Secure Boot, first run of the LUKS path on any lab guest)
+      both binds exit 1 with no output, first apply and every one after;
+      `failed_when: false` reports that as `ok`. The platform is not the
+      cause: the clevis packages are installed, PCR 7 reads, and `clevis
+      encrypt tpm2` with the role's exact pin seals (`tools/probe.sh
+      6b-evidence`). It is `clevis luks bind` itself, which writes the LUKS
+      header, so the root cause is left to the fix. Reproduce with
+      `./apply.sh --limit byo-rl9-02 --tags 03.13.10 -v`.
       **Owner decision before any code:** clevis + TPM2 (needs a vTPM on the
       guests), clevis + tang (needs a tang server), a passphrase at boot
       (gives up unattended boot), or root encrypted at install. The cloud
@@ -230,6 +239,34 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       110k records a week on an idle host; the collector check requires an
       audit record (`type=`) from another host; a forwarder check asserts the
       plugin is active. 6.2a depends on this.
+
+- [x] **6b.7 `--check` failed on a never-applied host that has a volume
+      group.** *Found and fixed 2026-09-25 on `byo-rl9-02`, its first run.*
+      With room in `vg_sys` and a LUKS passphrase, check mode reports the
+      logical volumes as "would be created" and skips the format and open
+      shell tasks, so `/dev/mapper/cui_data` never exists and "Create
+      filesystems on the encrypted volumes" failed on the missing device
+      (`failed=1`, 118 tasks in). AGENTS.md promises the dry run completes on
+      a never-applied host; 2b.3 made that true only on the paths the labs
+      had exercised — the retrofit guest has no volume group, and the
+      kickstart hosts had their volumes before anyone ran `--check`.
+      *Fix:* the 2b.3 idiom in `mp.yml` — the LV task registers
+      `nist_luks_lvs`, and the filesystem and mount tasks are skipped only in
+      check mode while it is outstanding. *Proven:* reverted to `fresh`, the
+      dry run then completed, `ok=183 changed=123 failed=0`.
+      Moves to DEFECTS.md with the rest of 6b when the series closes.
+
+- [x] **6b.8 `--tags 03.13.10` failed: "'nist_can_encrypt' is undefined".**
+      *Found and fixed 2026-09-25, reproducing 6b.5.* The TPM bind carries
+      the 03.13.10 tag, but the two tasks that compute `nist_vg_free` and
+      `nist_can_encrypt`, which its block depends on, were tagged only
+      03.08.09 / 03.13.08, so selecting 03.13.10 alone evaluated the block's
+      `when` against an undefined fact and failed the play — the promise of
+      1b.7 (a requirement tag selects that requirement's tasks) broken for
+      this one. *Fix:* both tasks also carry 03.13.10. `| default(false)`
+      would have been wrong: the bind would then silently run nothing, 1b.7's
+      original failure. *Proven:* `--tags 03.13.10` reaches the bind task,
+      `failed=0`.
 
 ---
 
@@ -357,8 +394,10 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       --connection byo` replaces the hand-edited inventory entries (proven
       byte-identical). `tools/probe.sh 6b-evidence` and
       `tools/assessor-parity.sh` script the evidence and the PR #2 method.
-      *Remaining:* the syslog-ng container (6.2a, after 6b.6), and applying
-      the current role to `byo-rl9-02` to record the defects as they stand.
+      `tools/harden-cycle.sh` runs and records a full cycle; its first run,
+      on `byo-rl9-02`, found 6b.7 and 6b.8 and the 6b.5 bind failure, and
+      reproduced 6b.2–6b.6 (`reports/runs/`, before/after evidence).
+      *Remaining:* the syslog-ng container (6.2a, after 6b.6).
 
 ---
 

@@ -22,7 +22,6 @@ set -euo pipefail
 
 IMAGES=/var/lib/libvirt/images
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
-KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
 VIRSH=(virsh -c qemu:///system)
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -53,9 +52,12 @@ stop() {
 wait_ssh() {
   local ip; ip=$(cat "$LAB/$1/ip" 2>/dev/null || true)
   [[ -n "$ip" ]] || { say "no $LAB/$1/ip; not waiting for SSH"; return 0; }
+  # Wait for sshd to present its host key, not for a login: a hardened host
+  # requires publickey,password (03.05.03), which a non-interactive key-only
+  # probe cannot satisfy and must not be able to.
   local i; for i in $(seq 1 60); do
-    timeout 20 ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=5 "byoadmin@$ip" true 2>/dev/null \
-      && { say "$1 up, SSH answering"; return 0; }
+    timeout 10 ssh-keyscan -T 5 "$ip" 2>/dev/null | grep -q . \
+      && { say "$1 up, sshd answering"; return 0; }
     sleep 5
   done
   die "$1 did not answer SSH within 5 minutes"
