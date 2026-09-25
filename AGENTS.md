@@ -75,6 +75,24 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
   `ansible.posix.*`, `community.general.*`) and carry their requirement ID as
   a tag.
 
+## Doctrine
+
+Set by the owner on 2026-09-25. Both exist so that nothing the project knows
+lives only in one session's scrollback or one agent's memory.
+
+- **Script everything run against a host.** Building or changing a lab guest,
+  a probe that gathers evidence for a finding, a comparison between two
+  versions of the assessor: each is a committed script (lab builds in
+  `rl9-171/vm/`, probes and comparisons in `rl9-171/tools/`), run from the
+  repo. An exploratory one-off is allowed only as the first draft of the
+  script it becomes. Secrets never go in a script; it reads them from the
+  environment or the lab directory. Re-running it must reproduce the result.
+- **Keep documentation fresh, in the repo.** A fact learned while working —
+  how the lab is built, why a check was changed, what a host showed — goes
+  into the file that owns it (README, RUNBOOK, TASKS, DEFECTS, a script's
+  header) in the same change that relies on it. Memory and chat are not
+  documentation; a doc that disagrees with the code is a defect.
+
 Operator procedure, including recovery paths, is
 `nist_sp_800_171r3/rl9-171/docs/RUNBOOK.md`.
 
