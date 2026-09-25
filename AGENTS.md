@@ -13,7 +13,7 @@ deliberately reading history.
 
 Superseded trees (`r3/`, `os/`, `stig/`) were removed once their reconciliation
 had served its purpose, and the orphaned `web/` nginx snippet went the same way
-(TASKS.md 4.5). They remain in git history if ever needed.
+(DEFECTS.md 4.5). They remain in git history if ever needed.
 
 ## Source of truth
 
@@ -75,6 +75,12 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
 
 Operator procedure, including recovery paths, is
 `nist_sp_800_171r3/rl9-171/docs/RUNBOOK.md`.
+
+`TASKS.md` at the repo root holds only open work. The closed phases and the
+defect record are `rl9-171/docs/DEFECTS.md`, cited by phase number (1b.4,
+2b.8, 3.2, 4.4); the ODP decisions are `rl9-171/docs/ODP-REVIEW.md`. When a
+comment or rationale cites a phase number, it cites the file that still holds
+it — do not point those back at `TASKS.md`.
 
 ## First commands
 

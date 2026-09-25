@@ -36,8 +36,9 @@ five are the separate filesystems and LUKS volumes only an install can
 create, and the role records them rather than hiding them.
 
 Open work is tracked in [TASKS.md](TASKS.md) — what is proven against a
-running host, what is written but not yet executed, and the decisions that
-need a system owner rather than a test.
+running host, what remains, and the decisions that need a system owner rather
+than a test. The closed phases, and the defects found earning those claims,
+are in [docs/DEFECTS.md](nist_sp_800_171r3/rl9-171/docs/DEFECTS.md).
 
 Audit-record forwarding (03.03.05c) needs somewhere to forward to. `make vm-log`
 builds a second host — a log collector, hardened by the same overlay and taught

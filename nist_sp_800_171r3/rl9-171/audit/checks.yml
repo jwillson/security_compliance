@@ -244,7 +244,7 @@ checks:
     description: The lockout lasts at least the ODP duration
     # Equality, not ">=": 0 means "until an administrator resets", the strictest
     # setting, which ">=" would have failed - and which a single-admin host
-    # cannot recover from (TASKS.md 3.2).
+    # cannot recover from (DEFECTS.md 3.2).
     command: |
       u=$(grep -oP '(?<=^unlock_time\s=\s).*|(?<=^unlock_time=).*' /etc/security/faillock.conf | head -1)
       if [ "$u" = "{odp.lockout_duration_seconds}" ]; then echo ok; else echo "unlock_time=${u:-unset}"; fi

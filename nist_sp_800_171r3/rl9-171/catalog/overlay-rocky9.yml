@@ -143,7 +143,7 @@ odp_organizational:
     requirement: "03.01.08"
     parameter: "Selection (statement b): lock the account or node, or delay"
     value: "lock the account for lockout_duration_seconds (900 s); node lock and delay not used"
-    rationale: "pam_faillock; rehearsed (TASKS.md 3.2): a locked single-admin host waits out the period."
+    rationale: "pam_faillock; rehearsed (DEFECTS.md 3.2): a locked single-admin host waits out the period."
   # 03.01.10 Device Lock
   - id: device_lock_mode
     requirement: "03.01.10"
@@ -456,7 +456,7 @@ odp_organizational:
   - id: malware_scan_freq
     requirement: "03.14.02"
     parameter: "Scan frequency (statement c)"
-    value: "continuous execution control (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled (off by default, TASKS.md 4.2)"
+    value: "continuous execution control (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled (off by default, DEFECTS.md 4.2)"
     rationale: "fapolicyd is always on; ClamAV needs EPEL and is a per-host opt-in."
 
   # 03.15.01 Policy and Procedures

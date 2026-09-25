@@ -46,7 +46,7 @@ nist_log_collector_name: "{{ (groups['log_hosts'] | default([]) | first) | defau
 # The five continuous-monitoring schedules are machine ODPs in the overlay
 # (odp.*_schedule): the role writes them into the timers and the assessor reads
 # them back. Only the ClamAV scan schedule stays here, because ClamAV is off by
-# default (TASKS.md 4.2).
+# default (DEFECTS.md 4.2).
 
 # --- 03.05.03 Multi-factor authentication ---
 # Requiring a public key in addition to a password locks out anyone who has not

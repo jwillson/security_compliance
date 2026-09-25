@@ -1,6 +1,6 @@
 # ODP review — decisions for the system owner
 
-TASKS.md 4.1 / 4.1b. The overlay holds 94 organization-defined parameters
+DEFECTS.md 4.1 / 4.1b. The overlay holds 94 organization-defined parameters
 (32 machine-enforced in `odp:`, 62 in `odp_organizational:`) against the 80
 organization-defined decision points in the 97 active statements of SP
 800-171r3. Every value started as a default drawn from common practice;
@@ -186,7 +186,7 @@ Decision: accepted 2026-09-18.
 
 **D12. 03.14.02c — malicious-code scan frequency.** fapolicyd is
 continuous; the ClamAV timer, when enabled, runs daily at 03:00 (off by
-default, TASKS.md 4.2).
+default, DEFECTS.md 4.2).
 Recommendation: add `malware_scan_freq: "continuous execution control
 (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled"`.
 Decision: accepted 2026-09-18.
@@ -233,10 +233,10 @@ Decision: accepted 2026-09-18.
 
 ## G. Already decided (recorded here for completeness)
 
-- `ir_authorities` stays CISA-based: the population is non-DoD CUI (TASKS.md
+- `ir_authorities` stays CISA-based: the population is non-DoD CUI (DEFECTS.md
   4.1b, 2026-09-17).
-- `patch_window_days` removed: dead machine ODP (TASKS.md 4.1c).
-- ClamAV off, fapolicyd enforcing (TASKS.md 4.2, 4.3).
+- `patch_window_days` removed: dead machine ODP (DEFECTS.md 4.1c).
+- ClamAV off, fapolicyd enforcing (DEFECTS.md 4.2, 4.3).
 
 ## H. Values accepted as they are
 
