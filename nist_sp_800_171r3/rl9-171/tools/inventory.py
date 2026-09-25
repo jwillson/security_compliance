@@ -9,6 +9,8 @@ address of until the collector exists.
 
     ./tools/inventory.py add rl9-cui-01 --ip 10.0.0.10 --role cui
     ./tools/inventory.py add rl9-log-01 --ip 10.0.0.11 --role log
+    ./tools/inventory.py add byo-rl9-02 --ip 192.168.171.142 --user byoadmin \
+        --connection byo
     ./tools/inventory.py remove rl9-cui-01
     ./tools/inventory.py show
 
@@ -16,6 +18,14 @@ Roles:
     cui   a host the overlay hardens, forwarding its records to the collector
     log   the collector. Also a CUI host - it stores audit records, so it is
           hardened by the same overlay - and additionally receives.
+
+Connections:
+    lab   a host vm/build-vm.sh built: the lab key, sudo password and
+          known_hosts under .secrets/ (the default).
+    byo   a host you already have (vm/byo-guest.sh, or real hardware): the
+          operator's own key (--key, default ~/.ssh/id_rsa), the sudo
+          password from NIST_BECOME_PASSWORD, and the operator's known_hosts.
+          Nothing is read from .secrets/.
 """
 from __future__ import annotations
 
@@ -42,7 +52,8 @@ HEADER = """\
 # a log host rewires it.
 """
 
-CONNECTION = {
+CONNECTIONS = {}
+CONNECTIONS["lab"] = {
     "ansible_ssh_private_key_file": "{{ playbook_dir }}/.secrets/id_rsa",
     "ansible_become": True,
     "ansible_become_method": "sudo",
@@ -51,6 +62,11 @@ CONNECTION = {
     "ansible_ssh_common_args":
         "-o StrictHostKeyChecking=yes "
         "-o UserKnownHostsFile={{ playbook_dir }}/.secrets/known_hosts",
+}
+CONNECTIONS["byo"] = {
+    "ansible_become": True,
+    "ansible_become_method": "sudo",
+    "ansible_become_password": "{{ lookup('env', 'NIST_BECOME_PASSWORD') }}",
 }
 
 
@@ -101,7 +117,9 @@ def save(data: dict) -> None:
 
 def cmd_add(args) -> int:
     data = load()
-    host = dict(CONNECTION)
+    host = dict(CONNECTIONS[args.connection])
+    if args.connection == "byo":
+        host["ansible_ssh_private_key_file"] = args.key
     host["ansible_host"] = args.ip
     host["ansible_user"] = args.user
 
@@ -156,6 +174,9 @@ def main() -> int:
     a.add_argument("--ip", required=True)
     a.add_argument("--user", default="cuiadmin")
     a.add_argument("--role", choices=("cui", "log"), default="cui")
+    a.add_argument("--connection", choices=sorted(CONNECTIONS), default="lab")
+    a.add_argument("--key", default="~/.ssh/id_rsa",
+                   help="private key for --connection byo")
     a.set_defaults(fn=cmd_add)
 
     r = sub.add_parser("remove", help="remove a host")

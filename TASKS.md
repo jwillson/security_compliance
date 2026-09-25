@@ -31,6 +31,7 @@ never been applied.
 | Kickstart, rebuilt with rotated secrets (5.1) | `rl9-cui-01` 36/33/0/28, `rl9-log-01` 35/34/0/28 — 334 checks, **0 failed** both |
 | BYO retrofit, no `.secrets/` at all (2.1) | `byo-rl9-01` and `byo-log-01` 34/30/5/28 — 6 checks failed, **all five requirements documented retrofit limits** (2.2) |
 | BYO pair, 2026-09-25, after a week powered off | 33/30/6/28 on both — the five retrofit limits plus `si-01`: 21 security advisories pending. A host finding, cleared by the next apply |
+| `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
 
 **Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
 on 2026-09-25 found five role defects, and in four of them the check was as
@@ -193,11 +194,18 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
 
 - [ ] **6b.5 03.08.09 / 03.13.08: the LUKS key sits beside the data it
       unlocks.** `mp.yml` stages `/root/.luks-key` and `crypttab` points at
-      it; the kickstart's `lv_root` is plain xfs. Anyone holding the disk
-      reads the key and opens the CUI and backup volumes, so encryption at
-      rest protects against nothing it exists for. The checks (`mp-03-`,
+      it; the kickstart's `lv_root` is plain xfs. The "key file" is
+      `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk
+      reads it and opens the CUI and backup volumes, so encryption at rest
+      protects against nothing it exists for. The checks (`mp-03-`,
       `sc-08-luks-*`, `mp-09-luks-cipher`, `sc-10-luks-kdf`) count crypt
       devices and read ciphers; nothing asks where the key lives.
+      *The intended design was TPM2:* `mp.yml` runs `clevis luks bind ...
+      tpm2` (PCR 7), best-effort with `failed_when: false`. But a successful
+      bind leaves the key file on disk and `crypttab` still pointing at it,
+      and the task's comment — "a host without a TPM keeps the key file,
+      which the auditor reports" — is false: no check reports it. The lab
+      guests have no TPM, so the bind has never run.
       **Owner decision before any code:** clevis + TPM2 (needs a vTPM on the
       guests), clevis + tang (needs a tang server), a passphrase at boot
       (gives up unattended boot), or root encrypted at install. The cloud
@@ -210,8 +218,12 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       forwarder ships syslog, which the collector stores.
       *Evidence:* `byo-rl9-01` holds 111,198 records in
       `/var/log/audit/audit.log`; the collector's
-      `/var/log/nist-remote/byo-rl9-01/` holds **0** audit records — only three
-      status lines from the auditd daemon itself. `au-05-rsyslog-forwarding`
+      `/var/log/nist-remote/byo-rl9-01/` holds **0** records written by auditd.
+      What does arrive: three status lines from the auditd daemon, and 30
+      `kernel: audit: type=NNNN` lines the kernel printed to kmsg only while
+      auditd was not running (shutdown, boot). `tools/probe.sh 6b-evidence`
+      counts both separately; a bare `grep type=` overcounts, because
+      ansible's own module arguments contain `type=`. `au-05-rsyslog-forwarding`
       passes on any forwarding rule, `au-05-forward-established` on any open
       socket, `au-05-collector-receiving` on any remote record.
       *Fix direction:* the audisp syslog plugin (or `imfile`), sized for about
@@ -334,12 +346,19 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       itself a receiver. Correct the comment, or add the rule it describes.
 
 - [ ] **5.6 Make every open defect testable on the laptop lab.** The BYO pair
-      reproduces 6b.2, 6b.3 and 6b.6 as they are. Missing: a second
-      interactive account (6b.4), a volume group with free space so the LUKS
-      path runs at all (6b.5, and 2.2's LUKS limits), a vTPM if the owner
-      picks clevis + TPM2, and the syslog-ng container (6.2a). Authorized
-      2026-09-25: grow the lab as needed, without disturbing the BYO pair's
-      role as the retrofit reference.
+      reproduces 6b.2, 6b.3 and 6b.6 as they are. Authorized 2026-09-25: grow
+      the lab as needed, without disturbing the BYO pair's role as the
+      retrofit reference. *Done so far* (`docs/LAB.md`): `vm/byo-guest.sh`
+      builds BYO guests reproducibly, and built `byo-rl9-02` (.144) with a
+      second interactive account (6b.4), a data disk carrying `vg_sys` with
+      10 GB free (6b.5, 2.2's LUKS limits) and a TPM 2.0 — the role's clevis
+      `tpm2` bind has never run before this guest. `vm/byo-snapshot.sh`
+      snapshots disks, NVRAM and TPM state. `tools/inventory.py add
+      --connection byo` replaces the hand-edited inventory entries (proven
+      byte-identical). `tools/probe.sh 6b-evidence` and
+      `tools/assessor-parity.sh` script the evidence and the PR #2 method.
+      *Remaining:* the syslog-ng container (6.2a, after 6b.6), and applying
+      the current role to `byo-rl9-02` to record the defects as they stand.
 
 ---
 

@@ -22,8 +22,10 @@ Four artifacts, each with one job:
 | `audit/` | An assessor that verifies the host, written independently of the role |
 
 Day-to-day procedure — building, applying, assessing, and getting back in when
-a control locks you out — is in [docs/RUNBOOK.md](docs/RUNBOOK.md). This README
-is the design: what the tool does and why.
+a control locks you out — is in [docs/RUNBOOK.md](docs/RUNBOOK.md). The labs
+that prove the tool, and the scripts that build and probe them, are in
+[docs/LAB.md](docs/LAB.md). This README is the design: what the tool does and
+why.
 
 ---
 
@@ -397,7 +399,10 @@ rl9-171/
 ├── inventory/
 │   └── hosts.yml.example        copy to hosts.yml to target your own host
 ├── docs/
-│   └── RUNBOOK.md               operator procedure: build, apply, verify, recover
+│   ├── RUNBOOK.md               operator procedure: build, apply, verify, recover
+│   ├── LAB.md                   the two labs, and every script that builds or probes them
+│   ├── ODP-REVIEW.md            the owner's decision on every ODP value
+│   └── DEFECTS.md               closed phases: what was proven, and the defects found
 ├── roles/
 │   ├── nist_800_171/            the overlay
 │   │   ├── tasks/               one file per family, per-requirement tags
@@ -409,12 +414,17 @@ rl9-171/
 │   └── checks.yml               334 check definitions
 ├── tests/                       unit tests for the assessor and validate.py
 ├── vm/
-│   ├── build-vm.sh              unattended VM build
+│   ├── build-vm.sh              unattended kickstart VM build (the reference lab)
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls
+│   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
+│   ├── byo-snapshot.sh          save/revert a guest: disks, NVRAM, TPM state
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
-│   └── inventory.py             owns inventory/hosts.yml across VMs
+│   ├── inventory.py             owns inventory/hosts.yml across VMs
+│   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
+│   ├── probe.sh, probes/        read-only evidence probes run on hosts
+│   └── assessor-parity.sh       two assessor versions, same hosts, every check compared
 ├── lib/ssh-env.sh               supplies the MFA knowledge factor to ssh
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile
