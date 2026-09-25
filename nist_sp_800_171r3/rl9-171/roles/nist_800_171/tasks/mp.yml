@@ -29,7 +29,10 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  tags: ["03.08.09", "03.13.08"]
+  # 03.13.10 too: the TPM bind below is selectable by that tag, and its block
+  # needs these facts (DEFECTS 6b.8: --tags 03.13.10 failed on an undefined
+  # nist_can_encrypt).
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
 
 - name: "03.08.09 | Record whether encrypted volumes can be created"
   ansible.builtin.set_fact:
@@ -40,7 +43,7 @@
       {{ (nist_vg_free.rc | default(1)) == 0 and
          (nist_vg_free.stdout | default('0') | trim | float) >= 3.0 and
          (nist_luks_passphrase | length > 0) }}
-  tags: ["03.08.09", "03.13.08"]
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
 
 - name: "03.08.09 | Warn if no LUKS passphrase was supplied"
   ansible.builtin.debug:
@@ -85,6 +88,7 @@
         - { lv: lv_backup, size: "{{ nist_backup_lv_size }}" }
       loop_control:
         label: "{{ item.lv }}"
+      register: nist_luks_lvs
       tags: ["03.08.09", "03.13.08"]
 
     - name: "03.08.09 | Stage the LUKS key file"
@@ -146,10 +150,16 @@
       tags: ["03.08.09", "03.13.08"]
 
     - name: "03.08.09 | Create filesystems on the encrypted volumes"
+      # Check mode on a host whose volumes do not exist yet: the volumes are
+      # only "would be created", format and open are shell tasks check mode
+      # skips, so /dev/mapper/* is absent and this would fail on a missing
+      # device (DEFECTS 6b.7). The main.yml idiom: skip only in check mode,
+      # only while the volumes are outstanding.
       community.general.filesystem:
         fstype: xfs
         dev: "/dev/mapper/{{ item }}"
       loop: [cui_data, cui_backup]
+      when: not (ansible_check_mode and (nist_luks_lvs | default({})) is changed)
       tags: ["03.08.09", "03.13.08"]
 
     - name: "03.08.09 | Register the volumes in crypttab"
@@ -190,6 +200,9 @@
       tags: ["03.08.09", "03.13.10"]
 
     - name: "03.08.09 | Mount the encrypted CUI and backup filesystems"
+      # Same guard as the filesystems above: nothing to mount in check mode
+      # while the volumes are outstanding.
+      when: not (ansible_check_mode and (nist_luks_lvs | default({})) is changed)
       ansible.posix.mount:
         path: "{{ item.path }}"
         src: "/dev/mapper/{{ item.name }}"
