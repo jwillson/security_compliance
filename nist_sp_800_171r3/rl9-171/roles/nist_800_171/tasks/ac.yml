@@ -24,23 +24,32 @@
   register: nist_interactive_accounts
   changed_when: false
   check_mode: false
-  tags: ["03.01.01", "03.01.05"]
+  # 03.05.12 too: its lifetime loop reads this list, and without the tag
+  # `--tags 03.05.12` looped over nothing and reported success (the 1b.7
+  # failure, again; DEFECTS 6b.4).
+  tags: ["03.01.01", "03.01.05", "03.05.12"]
 
 - name: "03.01.01 | Apply the inactivity lock to existing interactive accounts"
-  # chage always exits 0, so comparing field 7 of /etc/shadow first is what
-  # makes this report a change only when it actually changes something.
+  # Field 7 of /etc/shadow is compared first so a no-op run reports no change.
+  # Each name is quoted on its own: quoting the joined list made one word of
+  # it, so with two accounts the loop ran once on "a b" and changed nothing
+  # (DEFECTS 6b.4). A chage that fails fails the task, naming the account.
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      changed=0
-      for u in {{ nist_interactive_accounts.stdout_lines | join(' ') | quote }}; do
-        [ -n "$u" ] || continue
+      changed=0 rc=0
+      for u in {{ nist_interactive_accounts.stdout_lines | map('quote') | join(' ') }}; do
         cur=$(awk -F: -v u="$u" '$1==u {print $7}' /etc/shadow)
         if [ "$cur" != "{{ odp.account_inactivity_days }}" ]; then
-          chage --inactive {{ odp.account_inactivity_days }} "$u" && changed=1
+          if chage --inactive {{ odp.account_inactivity_days }} "$u"; then
+            changed=1
+          else
+            echo "chage --inactive failed for $u" >&2; rc=1
+          fi
         fi
       done
       echo "changed=$changed"
+      exit $rc
     executable: /bin/bash
   register: nist_chage_inactive
   changed_when: "'changed=1' in nist_chage_inactive.stdout"

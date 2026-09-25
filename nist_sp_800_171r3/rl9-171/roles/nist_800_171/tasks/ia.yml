@@ -361,23 +361,30 @@
 
 - name: "03.05.12 | Apply the lifetime to existing interactive accounts"
   # Fields 4, 5 and 6 of /etc/shadow are min age, max age and warning period.
-  # They are compared first so a no-op run reports no change.
+  # They are compared first so a no-op run reports no change. Each name is
+  # quoted on its own (DEFECTS 6b.4), and a failing chage fails the task.
+  # No default([]) on the list: ac.yml computes it under this tag too, and a
+  # default here is what let `--tags 03.05.12` loop over nothing.
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      changed=0
-      for u in {{ nist_interactive_accounts.stdout_lines | default([]) | join(' ') | quote }}; do
-        [ -n "$u" ] || continue
+      changed=0 rc=0
+      for u in {{ nist_interactive_accounts.stdout_lines | map('quote') | join(' ') }}; do
         read -r mn mx wn <<<"$(awk -F: -v u="$u" '$1==u {print $4, $5, $6}' /etc/shadow)"
         if [ "$mn" != "{{ odp.password_min_age }}" ] || \
            [ "$mx" != "{{ odp.password_max_age }}" ] || \
            [ "$wn" != "{{ odp.password_warn_age }}" ]; then
-          chage --maxdays {{ odp.password_max_age }} \
-                --mindays {{ odp.password_min_age }} \
-                --warndays {{ odp.password_warn_age }} "$u" && changed=1
+          if chage --maxdays {{ odp.password_max_age }} \
+                   --mindays {{ odp.password_min_age }} \
+                   --warndays {{ odp.password_warn_age }} "$u"; then
+            changed=1
+          else
+            echo "chage failed for $u" >&2; rc=1
+          fi
         fi
       done
       echo "changed=$changed"
+      exit $rc
     executable: /bin/bash
   register: nist_chage_age
   changed_when: "'changed=1' in nist_chage_age.stdout"

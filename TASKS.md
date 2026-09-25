@@ -198,8 +198,20 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       *Owner decision:* this changes `ssh_client_alive_count_max`, a value
       accepted in `ODP-REVIEW.md` A2 on a premise that was wrong.
 
-- [ ] **6b.4 03.01.01 / 03.05.12: account aging does nothing on a host with
-      more than one user.** `ac.yml:36` (inactivity lock) and `ia.yml:368`
+- [x] **6b.4 03.01.01 / 03.05.12: account aging does nothing on a host with
+      more than one user.** *Fixed 2026-09-25.* The checks already failed on
+      it (shown by `byo-rl9-02`'s first cycle), so the fix is the role's:
+      both loops quote each name separately (`map('quote') | join(' ')`),
+      and a failing `chage` fails the task naming the account instead of
+      vanishing into `&& changed=1`. Found alongside, the 1b.7 failure again:
+      the account list was computed only under 03.01.01 / 03.01.05, so
+      `--tags 03.05.12` looped over `default([])` — nothing — and reported
+      success; the list task now carries 03.05.12 and the default is gone.
+      *Proven on `byo-rl9-02`:* `--tags 03.05.12` alone and `--tags
+      03.01.01` alone each `changed=1`, together again `changed=0`; the probe
+      shows `byoadmin` and `cuiuser1` both at min=1 max=60 warn=7
+      inactive=35; 03.01.01 and 03.05.12 from FAIL to PART, 0 checks failed.
+      *The finding as recorded:* `ac.yml:36` (inactivity lock) and `ia.yml:368`
       (password lifetime) loop over
       `{{ nist_interactive_accounts.stdout_lines | join(' ') | quote }}`:
       `quote` makes the whole list one word, so with two users the loop runs
