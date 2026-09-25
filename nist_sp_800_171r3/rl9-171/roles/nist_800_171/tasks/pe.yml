@@ -13,65 +13,65 @@
   when: nist_set_grub_password and nist_grub_password | length == 0
   tags: ["03.10.07"]
 
-- name: "03.10.07 | Stage the GRUB superuser password"
-  ansible.builtin.copy:
-    content: "{{ nist_grub_password | trim }}"
-    dest: /root/.grub-pw
-    owner: root
-    group: root
-    mode: "0400"
+- name: "03.10.07 | Remove any cleartext GRUB password an earlier run staged"
+  # The role used to stage the password in /root/.grub-pw and leave it there
+  # (DEFECTS 6b.2). It is now passed on stdin and never written in clear.
+  ansible.builtin.file:
+    path: /root/.grub-pw
+    state: absent
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Set the GRUB superuser password"
+  # 03.10.07a  Console presence alone must not grant control of the system.
+  # Written as grub2-setpassword writes it: GRUB2_PASSWORD=<PBKDF2 hash> in
+  # /boot/grub2/user.cfg. Nothing else is needed on RHEL 9, and nothing else is
+  # touched: the EFI stub hands off to /boot/grub2/grub.cfg, whose stock
+  # 01_users block sources ${prefix}/user.cfg and makes "root" the superuser
+  # when GRUB2_PASSWORD is set; the BLS boot entries carry
+  # `grub_arg --unrestricted`, so the host still boots unattended while
+  # editing an entry or reaching the GRUB shell asks for root and this
+  # password. (The role used to test the stock 01_users for the string
+  # "password_pbkdf2", which its template always contains, so it never set
+  # a password at all - DEFECTS 6b.2.)
+  # Idempotent without re-salting: an existing hash is kept only if it
+  # verifies against the supplied password (PBKDF2 from its own algorithm,
+  # iteration count and salt), so a changed NIST_GRUB_PASSWORD takes effect.
+  # The password arrives on stdin: never in argv, the environment or a file.
+  ansible.builtin.shell:
+    executable: /usr/bin/python3
+    cmd: |
+      import hashlib, hmac, os, subprocess, sys
+      path = "/boot/grub2/user.cfg"
+      pw = sys.stdin.read().rstrip("\n")
+      def verifies(h):
+          try:
+              _, _, alg, it, salt, want = h.split(".")
+              got = hashlib.pbkdf2_hmac(alg, pw.encode(), bytes.fromhex(salt),
+                                        int(it), len(want) // 2)
+              return hmac.compare_digest(got.hex(), want.lower())
+          except (ValueError, TypeError):
+              return False
+      current = ""
+      if os.path.exists(path):
+          for line in open(path):
+              if line.startswith("GRUB2_PASSWORD="):
+                  current = line.split("=", 1)[1].strip()
+      if current and verifies(current):
+          print("unchanged")
+          sys.exit(0)
+      out = subprocess.run(["grub2-mkpasswd-pbkdf2"], input=f"{pw}\n{pw}\n",
+                           capture_output=True, text=True, check=True).stdout
+      new = next(w for w in out.split() if w.startswith("grub.pbkdf2."))
+      os.umask(0o077)
+      with open(path + ".new", "w") as fh:
+          fh.write(f"GRUB2_PASSWORD={new}\n")
+      os.replace(path + ".new", path)
+      print("changed")
+    stdin: "{{ nist_grub_password | trim }}"
   no_log: true
   when: nist_set_grub_password and nist_grub_password | length > 0
-  tags: ["03.10.07"]
-
-- name: "03.10.07 | Set a GRUB superuser password"
-  # 03.10.07a  Console presence alone must not grant control of the system.
-  # Normal boot entries stay unrestricted so the host still boots unattended;
-  # editing an entry or reaching the GRUB shell requires the password.
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      # Rewriting the file every run would regenerate the PBKDF2 salt, so the
-      # content would differ each time and drift detection would be useless.
-      if [ -f /etc/grub.d/01_users ] && grep -q password_pbkdf2 /etc/grub.d/01_users; then
-        echo "already-set"
-        exit 0
-      fi
-      pw=$(cat /root/.grub-pw)
-      hash=$(printf '%s\n%s\n' "$pw" "$pw" | grub2-mkpasswd-pbkdf2 | \
-             awk '/grub.pbkdf2/ {print $NF}')
-      [ -n "$hash" ] || exit 1
-      cat > /etc/grub.d/01_users <<USERS
-      #!/bin/sh
-      cat <<'EOFGRUB'
-      set superusers="grubadmin"
-      password_pbkdf2 grubadmin $hash
-      EOFGRUB
-      USERS
-      chmod 0755 /etc/grub.d/01_users
-      # Keep automatic boot working: mark generated entries unrestricted.
-      if ! grep -q '^GRUB_DISABLE_RECOVERY' /etc/default/grub; then
-        echo 'GRUB_DISABLE_RECOVERY="true"' >> /etc/default/grub
-      fi
-      sed -i '/^GRUB_ENABLE_BLSCFG/d' /etc/default/grub
-      echo 'GRUB_ENABLE_BLSCFG=true' >> /etc/default/grub
-      echo changed=1
-    executable: /bin/bash
-  when: nist_set_grub_password and nist_grub_password | length > 0
   register: nist_grub_pw
-  changed_when: "'changed=1' in nist_grub_pw.stdout"
-  notify: update grub config
-  tags: ["03.10.07"]
-
-- name: "03.10.07 | Mark boot menu entries unrestricted so boot stays unattended"
-  ansible.builtin.lineinfile:
-    path: /etc/grub.d/10_linux
-    regexp: '^\s*CLASS="--class gnu-linux'
-    line: 'CLASS="--class gnu-linux --class gnu --class os --unrestricted"'
-    backrefs: false
-  when: nist_set_grub_password and nist_grub_password | length > 0
-  failed_when: false
-  notify: update grub config
+  changed_when: nist_grub_pw.stdout == "changed"
   tags: ["03.10.07"]
 
 - name: "03.10.07 | Protect the GRUB configuration files"

@@ -87,11 +87,6 @@
     cmd: authselect apply-changes -b
   changed_when: true
 
-- name: update grub config
-  ansible.builtin.command:
-    cmd: grub2-mkconfig -o /boot/grub2/grub.cfg
-  changed_when: true
-
 - name: rebuild fapolicyd trust database
   ansible.builtin.command:
     cmd: fapolicyd-cli --update

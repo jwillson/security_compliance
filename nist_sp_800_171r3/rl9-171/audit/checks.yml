@@ -1392,12 +1392,33 @@ checks:
   - id: pe-07-grub-password
     description: Boot parameters cannot be edited without authentication
     command: |
-      # The password may live in user.cfg or be emitted by 01_users; on an EFI
-      # install the generated config is under /boot/efi.
-      cat /boot/grub2/user.cfg /etc/grub.d/01_users \
-          /boot/efi/EFI/rocky/user.cfg 2>/dev/null \
-        | grep -c 'password_pbkdf2' || echo 0
-    expect_int: ">= 1"
+      # What GRUB reads at boot, not what a role wrote. The EFI stub hands off
+      # to /boot/grub2/grub.cfg. A real PBKDF2 hash must reach it: inline, or
+      # through the stock 01_users block that sources ${prefix}/user.cfg,
+      # where grub2-setpassword (and the role) put GRUB2_PASSWORD.
+      # The stock grub.cfg always contains the literal template
+      # "password_pbkdf2 root ${GRUB2_PASSWORD}", which counting
+      # "password_pbkdf2" mistook for a password (DEFECTS 6b.2); only a
+      # grub.pbkdf2.* hash is one.
+      cfg=/boot/grub2/grub.cfg
+      if grep -qE 'password_pbkdf2 [^ ]+ grub\.pbkdf2\.' "$cfg"; then
+        echo protected
+      elif grep -qF 'source ${prefix}/user.cfg' "$cfg" &&
+           grep -qE '^GRUB2_PASSWORD=grub\.pbkdf2\.sha512\.[0-9]+\.[0-9A-Fa-f]+\.[0-9A-Fa-f]+$' \
+             /boot/grub2/user.cfg 2>/dev/null; then
+        echo protected
+      else
+        echo "no PBKDF2 hash reaches $cfg"
+      fi
+    expect_output: protected
+
+  - id: pe-07-grub-no-staged-secret
+    description: No cleartext copy of the GRUB password is left on disk
+    # An earlier role staged the password in /root/.grub-pw and never removed
+    # it (DEFECTS 6b.2). ls exits 2 when the file is absent - the clean result.
+    command: "ls /root/.grub-pw 2>/dev/null"
+    expect_empty: true
+    ok_rc: [0, 2]
 
   - id: pe-07-grub-cfg-perms
     description: The boot configuration is not readable by ordinary users

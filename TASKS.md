@@ -36,10 +36,11 @@ never been applied.
 
 **Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
 on 2026-09-25 found five role defects, and in four of them the check was as
-wrong as the role: 03.10.07 (no GRUB password exists), 03.03.05c (no audit
-record is forwarded), and 03.01.11 / 03.13.09 (the SSH setting asserted does
-nothing) have all been reported PASS on hosts where they are not true, and
-the LUKS checks cannot see that the key sits beside the data it unlocks. See
+wrong as the role: the check for 03.10.07 passed with no GRUB password
+(03.10.07 is `partial`, so the requirement showed MANUAL — which still
+reads as "the host's part is done"), 03.03.05c passed with no audit record
+forwarded, 03.01.11 / 03.13.09 passed on an SSH setting that does nothing,
+and the LUKS checks cannot see that the key sits beside the data it unlocks. See
 *Open — defects in the role and its checks* below.
 
 Also proven: the TLS **transport** on 6514 with mutual x509 (6.1) — but what
@@ -138,7 +139,25 @@ Found by the cloud review of 2026-09-25 (after PR #2), each confirmed on
 `DEFECTS.md`, where 6b.1 is closed. Fixes are requested from the cloud session
 as one PR, one commit per defect; 6b.5 needs an owner decision first.
 
-- [ ] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
+- [x] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
+      *Fixed 2026-09-25, check first.* `pe-07-grub-password` now reads what
+      GRUB boots — a real `grub.pbkdf2.` hash inline in `/boot/grub2/grub.cfg`,
+      or `user.cfg` holding one while `grub.cfg` sources it — and the new
+      `pe-07-grub-no-staged-secret` fails on a cleartext copy. Both FAILED on
+      the hardened `byo-rl9-02` before the role changed. The role now writes
+      `GRUB2_PASSWORD=` to `/boot/grub2/user.cfg` as `grub2-setpassword` does,
+      the password passed on stdin and never on disk; an existing hash is kept
+      only if it verifies (PBKDF2-SHA512 from its own salt, which works under
+      FIPS), so a changed `NIST_GRUB_PASSWORD` takes effect; the staged file
+      is removed. The `10_linux` edit, the `/etc/default/grub` edits (which
+      had never run) and the `update grub config` handler are gone: the
+      probe shows all four BLS entries already `--unrestricted` and `grub.cfg`
+      already sourcing `user.cfg`. *Proven on `byo-rl9-02`:* apply
+      `changed=2` then `changed=0`; both checks PASS; a reboot counted down
+      and booted by itself in 29 s (serial log). *Not yet proven:* pressing
+      `e` at the menu and being asked for the password — the menu shows for
+      one second; do it with `console.py` before release.
+      *The finding as recorded:*
       Stock `grub2-tools` ships `/etc/grub.d/01_users` containing the literal
       template `password_pbkdf2 root ${GRUB2_PASSWORD}`, filled from
       `user.cfg` only when one exists. The role's guard (`pe.yml:36`) greps

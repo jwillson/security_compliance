@@ -18,6 +18,13 @@ done
 real=$(cat /etc/grub.d/01_users /boot/grub2/user.cfg /boot/efi/EFI/rocky/user.cfg 2>/dev/null | grep -c 'grub.pbkdf2.' || true)
 p 6b.2 real-pbkdf2-hashes "$real"
 p 6b.2 staged-cleartext "$( [ -e /root/.grub-pw ] && echo "/root/.grub-pw present" || echo none)"
+# What GRUB actually reads at boot: the generated grub.cfg (the EFI stub only
+# points at it), whether it sources user.cfg, and whether the BLS entries it
+# boots are unrestricted (bootable without the password).
+p 6b.2 efi-stub-points-to "$(grep -oE 'configfile [^ ]+|set prefix=[^ ]+' /boot/efi/EFI/rocky/grub.cfg 2>/dev/null | paste -sd' ' - || true)"
+p 6b.2 grub.cfg-sources-user.cfg "$(grep -c 'source ${prefix}/user.cfg' /boot/grub2/grub.cfg 2>/dev/null || echo 0)"
+p 6b.2 bls-entries "$(ls /boot/loader/entries/*.conf 2>/dev/null | wc -l) total, $(grep -l 'grub_arg --unrestricted' /boot/loader/entries/*.conf 2>/dev/null | wc -l) unrestricted"
+p 6b.2 10_linux-edited "$(rpm -V grub2-tools 2>/dev/null | grep -q /etc/grub.d/10_linux && echo modified || echo unmodified)"
 
 # --- 6b.3 03.01.11 / 03.13.09 SSH idle termination -------------------------
 t=$(sshd -T 2>/dev/null)
