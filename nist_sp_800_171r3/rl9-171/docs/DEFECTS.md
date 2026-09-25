@@ -587,3 +587,45 @@ No amount of testing substitutes for these. Each is a live commitment.
       `__pycache__` directories went with the archive. *Done.*
 
 ---
+
+---
+
+## Phase 6b — defects found after Phase 5 closed
+
+- [x] **6b.1 A check satisfied by absence passed when its command failed.**
+      *Fixed in PR #2 (`8ebaeb3`), written by a cloud session; reviewed and
+      proven against the BYO pair on 2026-09-25.* `nist-assess` ignored the
+      exit status for every assertion except `expect_rc`, so `expect_empty`
+      and `expect_no_match` read a command that could not run as a clean
+      result: `sshd -T` refusing a broken config showed no weak ciphers,
+      `dnf` unable to reach its repositories listed no advisories, and a
+      stopped firewalld exposed no services. Several checks made it worse by
+      ending in `grep -v ... || true`, which swallowed the inspected tool's
+      status even under `pipefail`. Run against an unhardened non-EL9
+      container, the old assessor reported 84 checks and three technical
+      requirements PASS. That is the overstatement this project exists to
+      prevent, in the assessor itself rather than in the overlay.
+      The fix: an absence PASS also needs an exit status the check declares
+      normal (`ok_rc`, default `[0]`, declared on the 17 checks whose clean
+      result is non-zero); a missing tool (126/127, or "command not found"
+      folded into stdout) is ERROR whatever its output; the `|| true`
+      filters are `awk`; checks run under `LC_ALL=C` and a fixed PATH; and
+      the assessor refuses to run unprivileged or off RHEL 9 unless
+      `--allow-unsupported`, which marks the report and exits non-zero.
+      `validate.py` now compiles every regex and parses every `expect_int`
+      after ODP expansion, rejects unknown check keys, and counts a machine
+      ODP as asserted only from the command or assertion of a referenced
+      check. `make test` holds 41 unit tests for both.
+      *Proven on hosts, which the cloud session could not do:* the risk ran
+      the other way, false ERRORs on a hardened host from an absence check
+      that exits non-zero when clean and lacked `ok_rc`. A static audit found
+      no such check among the other 56 (`find` exits 0 on no match, `A ||
+      echo X` is 0 either way, `cm-02` ends in `exit 0`). Then main's
+      assessor and the PR's were run back to back against the same state of
+      `byo-rl9-01` and `byo-log-01`: **0 of 334 checks and 0 of 97
+      requirements differ, 0 ERROR.** Unprivileged on the Ubuntu control
+      workstation it refuses with both reasons before running a check.
+      *Behaviour change to expect:* `si-01-no-pending-security-updates`
+      now has `ok_rc: [0]`, so a host that cannot reach its repositories
+      reports ERROR daily rather than a clean zero. That is the correct
+      answer, and the RUNBOOK says not to widen `ok_rc` to silence it.

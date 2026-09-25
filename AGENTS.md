@@ -19,7 +19,9 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
 
 - **Requirements**: `rl9-171/catalog/requirements.json` — *generated*, never
   hand-edited. `make catalog` re-extracts it from
-  `rl9-171/NIST.SP.800-171r3.pdf` and reproduces it byte for byte.
+  `rl9-171/NIST.SP.800-171r3.pdf`; `make catalog-check` proves it still
+  reproduces byte for byte. `make validate` reads the tracked copy and never
+  rebuilds it.
 - **Mapping and policy**: `rl9-171/catalog/overlay-rocky9.yml` — what Rocky 9
   enforces for each requirement, what it cannot, and the ODP values. This is
   the file to edit.
@@ -87,6 +89,8 @@ it — do not point those back at `TASKS.md`.
 ```bash
 cd nist_sp_800_171r3/rl9-171
 make validate                    # catalog <-> overlay <-> checks agree
+make test                        # unit tests: assessor and validator
+make catalog-check               # catalog still reproduces from the PDF
 make help                        # the whole pipeline
 
 ./apply.sh --check --diff        # dry run against inventory/hosts.yml

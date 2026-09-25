@@ -16,15 +16,21 @@ procedure is `docs/RUNBOOK.md`.
 49 requirements, and every machine ODP asserted by a check. Disposition is
 **37 technical, 32 partial, 28 organizational**.
 
-**Proven against running hosts.** `make catalog` reproduces
-`catalog/requirements.json` byte for byte from the PDF. `./apply.sh` is
-idempotent and `--check --diff` is a real drift detector, including on a host
-that has never been applied.
+**Tested** — `make test`: 41 unit tests for the assessor and the validator.
+`make catalog-check` proves `catalog/requirements.json` still reproduces byte
+for byte from the PDF. Since 6b.1 the assessor never reads a command that
+could not run as a clean result: a missing tool or an undeclared exit status
+is ERROR, and it refuses to run unprivileged or off RHEL 9.
+
+**Proven against running hosts.** `./apply.sh` is idempotent and
+`--check --diff` is a real drift detector, including on a host that has
+never been applied.
 
 | Lab | Result |
 | --- | --- |
 | Kickstart, rebuilt with rotated secrets (5.1) | `rl9-cui-01` 36/33/0/28, `rl9-log-01` 35/34/0/28 — 334 checks, **0 failed** both |
 | BYO retrofit, no `.secrets/` at all (2.1) | `byo-rl9-01` and `byo-log-01` 34/30/5/28 — 6 checks failed, **all five requirements documented retrofit limits** (2.2) |
+| BYO pair, 2026-09-25, after a week powered off | 33/30/6/28 on both — the five retrofit limits plus `si-01`: 21 security advisories pending. A host finding, cleared by the next apply |
 
 Also proven: TLS audit-record forwarding on 6514 with mutual x509 (6.1); the
 seven timers producing output; `organizational-requirements.md` rendering with
