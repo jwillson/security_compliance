@@ -15,7 +15,10 @@ Each requirement's status is derived from its checks:
   NOT_APPLICABLE  no host control exists (organizational requirements)
   MANUAL          host enforces part of it; the rest needs human evidence
 
-A PASS is only ever claimed for something actually observed on the host.
+A PASS is only ever claimed for something actually observed on the host. A
+command that could not run is never taken as evidence of anything: a tool
+that is not installed, or an exit status the check does not declare normal,
+reports ERROR however empty or agreeable its output looks.
 
 Usage:
     nist-assess                          assess everything, human-readable
@@ -24,6 +27,10 @@ Usage:
     nist-assess --family 03.03           one family
     nist-assess --requirement 03.05.07   one requirement
     nist-assess --failed-only            show only deviations
+
+It must run as root on a RHEL 9 family host. Anything else produces results
+that describe the wrong system, so it refuses unless --allow-unsupported is
+given, and the report then says so.
 """
 
 from __future__ import annotations
@@ -55,6 +62,29 @@ COLOR = {
     "RESET": "\033[0m", "BOLD": "\033[1m", "DIM": "\033[2m",
 }
 
+# Assertions that are satisfied by the absence of something. A command that
+# fails - sshd refusing a broken config, dnf unable to reach its repositories,
+# a tool that is not installed - usually prints nothing, which these would
+# read as a clean result. So for them a PASS also requires an exit status the
+# check declares normal: `ok_rc`, default [0]. Any other assertion may declare
+# `ok_rc` to opt into the same gate.
+ABSENCE_ASSERTIONS = ("expect_empty", "expect_no_match")
+
+# bash reports a missing command on stderr, which a check's `2>&1` can fold
+# into stdout and a trailing `|| echo 0` can hide from the exit status. The
+# prefix is the shell's name or "environment" (inside a function).
+COMMAND_NOT_FOUND = re.compile(
+    r"^[^\n:]+: (?:line \d+: )?[^\n]+: command not found$", re.M)
+
+# Checks parse command output, so the locale and the search path are fixed
+# rather than inherited from whoever invoked the assessor.
+CHECK_ENV = {
+    **os.environ,
+    "LC_ALL": "C",
+    "LANG": "C",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+}
+
 
 def find(name: str) -> Path | None:
     for d in SEARCH_DIRS:
@@ -62,6 +92,28 @@ def find(name: str) -> Path | None:
         if p.is_file():
             return p
     return None
+
+
+def unsupported_reasons(os_release: Path = Path("/etc/os-release"),
+                        euid: int | None = None) -> list[str]:
+    """Why results from this system would not describe a hardened EL9 host."""
+    reasons = []
+    if (os.geteuid() if euid is None else euid) != 0:
+        reasons.append("not running as root: checks that read protected files "
+                       "see nothing, and seeing nothing reads as clean")
+    release = {}
+    try:
+        for line in os_release.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                release[key] = value.strip().strip('"')
+    except OSError:
+        pass
+    family = {release.get("ID", "")} | set(release.get("ID_LIKE", "").split())
+    if "rhel" not in family or release.get("VERSION_ID", "").split(".")[0] != "9":
+        reasons.append("not a RHEL 9 family host: "
+                       f"{release.get('PRETTY_NAME', 'no /etc/os-release')}")
+    return reasons
 
 
 def load_yaml(path: Path):
@@ -92,7 +144,7 @@ class Runner:
         try:
             p = subprocess.run(
                 ["/bin/bash", "-o", "pipefail", "-c", cmd],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, env=CHECK_ENV,
             )
             result = (p.returncode, p.stdout.strip(), p.stderr.strip())
         except subprocess.TimeoutExpired:
@@ -149,13 +201,21 @@ class Runner:
             pattern = self.expand(str(check["expect_match"]))
             out["expected"] = f"output matches /{pattern}/"
             out["evidence"] = observed or stderr or "(no output)"
-            out["status"] = "PASS" if re.search(pattern, observed, re.M) else "FAIL"
+            try:
+                out["status"] = "PASS" if re.search(pattern, observed, re.M) else "FAIL"
+            except re.error as exc:
+                out["status"] = "ERROR"
+                out["evidence"] = f"malformed pattern /{pattern}/: {exc}"
 
         elif "expect_no_match" in check:
             pattern = self.expand(str(check["expect_no_match"]))
             out["expected"] = f"output does not match /{pattern}/"
             out["evidence"] = observed or "(no output)"
-            out["status"] = "FAIL" if re.search(pattern, observed, re.M) else "PASS"
+            try:
+                out["status"] = "FAIL" if re.search(pattern, observed, re.M) else "PASS"
+            except re.error as exc:
+                out["status"] = "ERROR"
+                out["evidence"] = f"malformed pattern /{pattern}/: {exc}"
 
         elif "expect_empty" in check:
             out["expected"] = "no output"
@@ -193,13 +253,37 @@ class Runner:
         else:
             out["evidence"] = "check defines no assertion"
 
+        # A command that is not installed observed nothing, whatever its
+        # output happens to match. That is neither a PASS nor a deviation of
+        # the host: it is a check that could not look.
+        not_found = COMMAND_NOT_FOUND.search(stdout) or COMMAND_NOT_FOUND.search(stderr)
+        if rc in (126, 127) or not_found:
+            out["status"] = "ERROR"
+            out["evidence"] = (
+                f"command unavailable (exit {rc}): "
+                f"{not_found.group() if not_found else (stderr or observed or 'no output')}"
+            )
+
+        # A PASS built on a failed command is not evidence. Only the PASS is
+        # gated: output that already shows a deviation stays a FAIL.
+        elif out["status"] == "PASS" and "expect_rc" not in check:
+            gated = "ok_rc" in check or any(k in check for k in ABSENCE_ASSERTIONS)
+            ok_rc = [int(v) for v in check.get("ok_rc", [0])]
+            if gated and rc not in ok_rc:
+                out["status"] = "ERROR"
+                out["evidence"] = (
+                    f"exit status {rc}, not one of {ok_rc}; the output cannot "
+                    f"be trusted: {stderr or observed or 'no output'}"
+                )
+
         # A check may declare that the component it inspects is optional. When
         # such a check exits non-zero the component is absent rather than
         # misconfigured, so it degrades to MANUAL - something a human must
         # confirm by other means - instead of being reported as a deviation.
         # The distinction matters: a FAIL should always mean "this host is
         # wrong", never "this tool could not look".
-        if out["status"] in ("FAIL", "ERROR") and check.get("manual_if_absent") and rc != 0:
+        absent = rc != 0 or not_found
+        if out["status"] in ("FAIL", "ERROR") and check.get("manual_if_absent") and absent:
             out["status"] = "MANUAL"
             out["evidence"] = (
                 f"not assessed automatically: {observed or stderr or 'component not present'}"
@@ -274,8 +358,13 @@ def assess(overlay, catalog, checks_by_id, args) -> dict:
             # Every host-side check passed, but the requirement is only
             # partially satisfiable on a host. Never report that as PASS.
             entry["status"] = "MANUAL"
-        else:
+        elif req["disposition"] == "technical":
             entry["status"] = "PASS"
+        else:
+            # The overlay on a managed host is a copy nothing validated. An
+            # unknown disposition must not fall through to PASS.
+            entry["status"] = "ERROR"
+            entry["note"] = f"unknown disposition {req['disposition']!r}"
 
         if missing:
             entry["undefined_checks"] = missing
@@ -332,6 +421,10 @@ def print_text(data, failed_only: bool, use_color: bool) -> None:
           f"(applied: {a['overlay_version_applied']})")
     print(f"  assessed  {a['assessed_at']}")
     print(f"  scope     {a['scope']}\n")
+    for reason in a.get("unsupported", []):
+        print(f"  {c('ERROR')}UNSUPPORTED{c('RESET')}  {reason}")
+    if a.get("unsupported"):
+        print("  These results do not describe a hardened host.\n")
 
     family = None
     for r in data["requirements"]:
@@ -372,6 +465,8 @@ def print_text(data, failed_only: bool, use_color: bool) -> None:
 
     if s["fail"] or s["error"]:
         print(f"{c('FAIL')}Host is NOT compliant with the technical baseline.{c('RESET')}\n")
+    elif a.get("unsupported"):
+        print(f"{c('ERROR')}Unsupported run: no conclusion about compliance.{c('RESET')}\n")
     else:
         print(f"{c('PASS')}All host-enforceable requirements are satisfied.{c('RESET')}")
         print("Organizational requirements still need documented evidence; see\n"
@@ -451,6 +546,7 @@ def write_html(data, path: Path) -> None:
   Overlay {esc(a['overlay'])} {esc(a['overlay_version'])}
   (applied: {esc(a['overlay_version_applied'])}) &middot;
   assessed {esc(a['assessed_at'])} &middot; scope: {esc(a['scope'])}
+  {''.join(f"<br><b>UNSUPPORTED:</b> {esc(r)}" for r in a.get('unsupported', []))}
 </div>
 <div class="cards">
   <div class="card c-pass"><b>{s['pass']}</b><span>satisfied</span></div>
@@ -488,7 +584,17 @@ def main() -> int:
     ap.add_argument("--checks", type=Path, help="path to checks.yml")
     ap.add_argument("--overlay", type=Path, help="path to overlay-rocky9.yml")
     ap.add_argument("--catalog", type=Path, help="path to requirements.json")
+    ap.add_argument("--allow-unsupported", action="store_true",
+                    help="run without root or off RHEL 9; the report is marked "
+                         "unsupported and the exit status is non-zero")
     args = ap.parse_args()
+
+    unsupported = unsupported_reasons()
+    if unsupported and not args.allow_unsupported:
+        for reason in unsupported:
+            print(f"error: {reason}", file=sys.stderr)
+        sys.exit("refusing to assess; --allow-unsupported runs anyway and "
+                 "marks the report")
 
     overlay_p = args.overlay or find("overlay-rocky9.yml")
     catalog_p = args.catalog or find("requirements.json")
@@ -504,11 +610,9 @@ def main() -> int:
     checks_doc = load_yaml(checks_p)
     checks_by_id = {c["id"]: c for c in checks_doc["checks"]}
 
-    if os.geteuid() != 0:
-        print("warning: not running as root; checks that read protected files "
-              "will report ERROR\n", file=sys.stderr)
-
     data = assess(overlay, catalog, checks_by_id, args)
+    if unsupported:
+        data["assessment"]["unsupported"] = unsupported
 
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
@@ -522,7 +626,7 @@ def main() -> int:
         print_text(data, args.failed_only, sys.stdout.isatty())
 
     s = data["summary"]
-    return 1 if (s["fail"] or s["error"]) else 0
+    return 1 if (s["fail"] or s["error"] or unsupported) else 0
 
 
 if __name__ == "__main__":

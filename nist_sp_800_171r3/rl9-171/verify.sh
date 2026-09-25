@@ -23,6 +23,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# The arguments are pasted into a root shell on each target. They are flags
+# and requirement IDs, so anything outside that alphabet is refused rather
+# than quoted.
+for a in ${ASSESS_ARGS[@]+"${ASSESS_ARGS[@]}"}; do
+  [[ "$a" =~ ^[A-Za-z0-9._=-]+$ ]] || { echo "error: unsupported argument: $a" >&2; exit 2; }
+done
+
 [[ -f inventory/hosts.yml ]] || {
   echo "error: no inventory/hosts.yml." >&2
   echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
@@ -48,6 +55,18 @@ for h in d.get('cui_hosts',{}).get('hosts',[]):
 
 [[ ${#HOSTS[@]} -gt 0 ]] || { echo "error: no hosts in group cui_hosts" >&2; exit 1; }
 
+# A mistyped --host must not assess nothing and then report success.
+if [[ -n "$HOST_FILTER" ]] && ! printf '%s\n' "${HOSTS[@]}" | grep -qxF -- "$HOST_FILTER"; then
+  echo "error: $HOST_FILTER is not in group cui_hosts (${HOSTS[*]})" >&2
+  exit 1
+fi
+
+# Reports are written inside the assessor's own 0700 directory, not /tmp,
+# and removed before each run, so a run that dies cannot hand back the
+# previous run's results under a new timestamp.
+REMOTE_JSON=/opt/nist-assess/assessment.json
+REMOTE_HTML=/opt/nist-assess/assessment.html
+
 for host in "${HOSTS[@]}"; do
   [[ -n "$HOST_FILTER" && "$host" != "$HOST_FILTER" ]] && continue
 
@@ -70,23 +89,25 @@ for host in "${HOSTS[@]}"; do
 
   set +e
   ansible "$host" -m shell -b -a \
-    "/opt/nist-assess/nist-assess \
+    "rm -f $REMOTE_JSON $REMOTE_HTML; \
+     /opt/nist-assess/nist-assess \
        --checks   /opt/nist-assess/checks.yml \
        --overlay  /opt/nist-assess/overlay-rocky9.yml \
        --catalog  /opt/nist-assess/requirements.json \
-       --json     /tmp/nist-assessment.json \
-       --html     /tmp/nist-assessment.html \
+       --json     $REMOTE_JSON \
+       --html     $REMOTE_HTML \
        ${ASSESS_ARGS[*]:-}" 2>&1 | sed '1d;s/^/    /'
   host_rc=${PIPESTATUS[0]}
   set -e
 
   ansible "$host" -m fetch -b \
-    -a "src=/tmp/nist-assessment.json dest=$json flat=yes" >/dev/null 2>&1 || true
+    -a "src=$REMOTE_JSON dest=$json flat=yes" >/dev/null 2>&1 || true
   ansible "$host" -m fetch -b \
-    -a "src=/tmp/nist-assessment.html dest=$html flat=yes" >/dev/null 2>&1 || true
+    -a "src=$REMOTE_HTML dest=$html flat=yes" >/dev/null 2>&1 || true
 
   [[ -f "$json" ]] && echo "    results: $json"
   [[ -f "$html" ]] && echo "    report:  $html"
+  [[ -f "$json" ]] || { echo "    no results came back from $host"; host_rc=1; }
   [[ $host_rc -ne 0 ]] && rc=1
 done
 

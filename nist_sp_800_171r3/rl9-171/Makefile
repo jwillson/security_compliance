@@ -5,14 +5,16 @@ PDF    := NIST.SP.800-171r3.pdf
 ISO_URL := https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
-.PHONY: help catalog secrets pki iso vm vm-log apply verify report clean destroy validate all
+.PHONY: help catalog catalog-check secrets pki iso vm vm-log apply verify report clean destroy validate test all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
 	@echo
 	@echo "  make all         catalog + secrets + iso + vm + apply + verify"
 	@echo "  make catalog     extract requirements from the PDF"
+	@echo "  make catalog-check  re-extract to a scratch file; fail unless byte-identical"
 	@echo "  make validate    check the catalog, overlay and checks agree"
+	@echo "  make test        unit tests for the assessor and the validator"
 	@echo "  make secrets     generate SSH key and credentials"
 	@echo "  make pki         lab CA + a certificate per inventory host (TLS forwarding)"
 	@echo "  make iso         download and verify the Rocky 9 boot ISO"
@@ -31,8 +33,22 @@ catalog: catalog/requirements.json
 catalog/requirements.json: $(PDF) extract/extract_requirements.py
 	./extract/extract_requirements.py $(PDF) -o $@
 
-validate: catalog/requirements.json
+# validate reads the tracked catalog; it does not rebuild it. A fresh clone
+# gives files arbitrary mtimes, so depending on the catalog target made
+# validation re-extract from the PDF (and need pdftotext) on some checkouts
+# and not others. catalog-check is the explicit reproducibility test.
+validate:
+	@[ -f catalog/requirements.json ] || { echo "no catalog - run make catalog"; exit 1; }
 	@python3 tools/validate.py
+
+catalog-check:
+	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
+	 ./extract/extract_requirements.py $(PDF) -o "$$tmp" >/dev/null && \
+	 cmp catalog/requirements.json "$$tmp" && \
+	 echo "catalog reproduces byte for byte from $(PDF)"
+
+test:
+	@python3 -m unittest discover -s tests -v
 
 secrets: .secrets/id_rsa
 

@@ -118,6 +118,16 @@ rejected by the kernel, a service that failed to start — is caught.
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
+A command that could not look is never read as a clean result. A check that
+passes on the absence of something (`expect_empty`, `expect_no_match`) also
+needs an exit status it declares normal (`ok_rc`, default `[0]`), so `sshd -T`
+refusing a broken config or `dnf` unable to reach its repositories reports
+`ERROR`, not `PASS`; a tool that is not installed is `ERROR` whatever its
+output. The assessor refuses to run unprivileged or off RHEL 9 unless told
+`--allow-unsupported`, and then marks the report. `make test` covers these
+rules, and `make catalog-check` proves the catalog still reproduces from the
+PDF.
+
 ```
 FAIL  03.13.11  Cryptographic Protection
         FAIL   sc-11-fips-proc: kernel crypto subsystem reports FIPS mode active
@@ -397,6 +407,7 @@ rl9-171/
 ├── audit/
 │   ├── nist-assess              the assessor
 │   └── checks.yml               334 check definitions
+├── tests/                       unit tests for the assessor and validate.py
 ├── vm/
 │   ├── build-vm.sh              unattended VM build
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls

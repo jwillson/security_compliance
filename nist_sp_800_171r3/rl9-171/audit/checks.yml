@@ -19,6 +19,18 @@
 #
 # manual_if_absent: true  -> a missing optional component degrades to MANUAL
 #                            rather than counting as a deviation.
+#
+# ok_rc: [0, ...]          -> exit statuses under which the output counts as
+#                            evidence. expect_empty and expect_no_match are
+#                            satisfied by nothing, and a command that failed
+#                            prints nothing, so they always carry this gate
+#                            (default [0]); any other assertion may opt in.
+#                            Outside it a PASS becomes ERROR. A command that
+#                            is not installed is ERROR regardless.
+#
+# Filters in an absence check are awk, not `grep -v ... || true`: awk exits 0
+# whether or not anything is left, so the pipeline's status stays that of the
+# tool being inspected instead of being swallowed.
 
 checks:
 
@@ -66,6 +78,8 @@ checks:
     description: Unused default accounts have been removed
     command: "getent passwd games gopher ftp uucp operator 2>/dev/null | cut -d: -f1"
     expect_empty: true
+    # getent exits 2 when a name does not exist - the clean result.
+    ok_rc: [0, 2]
 
   - id: ac-02-selinux-enforcing
     description: SELinux is enforcing (the access enforcement mechanism)
@@ -81,11 +95,15 @@ checks:
     description: No file lacks a valid owner or group
     command: "find / -xdev \\( -nouser -o -nogroup \\) -print 2>/dev/null | head -20"
     expect_empty: true
+    # find over / exits 1 when a file vanishes mid-walk.
+    ok_rc: [0, 1]
 
   - id: ac-02-world-writable-sticky
     description: Every world-writable directory carries the sticky bit
     command: "find / -xdev -type d -perm -0002 ! -perm -1000 -print 2>/dev/null | head -20"
     expect_empty: true
+    # find over / exits 1 when a file vanishes mid-walk.
+    ok_rc: [0, 1]
 
   - id: ac-02-passwd-perms
     description: /etc/passwd is 0644 root:root
@@ -141,11 +159,15 @@ checks:
     description: No sudo rule grants privilege without authentication
     command: "grep -rE '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ac-05-sudo-no-authenticate-off
     description: No sudo rule disables authentication with !authenticate
     command: "grep -rE '^[^#]*!authenticate' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ac-05-sudo-timestamp-timeout
     description: sudo re-authenticates rather than caching credentials
@@ -381,13 +403,18 @@ checks:
 
   - id: ac-16-wifi-module
     description: Wireless networking capability is disabled
-    command: "test -z \"$(nmcli -t -f TYPE device 2>/dev/null | grep -x wifi)\" && echo none"
+    # nmcli inside a substitution with its errors discarded answered "none"
+    # when NetworkManager could not be asked; the pipeline's status can't.
+    command: "nmcli -t -f TYPE device | awk '$0 == \"wifi\" {n++} END {print (n ? \"present\" : \"none\")}'"
     expect_output: "none"
+    ok_rc: [0]
 
   - id: ac-16-no-active-wireless
     description: No wireless interface is active
-    command: "ip -o link show 2>/dev/null | grep -ci 'wl' || true"
+    command: "ip -o link show | awk 'tolower($0) ~ /wl/ {n++} END {print n+0}'"
     expect_int: "== 0"
+    # A count of zero is the clean result, so the command must have run.
+    ok_rc: [0]
 
   - id: ac-18-luks-root-or-data
     description: CUI is held on an encrypted volume
@@ -484,6 +511,8 @@ checks:
     description: Nothing but auditd rotates the audit log
     command: "grep -rl '/var/log/audit/audit.log' /etc/logrotate.d/ /etc/logrotate.conf 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: au-04-space-left
     description: A low-space alert threshold is set
@@ -750,6 +779,8 @@ checks:
     description: No repository disables signature verification
     command: "grep -rlE '^\\s*gpgcheck\\s*=\\s*0' /etc/yum.repos.d/ 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: cm-05-localpkg-gpgcheck
     description: Locally installed packages must also be signed
@@ -825,8 +856,8 @@ checks:
       auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
                | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
-      ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un \
-        | grep -vE "^(${auth})$" || true
+      ss -tlnH | awk '{print $4}' | sed 's/.*://' | sort -un \
+        | awk -v re="^(${auth})$" '$0 !~ re'
     expect_empty: true
 
   - id: cm-06-ctrlaltdel-masked
@@ -939,11 +970,15 @@ checks:
     description: The PAM stack does not permit empty passwords
     command: "grep -l nullok /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ia-01-no-plus-entries
     description: No NIS-style wildcard entries exist in the identity databases
     command: "grep -h '^+' /etc/passwd /etc/shadow /etc/group 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ia-02-host-keys-exist
     description: The host has a cryptographic device identity
@@ -1121,11 +1156,15 @@ checks:
     description: sudo does not echo password input
     command: "grep -rE '^[^#]*Defaults.*[^!]pwfeedback' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ia-11-sudo-no-visiblepw
     description: sudo refuses to run when input would be visible
     command: "grep -rE '^[^#]*Defaults.*[^!]visiblepw' /etc/sudoers /etc/sudoers.d/ 2>/dev/null"
     expect_empty: true
+    # grep exits 1 when it finds nothing - the clean result - and 2 on error.
+    ok_rc: [0, 1]
 
   - id: ia-11-gdm-no-user-list
     description: The graphical greeter does not enumerate accounts
@@ -1155,6 +1194,8 @@ checks:
         case "$v" in ''|never) echo "$u:unset";; *) [ "$v" -gt {odp.password_max_age} ] && echo "$u:$v";; esac
       done
     expect_empty: true
+    # The loop can end on a test that is false for a compliant account.
+    ok_rc: [0, 1]
 
   - id: ia-12-existing-min-days
     description: Existing accounts carry the ODP minimum age
@@ -1164,6 +1205,8 @@ checks:
         case "$v" in ''|never) echo "$u:unset";; *) [ "$v" -lt {odp.password_min_age} ] && echo "$u:$v";; esac
       done
     expect_empty: true
+    # The loop can end on a test that is false for a compliant account.
+    ok_rc: [0, 1]
 
   - id: ia-12-no-never-expire
     description: No interactive account has a non-expiring authenticator
@@ -1174,6 +1217,8 @@ checks:
             [ "$uid" -ge 1000 ] && echo "$u"
           done
     expect_empty: true
+    # The loop can end on a test that is false for a compliant account.
+    ok_rc: [0, 1]
 
   - id: ia-12-shadow-perms
     description: The authenticator store is unreadable by non-root users
@@ -1263,6 +1308,8 @@ checks:
         m=$(stat -c %a "$h"); [ "$m" -gt 700 ] && echo "$h:$m"
       done
     expect_empty: true
+    # The loop can end on a test that is false for a compliant account.
+    ok_rc: [0, 1]
 
   - id: mp-02-umask-profile
     description: New files are created without group or other access
@@ -1276,6 +1323,8 @@ checks:
         [ -d "$h" ] && find "$h" -maxdepth 0 -perm /007 2>/dev/null
       done
     expect_empty: true
+    # The loop can end on a test that is false for a compliant account.
+    ok_rc: [0, 1]
 
   - id: mp-03-sanitize-tools
     description: Media sanitization tooling is available
@@ -1295,8 +1344,10 @@ checks:
 
   - id: mp-07-usb-storage-not-loaded
     description: The USB storage driver is not currently loaded
-    command: "lsmod | grep -c '^usb_storage' || true"
+    command: "lsmod | awk '/^usb_storage/ {n++} END {print n+0}'"
     expect_int: "== 0"
+    # A count of zero is the clean result, so the command must have run.
+    ok_rc: [0]
 
   - id: mp-07-autofs-masked
     description: The automounter is masked
@@ -1492,7 +1543,7 @@ checks:
 
   - id: sc-01-services-minimal
     description: Only the authorized service set is permitted inbound
-    command: "firewall-cmd --list-services 2>/dev/null | tr ' ' '\\n' | grep -v '^ssh$' | grep -v '^$'"
+    command: "firewall-cmd --list-services | tr ' ' '\\n' | awk 'NF && $0 != \"ssh\"'"
     expect_empty: true
 
   - id: sc-01-log-denied
@@ -1570,8 +1621,8 @@ checks:
                | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
       # firewalld prints "514/tcp 9100/udp" on a single line.
-      firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -v '^$' \
-        | grep -vE "^(${auth})/(tcp|udp)$" || true
+      firewall-cmd --list-ports | tr ' ' '\n' \
+        | awk -v re="^(${auth})/(tcp|udp)$" 'NF && $0 !~ re'
     expect_empty: true
 
   - id: sc-06-icmp-block
@@ -1586,10 +1637,12 @@ checks:
       # puts the operator's address there, which is the right emergency step
       # and the wrong steady state: rehearsal 3.4 showed it survives a
       # re-apply and, until this check, nothing reported it.
-      { firewall-cmd --zone=trusted --list-sources;
-        firewall-cmd --zone=trusted --list-interfaces;
-        firewall-cmd --permanent --zone=trusted --list-sources;
-        firewall-cmd --permanent --zone=trusted --list-interfaces; } 2>/dev/null | tr -s ' \n' '\n' | grep .
+      # Chained with && so a firewalld that cannot answer fails the check
+      # rather than reading as an empty trusted zone.
+      { firewall-cmd --zone=trusted --list-sources &&
+        firewall-cmd --zone=trusted --list-interfaces &&
+        firewall-cmd --permanent --zone=trusted --list-sources &&
+        firewall-cmd --permanent --zone=trusted --list-interfaces; } | tr -s ' \n' '\n' | awk 'NF'
     expect_empty: true
 
   - id: sc-06-listening-allowlist
@@ -1602,9 +1655,9 @@ checks:
       auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
                | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
-      ss -tlnH 2>/dev/null \
+      ss -tlnH \
         | awk '$4 !~ /^(127\.|\[::1\])/ {print $4}' \
-        | sed 's/.*://' | sort -un | grep -vE "^(${auth})$" || true
+        | sed 's/.*://' | sort -un | awk -v re="^(${auth})$" '$0 !~ re'
     expect_empty: true
 
   - id: sc-08-crypto-policy
@@ -1623,7 +1676,7 @@ checks:
       for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
         cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
-      done | sort -u | grep -v aes-xts || true
+      done | sort -u | awk '!/aes-xts/'
     expect_empty: true
 
   - id: sc-08-forward-encrypted
@@ -1711,13 +1764,15 @@ checks:
       for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
         cryptsetup luksDump "$d" 2>/dev/null | awk '/PBKDF:/ {print $2}'
-      done | sort -u | grep -vi pbkdf2 || true
+      done | sort -u | awk 'tolower($0) !~ /pbkdf2/'
     expect_empty: true
 
   - id: sc-10-no-dsa-keys
     description: No deprecated DSA or ECDSA host key is present
     command: "ls /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_ecdsa_key 2>/dev/null"
     expect_empty: true
+    # ls exits 2 when the files do not exist - the clean result.
+    ok_rc: [0, 2]
 
   - id: sc-11-fips-kernel
     description: The kernel was booted in FIPS mode
@@ -1832,8 +1887,13 @@ checks:
 
   - id: si-01-no-pending-security-updates
     description: No security update is outstanding beyond the ODP window
-    command: "dnf -q updateinfo list --security 2>/dev/null | grep -c . || true"
+    command: |
+      # dnf that cannot read its repositories lists no advisories; the exit
+      # status is what tells that apart from a host with none pending.
+      dnf -q updateinfo list --security | awk 'NF {n++} END {print n+0}'
     expect_int: "== 0"
+    # A count of zero is the clean result, so the command must have run.
+    ok_rc: [0]
 
   - id: si-01-emit-via
     description: Remediation outcomes are reported
@@ -2008,8 +2068,8 @@ checks:
   - id: sa-02-no-unsupported-repos
     description: Only authorized repositories are enabled
     command: |
-      dnf -q repolist --enabled 2>/dev/null | tail -n +2 | awk '{print $1}' \
-        | grep -vE '^(baseos|appstream|extras|crb|rocky)' || true
+      dnf -q repolist --enabled | tail -n +2 \
+        | awk '$1 !~ /^(baseos|appstream|extras|crb|rocky)/ {print $1}'
     expect_empty: true
 
   - id: sa-02-no-orphan-packages
@@ -2035,15 +2095,15 @@ checks:
       bootstrap='^(filesystem|setup|basesystem|rocky-release|rocky-repos|rocky-gpg-keys|tzdata|hwdata|dnf-data|libreport-filesystem|gawk-all-langpacks|publicsuffix-list-dafsa|ncurses-base|glibc-gconv-extra)$'
       # Packages signed with RSA record the signature in RSAHEADER; SIGPGP is
       # empty for them, so querying only SIGPGP reports every package unsigned.
-      rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\n' 2>/dev/null \
-        | awk -F'|' '($2 == "" || $2 == "(none)") && ($3 == "" || $3 == "(none)") {print $1}' \
-        | grep -v '^gpg-pubkey' \
-        | grep -vE "$bootstrap" | head -10 || true
+      rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\n' \
+        | awk -F'|' -v boot="$bootstrap" \
+            '($2 == "" || $2 == "(none)") && ($3 == "" || $3 == "(none)") &&
+             $1 !~ /^gpg-pubkey/ && $1 !~ boot {print $1}' | head -10
     expect_empty: true
 
   - id: sr-03-no-unauthorized-repos
     description: No repository outside the authorized set is configured
     command: |
-      dnf -q repolist --enabled 2>/dev/null | tail -n +2 | awk '{print $1}' \
-        | grep -vE '^(baseos|appstream|extras|crb|rocky)' || true
+      dnf -q repolist --enabled | tail -n +2 \
+        | awk '$1 !~ /^(baseos|appstream|extras|crb|rocky)/ {print $1}'
     expect_empty: true

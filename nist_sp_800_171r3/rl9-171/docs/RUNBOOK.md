@@ -338,6 +338,11 @@ FAIL  03.13.11  Cryptographic Protection
    - *A wrong check* — the host is genuinely compliant by another mechanism.
      Fix the check in `audit/checks.yml`, run `make validate`, and say why in
      the commit. Do not widen a check to make a red report green.
+   - *ERROR, not FAIL* — the check could not look: a tool is missing, or it
+     exited with a status the check does not declare normal (`ok_rc`). The
+     observed line carries its stderr. Fix what stopped it (a dnf that
+     cannot reach its repositories, a firewalld that is not running); do not
+     add the status to `ok_rc` unless it genuinely means "nothing found".
 3. **Re-verify the one requirement:** `./verify.sh --requirement 03.13.11`
 4. **Record what you could not fix.** `sudo nist-generate-poam` turns failed
    checks into a POA&M in `/var/log/nist-800-171/`.
