@@ -266,8 +266,36 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       *Fix direction:* loop over the list, and let a failing `chage` fail
       the task. Test with a second interactive account (5.6).
 
-- [ ] **6b.5 03.08.09 / 03.13.08: the LUKS key sits beside the data it
-      unlocks.** `mp.yml` stages `/root/.luks-key` and `crypttab` points at
+- [x] **6b.5 03.08.09 / 03.13.08: the LUKS key sits beside the data it
+      unlocks.** *Fixed 2026-09-25, owner's choice: bind to the TPM.* Check
+      first: `mp-09-luks-tpm-bound` (every LUKS volume has a clevis tpm2
+      binding) and `mp-09-luks-no-key-on-disk` (crypttab names no key file,
+      `/root/.luks-key` absent), referenced by 03.08.09 and 03.13.08; both
+      FAILED on `byo-rl9-02`, taking 03.08.09 from a false PASS to FAIL.
+      *Root cause of the silent bind:* the role ran `clevis luks bind -d DEV
+      tpm2 CFG -k KEY -y`; clevis parses options with getopts, which stops at
+      the first positional, so `-k` and `-y` were never read, clevis
+      prompted for the passphrase, failed without a terminal, and
+      `failed_when: false` reported `ok`. Reproduced on a throwaway loop
+      image (`tools/probes/clevis-bind-experiment.sh`): the role's order
+      rc=1, options first rc=0, and `clevis luks unlock` with the TPM alone
+      opens it, under FIPS. *The role now* reads each volume's state,
+      stages the key only while a volume needs it, binds with options first
+      (a failure fails the task), and once both are bound sets crypttab to
+      `none`, enables `clevis-luks-askpass.path` and deletes the key; the
+      passphrase slot remains the recovery key. Without a TPM the key stays
+      (the host must boot), a warning says so, and both checks FAIL.
+      A latent idempotence bug went with it: `'bound' in stdout` also
+      matched `already-bound`. *Proven on `byo-rl9-02`:* migrated in place
+      (bound, crypttab `none`, key removed; re-apply `changed=0`), then a
+      reboot unlocked and mounted both volumes from the TPM alone in 41 s
+      (`clevis-luks-askpass` → `systemd-cryptsetup@cui_*`); 03.13.08 PASS,
+      03.08.09 / 03.01.18 / 03.08.03 PART, 0 checks failed.
+      *Still to do:* rehearse the recovery row the RUNBOOK now has (PCR 7
+      changed → passphrase at the console → `clevis luks regen`); and the
+      kickstart lab has no TPM, so its hosts will fail both new checks until
+      `vm/build-vm.sh` gives them one (R3).
+      *The finding as recorded:* `mp.yml` stages `/root/.luks-key` and `crypttab` points at
       it; the kickstart's `lv_root` is plain xfs. The "key file" is
       `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk
       reads it and opens the CUI and backup volumes, so encryption at rest

@@ -84,6 +84,12 @@ export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
 export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
 ```
 
+With a TPM, the passphrase is not what opens the CUI volumes day to day: the
+role binds each volume to the TPM and deletes the staged key, so nothing on
+the disk can open them. The passphrase keyslot stays as the **recovery
+key** — keep it where you keep other break-glass secrets; it is the only way
+in if the TPM ever refuses (see *When you are locked out*).
+
 Leave one unset and the control it feeds is skipped with a warning and
 reported by `./verify.sh` as a deviation; the run does not abort. `.secrets/`
 is read only when the environment says nothing, which is how the lab works.
@@ -447,6 +453,7 @@ was rehearsed and reverted.
 | Account locked by faillock after 3 failures (03.01.08) | The correct password is refused over SSH **and at the console**: the console login runs the same PAM stack. With root locked and one admin account, nobody can log in to run a reset during the lockout. | **Wait.** The lock expires `lockout_duration_seconds` (default 900) after the last failure; then log in and `sudo faillock --user <name> --reset` clears the tally, or simply carry on. For a single-admin host, create a second administrative account before you need it: faillock is per user, so it is not locked when the first one is. |
 | MFA enforced before operators enrolled keys | Key-only logins are refused with "Permission denied". | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`. Rehearsed verbatim: key-only login works immediately, `./verify.sh --requirement 03.05.03` reports `ia-03-sshd-authmethods` as failing, and `./apply.sh --tags 03.05.03` restores enforcement. To keep it off, set `nist_mfa_enforce_pubkey: false` and re-apply. |
 | Your key is ed25519 and FIPS rejects it | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` at preauth. | Add an RSA-3072 key to the admin user's `authorized_keys` from the console. |
+| Boot stops at "Please enter passphrase for disk cui_data" | The TPM would not release the volume keys. They are sealed to PCR 7, the Secure Boot state, so a firmware or Secure Boot database update (a `dbx` revocation from `fwupd`, new keys, Secure Boot toggled) or a cleared TPM changes it. Local boot waits for the passphrase; remote access is gone until then. | Type `NIST_LUKS_PASSPHRASE` at the prompt for each volume. Once up, reseal to the new state: `sudo clevis luks list -d /dev/vg_sys/lv_cui` gives the slot, then `sudo clevis luks regen -d /dev/vg_sys/lv_cui -s <slot>`, the same for `lv_backup`, and reboot to confirm it unlocks alone. `./verify.sh` still passes meanwhile (the binding exists); only the next boot tells. **Not yet rehearsed** — TASKS.md 6b.5. |
 | Firewall locked out your source network | New SSH connections time out; an existing session may survive. | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` gets you back in immediately (rehearsed verbatim). It exempts that address from the firewall entirely, so do not leave it: once you are in, restore the authorized services with `./apply.sh --tags 03.13`, which also removes any trusted-zone exemption, and `sc-06-no-trusted-bypass` reports one that remains. Do **not** make it `--permanent` unless you accept the bypass until the next apply. |
 
 A reverted control is a deviation. `./verify.sh` reports each of the above

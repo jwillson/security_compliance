@@ -74,6 +74,32 @@
   when: not nist_vg_has_space
   tags: ["03.08.09", "03.13.08"]
 
+- name: "03.08.09 | Look for a TPM"
+  ansible.builtin.stat:
+    path: /dev/tpmrm0
+  register: nist_tpm_dev
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+- name: "03.08.09 | Warn that without a TPM the LUKS key must stay on disk"
+  ansible.builtin.debug:
+    msg: >-
+      No TPM (/dev/tpmrm0) on this host, so the CUI and backup volumes cannot
+      be sealed to the platform: the key file stays in /root/.luks-key, on the
+      same disk as the data, so that the host still boots unattended.
+      mp-09-luks-tpm-bound and mp-09-luks-no-key-on-disk will report it.
+      Give the host a TPM, or unlock at the console instead.
+  when: nist_can_encrypt and not nist_tpm_dev.stat.exists
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+# The key that opens the CUI volumes must not rest beside them (DEFECTS 6b.5).
+# It is staged only while a volume still needs it - to be formatted, opened
+# for the first time or bound - then each volume is bound to the TPM (clevis
+# tpm2, PCR 7: sealed to the Secure Boot state), crypttab opens them with
+# "none" (the boot-time password request is answered by
+# clevis-luks-askpass from the TPM), and the staged key is deleted. The
+# passphrase keyslot remains for recovery at the console with
+# NIST_LUKS_PASSPHRASE. On a later run every volume is already bound and no
+# key is staged at all.
 - name: "03.08.09 | Create the encrypted volumes"
   when: nist_can_encrypt
   block:
@@ -91,7 +117,27 @@
       register: nist_luks_lvs
       tags: ["03.08.09", "03.13.08"]
 
-    - name: "03.08.09 | Stage the LUKS key file"
+    - name: "03.08.09 | Read the state of the encrypted volumes"
+      ansible.builtin.shell:
+        cmd: |
+          for lv in lv_cui lv_backup; do
+            dev=/dev/{{ nist_vg_name }}/$lv
+            if ! cryptsetup isLuks "$dev" 2>/dev/null; then echo "$lv=unformatted"
+            elif clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then echo "$lv=bound"
+            else echo "$lv=unbound"; fi
+          done
+        executable: /bin/bash
+      register: nist_luks_state
+      changed_when: false
+      check_mode: false
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+    - name: "03.08.09 | Note whether every volume is already bound to the TPM"
+      ansible.builtin.set_fact:
+        nist_luks_all_bound: "{{ nist_luks_state.stdout_lines | select('search', '=bound$') | list | length == 2 }}"
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+    - name: "03.08.09 | Stage the LUKS key while a volume still needs it"
       ansible.builtin.copy:
         content: "{{ nist_luks_passphrase }}"
         dest: /root/.luks-key
@@ -99,7 +145,8 @@
         group: root
         mode: "0400"
       no_log: true
-      tags: ["03.08.09", "03.13.08"]
+      when: not nist_luks_all_bound
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Format the volumes as LUKS2 with an approved cipher"
       # aes-xts-plain64 with a 512-bit key and pbkdf2 are FIPS-approved
@@ -129,16 +176,19 @@
       tags: ["03.08.09", "03.13.08"]
 
     - name: "03.08.09 | Open the encrypted volumes"
+      # With the staged key while there is one; once the key is gone, from the
+      # TPM - at boot systemd-cryptsetup has normally opened them already.
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
+          dev=/dev/{{ nist_vg_name }}/{{ item.lv }}
           if [ -e /dev/mapper/{{ item.name }} ]; then
             echo "already-open"
-            exit 0
+          elif [ -f /root/.luks-key ]; then
+            cryptsetup luksOpen --key-file /root/.luks-key "$dev" {{ item.name }} && echo "opened"
+          else
+            clevis luks unlock -d "$dev" -n {{ item.name }} && echo "opened"
           fi
-          cryptsetup luksOpen --key-file /root/.luks-key \
-            /dev/{{ nist_vg_name }}/{{ item.lv }} {{ item.name }}
-          echo "opened"
         executable: /bin/bash
       loop:
         - { lv: lv_cui,    name: cui_data }
@@ -146,7 +196,7 @@
       loop_control:
         label: "{{ item.name }}"
       register: nist_luks_open
-      changed_when: "'opened' in nist_luks_open.stdout"
+      changed_when: "'already-open' not in nist_luks_open.stdout"
       tags: ["03.08.09", "03.13.08"]
 
     - name: "03.08.09 | Create filesystems on the encrypted volumes"
@@ -162,11 +212,57 @@
       when: not (ansible_check_mode and (nist_luks_lvs | default({})) is changed)
       tags: ["03.08.09", "03.13.08"]
 
+    - name: "03.08.09 | Bind the volumes to the TPM"
+      # 03.13.10: the key is sealed to the platform state instead of resting
+      # on disk. The options must come before -d DEV PIN CFG: clevis parses
+      # them with getopts, which stops at the first positional, and the
+      # role's old order (-d DEV tpm2 CFG -k KEY -y) left -k and -y unread, so
+      # clevis prompted for the passphrase, failed without a terminal, and
+      # failed_when: false hid it on every host (DEFECTS 6b.5). A failed bind
+      # now fails the task.
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          dev=/dev/{{ nist_vg_name }}/{{ item }}
+          if clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then
+            echo "already-bound"
+            exit 0
+          fi
+          clevis luks bind -y -k /root/.luks-key \
+            -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' < /dev/null
+          echo "bound"
+        executable: /bin/bash
+      loop: [lv_cui, lv_backup]
+      register: nist_clevis
+      changed_when: "'already-bound' not in nist_clevis.stdout"
+      when: nist_tpm_dev.stat.exists
+      tags: ["03.08.09", "03.13.10"]
+
+    - name: "03.08.09 | Note whether the TPM now holds the keys"
+      # In check mode the bind does not run; a host bound on an earlier run
+      # still counts as bound, so --check reports no drift there.
+      ansible.builtin.set_fact:
+        nist_luks_tpm_ok: >-
+          {{ nist_tpm_dev.stat.exists and (nist_luks_all_bound or
+             (nist_clevis.results | default([]) | selectattr('stdout', 'defined')
+              | map(attribute='stdout') | select('search', 'bound$')
+              | list | length == 2)) }}
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+    - name: "03.08.09 | Let clevis answer the boot-time unlock from the TPM"
+      ansible.builtin.systemd:
+        name: clevis-luks-askpass.path
+        enabled: true
+      when: nist_luks_tpm_ok
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
+
     - name: "03.08.09 | Register the volumes in crypttab"
+      # "none" once the TPM holds the keys: no key file is named, and the
+      # password request at boot is answered by clevis-luks-askpass.
       ansible.builtin.lineinfile:
         path: /etc/crypttab
         regexp: '^{{ item.name }}\s'
-        line: "{{ item.name }} /dev/{{ nist_vg_name }}/{{ item.lv }} /root/.luks-key luks,discard"
+        line: "{{ item.name }} /dev/{{ nist_vg_name }}/{{ item.lv }} {{ 'none' if nist_luks_tpm_ok else '/root/.luks-key' }} luks,discard"
         create: true
         owner: root
         group: root
@@ -176,28 +272,14 @@
         - { lv: lv_backup, name: cui_backup }
       loop_control:
         label: "{{ item.name }}"
-      tags: ["03.08.09", "03.13.08"]
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
 
-    - name: "03.08.09 | Bind the volumes to the TPM for unattended unlock"
-      # 03.13.10: the key is sealed to the platform state rather than stored in
-      # cleartext where it could be read off the disk. Best-effort - a host
-      # without a TPM keeps the key file, which the auditor reports.
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          dev=/dev/{{ nist_vg_name }}/{{ item }}
-          if clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then
-            echo "already-bound"
-            exit 0
-          fi
-          clevis luks bind -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' \
-            -k /root/.luks-key -y && echo "bound"
-        executable: /bin/bash
-      loop: [lv_cui, lv_backup]
-      register: nist_clevis
-      changed_when: "'bound' in nist_clevis.stdout"
-      failed_when: false
-      tags: ["03.08.09", "03.13.10"]
+    - name: "03.08.09 | Remove the staged key once the TPM holds it"
+      ansible.builtin.file:
+        path: /root/.luks-key
+        state: absent
+      when: nist_luks_tpm_ok
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Mount the encrypted CUI and backup filesystems"
       # Same guard as the filesystems above: nothing to mount in check mode

@@ -1259,7 +1259,8 @@ requirements:
     residual: >
       Off-host backup storage, rotation, and restoration testing are handled by
       the enterprise backup service.
-    checks: [mp-09-luks-cipher, mp-09-backup-path-perms]
+    checks: [mp-09-luks-cipher, mp-09-backup-path-perms, mp-09-luks-tpm-bound,
+             mp-09-luks-no-key-on-disk]
 
 # ===========================================================================
 # 03.09 PERSONNEL SECURITY
@@ -1459,7 +1460,8 @@ requirements:
       approved cipher with the key never stored in cleartext on the device.
     checks: [sc-08-crypto-policy, sc-08-luks-encrypted, sc-08-luks-cipher,
              sc-08-no-cleartext-services, sc-08-ssh-ciphers-approved,
-             sc-08-gnutls-policy, sc-08-forward-encrypted]
+             sc-08-gnutls-policy, sc-08-forward-encrypted, mp-09-luks-tpm-bound,
+             mp-09-luks-no-key-on-disk]
 
   - id: "03.13.09"
     title: Network Disconnect

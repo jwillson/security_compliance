@@ -1410,6 +1410,33 @@ checks:
     command: "test -f /etc/udev/rules.d/80-nist-no-automount.rules && echo present"
     expect_output: "present"
 
+  - id: mp-09-luks-tpm-bound
+    description: Every encrypted volume unlocks from the TPM, not from a key beside it
+    # 03.08.09 / 03.13.08: encryption at rest protects nothing if the key that
+    # opens the volume can be read off the same disk. The role binds each
+    # volume to the TPM (clevis tpm2, PCR 7) so the key never rests on disk.
+    # Its bind had its options after the pin, so getopts never saw -k and the
+    # bind failed on every host, silently (DEFECTS 6b.5). A host without a TPM
+    # fails this: it has nowhere to seal the key.
+    command: |
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+        cryptsetup isLuks "$d" 2>/dev/null || continue
+        clevis luks list -d "$d" 2>/dev/null | grep -q tpm2 || echo "not TPM-bound: $d"
+      done
+    expect_empty: true
+
+  - id: mp-09-luks-no-key-on-disk
+    description: No key file for the encrypted volumes rests on the disk
+    # crypttab names the key each volume is opened with at boot: "none" (the
+    # TPM, via clevis-luks-askpass) is the only acceptable value; a path is a
+    # readable key beside the data. ls exits 2 when the staged key is gone -
+    # the clean result.
+    command: |
+      awk '!/^[[:space:]]*#/ && NF >= 3 && $3 != "none" && $3 != "-" {print "crypttab " $1 " key=" $3}' /etc/crypttab 2>/dev/null
+      ls /root/.luks-key 2>/dev/null
+    expect_empty: true
+    ok_rc: [0, 2]
+
   - id: mp-09-luks-cipher
     description: Encrypted volumes use an approved cipher
     command: |
