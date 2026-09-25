@@ -178,7 +178,10 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       may be dead code — the test must include a reboot with no console
       input.
 
-- [ ] **6b.3 03.01.11 / 03.13.09: the SSH idle setting asserted does nothing.**
+- [x] **6b.3 03.01.11 / 03.13.09: the SSH idle setting asserted does nothing.**
+      *Closed 2026-09-25:* the owner accepted CountMax **1** (ODP-REVIEW A2a).
+      The countmax checks assert `==` and FAILED on 0 first; applied,
+      03.01.11 and 03.13.09 PASS with 0 failed.
       *Idle termination fixed 2026-09-25, check first; the CountMax value
       waits on the owner.* **The first fix did not work, and only the
       behaviour test showed it:** with `ChannelTimeout session=900s` set and
@@ -210,7 +213,7 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       PASS with 0 checks failed; and by behaviour — `tools/ssh-idle-test.sh`,
       a session running a silent `sleep 1200`, closed by sshd at **900 s**
       (with bare `session`: never).
-      **Open, owner decision — `ssh_client_alive_count_max`.** 0 disables
+      *Owner decision, since taken —* `ssh_client_alive_count_max`. 0 disables
       ClientAlive termination, so dead peers are never reaped. Proposed: **1**,
       the RHEL 9 STIG value (ODP-REVIEW's precedence puts STIG first): a
       silent peer is dropped one interval after the first unanswered probe.

@@ -45,7 +45,11 @@ odp:
   idle_lock_seconds: 900
   session_timeout_seconds: 900
   ssh_client_alive_interval: 900
-  ssh_client_alive_count_max: 0
+  # Dead-peer detection (an unresponsive client is dropped one interval after
+  # the first unanswered probe); not idle termination, which is ChannelTimeout
+  # from session_timeout_seconds. 0 would disable it. RHEL 9 STIG value;
+  # decided 2026-09-25 (ODP-REVIEW A2a).
+  ssh_client_alive_count_max: 1
   # 03.05.07f - password composition
   password_min_length: 15
   password_min_classes: 4

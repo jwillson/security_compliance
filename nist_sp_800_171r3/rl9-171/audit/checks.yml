@@ -328,13 +328,12 @@ checks:
 
   - id: ac-11-ssh-clientalive-countmax
     description: sshd terminates rather than probing indefinitely
-    # Asserts the ODP as configured. It is not idle termination: 0 disables
-    # ClientAlive termination entirely (sshd_config(5)), and a live idle
-    # client answers the probes anyway. Idle sessions are ended by
-    # ac-11-ssh-channel-timeout below. The value is an open owner decision
-    # (TASKS.md 6b.3, ODP-REVIEW.md A2).
+    # Dead-peer detection, not idle termination: a live idle client answers
+    # the probes. Idle sessions are ended by ac-11-ssh-channel-timeout below.
     command: "sshd -T 2>/dev/null | awk '/^clientalivecountmax/ {print $2}'"
-    expect_int: "<= {odp.ssh_client_alive_count_max}"
+    # Equality, not "<=": 0 disables ClientAlive termination altogether, and
+    # "<= 1" would pass it (DEFECTS 6b.3; owner decision 2026-09-25).
+    expect_int: "== {odp.ssh_client_alive_count_max}"
 
   - id: ac-11-ssh-channel-timeout
     description: sshd closes a session idle for the ODP period, whatever runs in it
@@ -1790,9 +1789,10 @@ checks:
     expect_int: "<= {odp.ssh_client_alive_interval}"
 
   - id: sc-09-clientalive-countmax
-    description: Sessions are dropped rather than probed indefinitely
+    description: Unresponsive peers are dropped rather than probed indefinitely
     command: "sshd -T 2>/dev/null | awk '/^clientalivecountmax/ {print $2}'"
-    expect_int: "<= {odp.ssh_client_alive_count_max}"
+    # Equality: "<=" passed 0, which disables termination (DEFECTS 6b.3).
+    expect_int: "== {odp.ssh_client_alive_count_max}"
 
   - id: sc-09-tcp-keepalive
     description: Dead peers are detected and their connections closed

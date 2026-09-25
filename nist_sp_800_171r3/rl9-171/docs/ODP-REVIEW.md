@@ -41,6 +41,18 @@ lockout are not host settings) and reword it to
 `"900 s idle on any session type; end of shift; incident lockout"`.
 Decision: accepted 2026-09-18.
 
+**A2a. `ssh_client_alive_count_max` — A2 rested on a wrong premise.** A2 kept
+`ssh_client_alive_count_max: 0` believing ClientAlive enforced the idle
+disconnect. It does not: 0 disables ClientAlive termination (sshd_config(5)),
+and a live idle client answers the probes anyway, so only TMOUT ended an idle
+session (DEFECTS/TASKS 6b.3). Idle termination is now `ChannelTimeout
+session*=` and `UnusedConnectionTimeout` from `session_timeout_seconds` (900 s,
+unchanged). ClientAlive is dead-peer detection only.
+Recommendation: `ssh_client_alive_count_max: 1`, the RHEL 9 STIG value
+(section C's precedence puts STIG first); the two countmax checks assert
+equality, since `<=` passed 0.
+Decision: accepted 2026-09-25.
+
 ## B. Registers that understate the host, and schedules nothing asserts
 
 Three review frequencies are recorded as if the work were manual, while the

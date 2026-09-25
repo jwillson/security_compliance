@@ -68,9 +68,10 @@ UnusedConnectionTimeout {{ odp.session_timeout_seconds }}s
 # OpenSSH {{ nist_openssh_version }} predates ChannelTimeout (9.2): only TMOUT ends
 # idle sessions here. The assessor reports it; update openssh-server.
 {% endif %}
-# Dead-peer detection, not idle termination: a live idle client answers these
-# probes, and ClientAliveCountMax 0 disables termination altogether
-# (sshd_config(5); DEFECTS 6b.3 - the value is an open owner decision).
+# Dead-peer detection, not idle termination: an unresponsive client is dropped
+# one interval after the first unanswered probe; a live idle client answers
+# them, so idle sessions are ended by ChannelTimeout above. (0 would disable
+# termination altogether - sshd_config(5); DEFECTS 6b.3.)
 ClientAliveInterval {{ odp.ssh_client_alive_interval }}
 ClientAliveCountMax {{ odp.ssh_client_alive_count_max }}
 TCPKeepAlive yes
