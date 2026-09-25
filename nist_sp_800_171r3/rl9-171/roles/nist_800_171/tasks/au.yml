@@ -231,6 +231,85 @@
   notify: restart rsyslog
   tags: ["03.03.05", "03.13.08"]
 
+# 03.03.05c  The audit trail itself must reach the collector, not only what
+# syslog sees (DEFECTS 6b.6). auditd's syslog plugin hands each record to the
+# journal; the two rate limits on that path are lifted so a burst of records
+# is forwarded rather than silently dropped. The local trail in audit.log is
+# complete either way.
+- name: "03.03.05 | Install auditd's syslog plugin"
+  ansible.builtin.dnf:
+    name: audispd-plugins
+    state: present
+  register: nist_audisp_pkg
+  when: nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Dispatch every audit record to syslog (facility local6)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/plugins.d/syslog.conf
+    regexp: "^\\s*{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+  loop:
+    - { key: active, value: "yes" }
+    - { key: args,   value: LOG_LOCAL6 }
+  loop_control:
+    label: "{{ item.key }}"
+  # The file comes with the package above; see the check-mode note in main.yml.
+  when:
+    - nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
+    - not (ansible_check_mode and (nist_audisp_pkg | default({})) is changed)
+  notify: restart auditd
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Stop the audit plugin where nothing is forwarded"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/plugins.d/syslog.conf
+    regexp: '^\s*active\s*='
+    line: "active = no"
+  when: not (nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls))
+  failed_when: false
+  notify: restart auditd
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Create auditd's systemd drop-in directory"
+  ansible.builtin.file:
+    path: /etc/systemd/system/auditd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Exempt auditd's messages from journald rate limiting"
+  # Per unit, so the rest of the system keeps journald's default limit. The
+  # plugin runs as auditd's child, inside auditd.service.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/auditd.service.d/10-nist-log-ratelimit.conf
+    content: |
+      # 03.03.05c  Every audit record forwarded, none dropped by rate limiting.
+      [Service]
+      LogRateLimitIntervalSec=0
+    owner: root
+    group: root
+    mode: "0644"
+  when: nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
+  notify: [reload systemd, restart auditd]
+  tags: ["03.03.05"]
+
+- name: "03.03.05 | Exempt the journal input from rsyslog rate limiting"
+  # imjournal drops messages past 20000 per 10 minutes by default - which a
+  # burst of audit records reaches. Set inside the module(load="imjournal")
+  # statement, the only place rsyslog accepts it.
+  ansible.builtin.lineinfile:
+    path: /etc/rsyslog.conf
+    regexp: '^\s*Ratelimit\.Interval='
+    insertafter: '^module\(load="imjournal"'
+    line: '       Ratelimit.Interval="0" # 03.03.05c: forward every audit record'
+  when: nist_log_collector | length > 0 and (nist_fwd_tls_ready or not nist_log_tls)
+  notify: restart rsyslog
+  tags: ["03.03.05"]
+
 - name: "03.03.05 | Forward audit records to the correlation collector"
   ansible.builtin.copy:
     dest: /etc/rsyslog.d/90-nist-forward.conf
@@ -245,21 +324,45 @@
              DefaultNetstreamDriverCAFile="/etc/pki/rsyslog/ca.crt"
              DefaultNetstreamDriverCertFile="/etc/pki/rsyslog/host.crt"
              DefaultNetstreamDriverKeyFile="/etc/pki/rsyslog/host.key")
-      action(type="omfwd" target="{{ nist_fwd_host }}" port="{{ nist_fwd_port }}" protocol="tcp"
-             StreamDriver="ossl" StreamDriverMode="1"
-             StreamDriverAuthMode="x509/name"
-             StreamDriverPermittedPeers="{{ nist_log_collector_name }}"
-             queue.type="LinkedList" queue.filename="nistfwd"
-             queue.saveOnShutdown="on" action.resumeRetryCount="-1")
-      {% else %}
-      # Plaintext: nist_log_tls is false. Acceptable only on an isolated
-      # network; the assessor reports it under 03.13.08.
-      $ActionQueueType LinkedList
-      $ActionQueueFileName nistfwd
-      $ActionResumeRetryCount -1
-      $ActionQueueSaveOnShutdown on
-      *.* @@{{ nist_fwd_host }}:{{ nist_fwd_port }}
       {% endif %}
+
+      # One forwarding action, one disk queue, reached two ways below.
+      ruleset(name="nist_forward") {
+      {% if nist_fwd_tls_ready %}
+          action(type="omfwd" target="{{ nist_fwd_host }}" port="{{ nist_fwd_port }}" protocol="tcp"
+                 StreamDriver="ossl" StreamDriverMode="1"
+                 StreamDriverAuthMode="x509/name"
+                 StreamDriverPermittedPeers="{{ nist_log_collector_name }}"
+                 queue.type="LinkedList" queue.filename="nistfwd"
+                 queue.saveOnShutdown="on" action.resumeRetryCount="-1")
+      {% else %}
+          # Plaintext: nist_log_tls is false. Acceptable only on an isolated
+          # network; the assessor reports it under 03.13.08.
+          action(type="omfwd" target="{{ nist_fwd_host }}" port="{{ nist_fwd_port }}" protocol="tcp"
+                 queue.type="LinkedList" queue.filename="nistfwd"
+                 queue.saveOnShutdown="on" action.resumeRetryCount="-1")
+      {% endif %}
+      }
+
+      # 1. The audit trail. auditd writes /var/log/audit/audit.log and none of
+      # it reaches syslog on its own, so forwarding syslog alone sent no audit
+      # record at all (DEFECTS 6b.6). auditd's syslog plugin (audisp-syslog,
+      # activated by the tasks above) dispatches every record through the
+      # journal; each is forwarded once and stopped here, so it is not written
+      # into /var/log/messages a second time. The records carry the identifier
+      # "audispd" on facility local6 - the plugin's own status messages say
+      # "audisp-syslog", which is why matching that name let every record
+      # through to the local files. The collector files them as
+      # <host>/audispd.log. (rsyslog cannot read audit.log directly: SELinux
+      # denies syslogd_t on auditd_log_t, silently - and allowing it would
+      # widen the logger's access to the trail.)
+      if ($programname == "audispd" and $syslogfacility-text == "local6") then {
+          call nist_forward
+          stop
+      }
+
+      # 2. Everything else the local syslog sees.
+      call nist_forward
     owner: root
     group: root
     mode: "0600"
@@ -299,6 +402,7 @@
       collector={{ nist_fwd_host }}
       port={{ nist_fwd_port }}
       transport={{ 'tls' if nist_fwd_tls_ready else 'plain' }}
+      audit_trail=/var/log/audit/audit.log
       {% endif %}
     owner: root
     group: root

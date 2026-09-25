@@ -252,8 +252,28 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       session will write the options up with a recommendation.
       *Testable only with a volume group* — the BYO guests have none (5.6).
 
-- [ ] **6b.6 03.03.05c: audit records are never forwarded, and three checks
-      pass.** Nothing routes auditd into rsyslog: no
+- [x] **6b.6 03.03.05c: audit records are never forwarded, and three checks
+      pass.** *Fixed 2026-09-25, check first.* `au-05-collector-receiving`
+      now requires an auditd record (`type=… msg=audit(`) from another host,
+      and the new `au-05-audit-trail-forwarded` requires auditd's syslog
+      plugin running on the forwarder; both FAILED before the role changed
+      (336 checks). *The route:* rsyslog `imfile` on `audit.log` was tried
+      first, to avoid rate limits, and refused — SELinux denies `syslogd_t`
+      on `auditd_log_t` under a `dontaudit` rule (rsyslog logs "Permission
+      denied", no AVC is recorded), and a policy module widening the
+      logger's access to the trail is the wrong trade. So auditd's syslog
+      plugin (`audispd-plugins`, `args = LOG_LOCAL6`), with the two rate
+      limits on that path lifted — journald's for `auditd.service` only
+      (`LogRateLimitIntervalSec=0`), imjournal's in `rsyslog.conf` — and the
+      records forwarded once and stopped, so they are not copied into
+      `/var/log/messages`. The records' identifier is `audispd` on local6;
+      matching `audisp-syslog` (the plugin's status messages) first let
+      6,561 through to the local file before the probe caught it.
+      *Proven on `byo-rl9-02` → `byo-log-01`:* 0 auditd records at the
+      collector all week, then 187 within a minute; over a 60 s window with
+      generated events the collector grew 6,972 → 7,454 while local copies
+      stayed flat; both checks PASS. 6.2a is unblocked.
+      *The finding as recorded:* Nothing routes auditd into rsyslog: no
       `/etc/audit/plugins.d/syslog.conf`, no `imfile` on `audit.log`. The
       forwarder ships syslog, which the collector stores.
       *Evidence:* `byo-rl9-01` holds 111,198 records in
@@ -329,8 +349,8 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       `nist_log_collector_name` pointed at it, `au-05-forward-established`
       and `sc-08-forward-encrypted` both PASS, and an **audit** record
       (`type=`) written on the CUI host is legible in the container's
-      output. *Depends on 6b.6:* until then only syslog is forwarded, and
-      "a record arrived" proves nothing about the audit trail.
+      output. *6b.6 is fixed*, so audit records now travel this path; the
+      receiver must show them, not just syslog.
       *Constraint:* the receiver must never enter `inventory/hosts.yml`. It is
       not a CUI host, and `nist_log_collector_name` defaults to
       `groups['log_hosts'] | first`, so it has to be set explicitly.

@@ -71,7 +71,11 @@ fi
 # --- 6b.6 03.03.05c audit records reaching the collector -------------------
 p 6b.6 local-audit-records "$(wc -l < /var/log/audit/audit.log 2>/dev/null || echo 0)"
 p 6b.6 audisp-syslog-plugin "$(awk -F= '/^[[:space:]]*active/ {gsub(/ /,"",$2); print $2}' /etc/audit/plugins.d/syslog.conf 2>/dev/null || true)"
-p 6b.6 rsyslog-imfile-audit "$(grep -rlE 'imfile|audit\.log' /etc/rsyslog.conf /etc/rsyslog.d/ 2>/dev/null | paste -sd, - || true)"
+p 6b.6 rsyslog-imfile-audit "$(grep -rlE '^[^#]*(module\(load="imfile"|type="imfile")' /etc/rsyslog.conf /etc/rsyslog.d/ 2>/dev/null | paste -sd, - || true)"
+p 6b.6 audisp-syslog-running "$(pgrep -a audisp-syslog 2>/dev/null | cut -d' ' -f2- || echo no)"
+p 6b.6 auditd-journal-ratelimit "$(systemctl show auditd -p LogRateLimitIntervalUSec --value 2>/dev/null)"
+# Forwarded records must not also be copied into the local syslog files.
+p 6b.6 audit-records-in-messages "$(grep -cE 'type=[A-Z_]+ msg=audit\(' /var/log/messages 2>/dev/null || true)"
 if [ -f /etc/rsyslog.d/10-nist-collector.conf ]; then
   dir=$(sed -n 's/^directory=//p' /etc/nist-800-171/log-collector-status 2>/dev/null)
   for h in "${dir:-/var/log/nist-remote}"/*/; do

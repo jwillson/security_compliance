@@ -610,7 +610,7 @@ checks:
     manual_if_absent: true
 
   - id: au-05-collector-receiving
-    description: A collector host is storing records received from other hosts
+    description: A collector host is storing audit records received from other hosts
     command: |
       # Only meaningful on the collector. Elsewhere there is no collector
       # config, so this reports MANUAL rather than a deviation.
@@ -619,11 +619,40 @@ checks:
       dir=$(sed -n 's/^directory=//p' \
               /etc/nist-800-171/log-collector-status 2>/dev/null)
       dir=${dir:-/var/log/nist-remote}
-      # A record from some host other than this one is what proves the path.
-      found=$(find "$dir" -mindepth 2 -name '*.log' -size +0 \
-                ! -path "*/$(hostname -s)/*" 2>/dev/null | head -1)
-      [ -n "$found" ] && echo receiving || echo "no remote records in $dir"
+      # 03.03.05c correlates audit records, so an audit record from some
+      # other host is what proves the path - not any remote line. Syslog
+      # traffic alone passed the old test while no auditd record had ever
+      # arrived (DEFECTS 6b.6). An auditd record reads
+      # "type=SYSCALL msg=audit(...)"; the kernel's own "audit: type=1131"
+      # lines, printed only while auditd is down, are not the trail.
+      found=$(grep -rlE 'type=[A-Z_]+ msg=audit\(' "$dir" 2>/dev/null \
+                | grep -v "^$dir/$(hostname -s)/" | head -1)
+      [ -n "$found" ] && echo receiving || echo "no audit records from another host in $dir"
     expect_output: "receiving"
+    manual_if_absent: true
+
+  - id: au-05-audit-trail-forwarded
+    description: auditd hands every audit record to the forwarder
+    command: |
+      # The forwarding rule ships what syslog sees, and auditd does not write
+      # to syslog: a host could forward for weeks and send no audit record
+      # (DEFECTS 6b.6). auditd's syslog plugin dispatches each record to
+      # rsyslog; the effective evidence is that plugin running under auditd.
+      f=/etc/nist-800-171/log-forwarding-status
+      status=$(sed -n 's/^status=//p' "$f" 2>/dev/null)
+      # No collector is the single-node case: exit non-zero, reported MANUAL.
+      # A collector without a usable certificate is a deviation.
+      case "$status" in
+        forwarding) ;;
+        tls-certificate-missing) echo "not forwarding: $status"; exit 0 ;;
+        *) echo "no collector configured"; exit 1 ;;
+      esac
+      if pgrep -x audisp-syslog >/dev/null; then
+        echo dispatching
+      else
+        echo "auditd's syslog plugin (audisp-syslog) is not running"
+      fi
+    expect_output: "dispatching"
     manual_if_absent: true
 
   - id: au-06-audit-tools-present
