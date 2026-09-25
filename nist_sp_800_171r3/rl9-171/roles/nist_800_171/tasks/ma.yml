@@ -45,7 +45,7 @@
       transport=ssh
       mfa={{ 'publickey+password' if nist_mfa_enforce_pubkey else 'not enforced' }}
       replay_resistance=crypto-policy:{{ odp.crypto_policy }}
-      session_termination=ClientAliveInterval={{ odp.ssh_client_alive_interval }}
+      session_termination={{ ('ChannelTimeout=session*=' ~ odp.session_timeout_seconds ~ 's') if (nist_openssh_version | default('0')) is version('9.2', '>=') else 'TMOUT-only' }}
       audit_key=session
     owner: root
     group: root

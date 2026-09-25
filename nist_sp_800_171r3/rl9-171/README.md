@@ -425,7 +425,8 @@ rl9-171/
 │   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
 │   ├── probe.sh, probes/        read-only evidence probes run on hosts
 │   ├── assessor-parity.sh       two assessor versions, same hosts, every check compared
-│   └── harden-cycle.sh          one recorded apply/reboot/apply/verify cycle on a host
+│   ├── harden-cycle.sh          one recorded apply/reboot/apply/verify cycle on a host
+│   └── ssh-idle-test.sh         an idle SSH session, timed until sshd closes it
 ├── lib/ssh-env.sh               supplies the MFA knowledge factor to ssh
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile

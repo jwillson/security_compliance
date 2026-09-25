@@ -110,6 +110,12 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   (`Curl error (28) ... Operation too slow`) stretched that to 8 minutes;
   dnf moves on to other mirrors by itself. Read `/var/log/dnf.log` in the
   guest before assuming the build is stuck.
+- **A throwaway sshd cannot open a session on a hardened guest.** Testing
+  sshd options in isolation with `sshd -i` (inetd mode, no port) fails after
+  authentication with "A valid context for byoadmin could not be obtained":
+  pam_selinux refuses a session from an sshd not running in `sshd_t`, and
+  policy does not allow starting one there. Test the real sshd by behaviour
+  instead (`tools/ssh-idle-test.sh`), and read OpenSSH's source for mechanism.
 - **A silent firmware delay.** Without a boot order the firmware tried other
   devices first and the kernel started ~10 minutes after the domain did.
   `byo-guest.sh` puts `hd` first, and logs the serial console to
@@ -123,6 +129,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | --- | --- |
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind TASKS 6b.2–6b.6; run it before and after a fix and diff. |
+| `tools/ssh-idle-test.sh HOST [LIMIT]` | Behaviour, not configuration: opens an SSH session running a silent `sleep` and measures when sshd closes it (03.01.11 / 03.13.09; TMOUT cannot end it). Takes the idle limit plus up to 90 s. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
 
 ## Rehearsing from scratch

@@ -660,10 +660,11 @@ requirements:
     tasks: tasks/ac.yml
     host_scope: >
       Sessions terminate automatically on the ODP trigger (idle expiry): shell
-      TMOUT terminates idle login shells, and sshd ClientAliveInterval with
-      ClientAliveCountMax 0 terminates idle network sessions.
-    checks: [ac-11-tmout-set, ac-11-ssh-clientalive-interval,
-             ac-11-ssh-clientalive-countmax, ac-11-ssh-logingracetime]
+      TMOUT ends an idle login shell, and sshd ChannelTimeout ends an SSH session
+      idle for the same period whatever runs in it (OpenSSH >= 9.2; the role
+      records the gap on an older sshd). ClientAlive settings detect dead peers
+      and are not idle termination (DEFECTS 6b.3).
+    checks: [ac-11-tmout-set, ac-11-ssh-clientalive-interval, ac-11-ssh-clientalive-countmax, ac-11-ssh-logingracetime, ac-11-ssh-channel-timeout, sc-09-unused-connection-timeout]
 
   - id: "03.01.12"
     title: Remote Access
@@ -1461,12 +1462,11 @@ requirements:
     disposition: technical
     tasks: tasks/sc.yml
     host_scope: >
-      Network connections terminate at session end or after the ODP idle
-      period: sshd ClientAliveInterval/ClientAliveCountMax drop idle sessions,
-      TCP keepalive detects dead peers, and TMOUT ends the shell that owns the
-      connection.
-    checks: [sc-09-clientalive-interval, sc-09-clientalive-countmax,
-             sc-09-tcp-keepalive, sc-09-tmout]
+      Network connections terminate at session end or after the ODP idle period:
+      sshd ChannelTimeout closes an idle session and UnusedConnectionTimeout the
+      connection left with none open (OpenSSH >= 9.2), TMOUT ends the shell that
+      owns the connection, and TCP keepalive detects dead peers.
+    checks: [sc-09-clientalive-interval, sc-09-clientalive-countmax, sc-09-tcp-keepalive, sc-09-tmout, ac-11-ssh-channel-timeout, sc-09-unused-connection-timeout]
 
   - id: "03.13.10"
     title: Cryptographic Key Establishment and Management

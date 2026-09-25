@@ -528,6 +528,34 @@
 # ===========================================================================
 # 03.01.12 Remote Access / 03.01.16 Wireless / 03.01.20 External systems
 # ===========================================================================
+- name: "03.01.11 | Read the installed OpenSSH version"
+  # ChannelTimeout and UnusedConnectionTimeout exist from OpenSSH 9.2; an
+  # older sshd would refuse the whole file (the template is validated with
+  # sshd -t, so the apply would fail rather than lock anyone out).
+  ansible.builtin.command:
+    cmd: rpm -q --qf '%{VERSION}' openssh-server
+  register: nist_openssh_rpm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ["03.01.11", "03.01.12", "03.05.03", "03.05.04", "03.07.05", "03.13.09", "03.13.15"]
+
+- name: "03.01.11 | Note the OpenSSH version"
+  ansible.builtin.set_fact:
+    nist_openssh_version: "{{ nist_openssh_rpm.stdout if nist_openssh_rpm.rc == 0 else '0' }}"
+  # 03.07.05 too: ma.yml records the session-termination mechanism from it.
+  tags: ["03.01.11", "03.01.12", "03.05.03", "03.05.04", "03.07.05", "03.13.09", "03.13.15"]
+
+- name: "03.01.11 | Warn that sshd cannot end idle sessions on this OpenSSH"
+  ansible.builtin.debug:
+    msg: >-
+      openssh-server {{ nist_openssh_version }} predates ChannelTimeout (9.2), so
+      sshd cannot close an idle session that is not at a bash prompt (TMOUT
+      covers only that). 03.01.11 and 03.13.09 will report it. Update
+      openssh-server - current RHEL 9 minors ship 9.9.
+  when: nist_openssh_version is version('9.2', '<')
+  tags: ["03.01.11", "03.13.09"]
+
 - name: "03.01.12 | Deploy the hardened sshd configuration"
   ansible.builtin.template:
     src: sshd_config.j2
@@ -537,7 +565,9 @@
     mode: "0600"
     validate: /usr/sbin/sshd -t -f %s
   notify: restart sshd
-  tags: ["03.01.12", "03.05.03", "03.05.04", "03.13.09", "03.13.15"]
+  # 03.01.11 too: the file carries the idle-session settings, and without the
+  # tag `--tags 03.01.11` would never deploy them (the 1b.7 failure).
+  tags: ["03.01.11", "03.01.12", "03.05.03", "03.05.04", "03.13.09", "03.13.15"]
 
 - name: "03.01.12 | Protect the sshd configuration files"
   ansible.builtin.file:

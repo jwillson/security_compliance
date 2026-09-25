@@ -328,8 +328,31 @@ checks:
 
   - id: ac-11-ssh-clientalive-countmax
     description: sshd terminates rather than probing indefinitely
+    # Asserts the ODP as configured. It is not idle termination: 0 disables
+    # ClientAlive termination entirely (sshd_config(5)), and a live idle
+    # client answers the probes anyway. Idle sessions are ended by
+    # ac-11-ssh-channel-timeout below. The value is an open owner decision
+    # (TASKS.md 6b.3, ODP-REVIEW.md A2).
     command: "sshd -T 2>/dev/null | awk '/^clientalivecountmax/ {print $2}'"
     expect_int: "<= {odp.ssh_client_alive_count_max}"
+
+  - id: ac-11-ssh-channel-timeout
+    description: sshd closes a session idle for the ODP period, whatever runs in it
+    # TMOUT ends an idle bash prompt; this ends everything else a session can
+    # be doing while idle - a foreground program, sftp. `session` is the only
+    # channel type a user can open: agent, TCP, stream-local and X11
+    # forwarding and tunnels are all disabled (03.01.03). OpenSSH >= 9.2.
+    # "session*": a running session's channel is relabelled session:shell,
+    # session:command or session:subsystem:*, and a bare "session" matches
+    # none of them - sshd -T shows it set while no session ever idles out.
+    # tools/ssh-idle-test.sh proves the behaviour.
+    command: "sshd -T 2>/dev/null | awk '/^channeltimeout/ {print $2}'"
+    expect_output: "session*={odp.session_timeout_seconds}s"
+
+  - id: sc-09-unused-connection-timeout
+    description: sshd drops a connection left with no open session for the ODP period
+    command: "sshd -T 2>/dev/null | awk '/^unusedconnectiontimeout/ {print $2}'"
+    expect_output: "{odp.session_timeout_seconds}"
 
   - id: ac-11-ssh-logingracetime
     description: Unauthenticated connections are bounded

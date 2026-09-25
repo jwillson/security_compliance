@@ -54,7 +54,23 @@ PrintMotd yes
 PrintLastLog yes
 
 # --- 03.13.09 Network disconnect / 03.01.11 Session termination -------------
-# An idle session is dropped after {{ odp.ssh_client_alive_interval }}s.
+{% if nist_openssh_version is version('9.2', '>=') %}
+# An SSH session idle for {{ odp.session_timeout_seconds }}s is closed whatever runs in it, and a
+# connection left with no session open is dropped after the same period.
+# (TMOUT alone ends only an idle bash prompt.) "session*", not "session":
+# once a session starts a shell, a command or sftp, sshd relabels its channel
+# session:shell / session:command / session:subsystem:sftp and looks the
+# timeout up again under that name (channels.c channel_set_xtype), so a bare
+# "session" applies to no running session at all (DEFECTS 6b.3).
+ChannelTimeout session*={{ odp.session_timeout_seconds }}s
+UnusedConnectionTimeout {{ odp.session_timeout_seconds }}s
+{% else %}
+# OpenSSH {{ nist_openssh_version }} predates ChannelTimeout (9.2): only TMOUT ends
+# idle sessions here. The assessor reports it; update openssh-server.
+{% endif %}
+# Dead-peer detection, not idle termination: a live idle client answers these
+# probes, and ClientAliveCountMax 0 disables termination altogether
+# (sshd_config(5); DEFECTS 6b.3 - the value is an open owner decision).
 ClientAliveInterval {{ odp.ssh_client_alive_interval }}
 ClientAliveCountMax {{ odp.ssh_client_alive_count_max }}
 TCPKeepAlive yes

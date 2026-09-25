@@ -178,6 +178,44 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       input.
 
 - [ ] **6b.3 03.01.11 / 03.13.09: the SSH idle setting asserted does nothing.**
+      *Idle termination fixed 2026-09-25, check first; the CountMax value
+      waits on the owner.* **The first fix did not work, and only the
+      behaviour test showed it:** with `ChannelTimeout session=900s` set and
+      `sshd -T` agreeing, `tools/ssh-idle-test.sh` held an idle session open
+      for its full 1,200 s. The suspected cause — ClientAlive probes, which
+      sshd sends *on* the open session channel (serverloop.c) — was refuted
+      by the source: they do not touch the channel's idle clock
+      (`lastused`, reset only by stream reads/writes in channels.c). The
+      real cause: when a session starts a shell, a command or sftp, sshd
+      relabels its channel `session:shell` / `session:command` /
+      `session:subsystem:*` and looks the timeout up again under that name
+      with `match_pattern` (`channel_set_xtype`), so a bare `session` never
+      applies to a running session — the installed man page's description
+      of `session` notwithstanding. The fix is `session*`. New
+      `ac-11-ssh-channel-timeout` and
+      `sc-09-unused-connection-timeout` read `sshd -T`, are referenced by
+      both requirements, and FAILED on `byo-rl9-02` (`none`) — 03.01.11, a
+      `technical` requirement, had been reporting a plain PASS. The role sets
+      `ChannelTimeout session*=` and `UnusedConnectionTimeout` from the
+      accepted `session_timeout_seconds` (900 s), gated on OpenSSH >= 9.2
+      with a warning and a recorded gap below it; `session` is the only
+      channel type a user can open, since every forwarding is disabled. The
+      sshd template now also carries the 03.01.11 tag (`--tags 03.01.11`
+      never deployed it — 1b.7 again), `ma.yml`'s posture record names the
+      real mechanism, and both `host_scope` texts, which claimed
+      ClientAlive 0 "terminates idle network sessions", are corrected.
+      *Proven on `byo-rl9-02`:* `sshd -T` shows `channeltimeout
+      session*=900s`, `unusedconnectiontimeout 900`; 03.01.11 and 03.13.09
+      PASS with 0 checks failed; and by behaviour — `tools/ssh-idle-test.sh`,
+      a session running a silent `sleep 1200`, closed by sshd at **900 s**
+      (with bare `session`: never).
+      **Open, owner decision — `ssh_client_alive_count_max`.** 0 disables
+      ClientAlive termination, so dead peers are never reaped. Proposed: **1**,
+      the RHEL 9 STIG value (ODP-REVIEW's precedence puts STIG first): a
+      silent peer is dropped one interval after the first unanswered probe.
+      The two countmax checks then assert `== {odp}` rather than `<=`, which
+      today passes the 0 that disables it. Accept, or name another value.
+      *The finding as recorded:*
       `odp.ssh_client_alive_count_max: 0`, and the installed OpenSSH 9.9 man
       page: "Setting a zero ClientAliveCountMax disables connection
       termination." `ac-11-` and `sc-09-clientalive-countmax` assert
