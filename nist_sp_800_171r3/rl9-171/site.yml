@@ -63,11 +63,37 @@
     - role: nist_800_171
 
   post_tasks:
+    - name: Look for a reboot the host owes, whatever caused it
+      # The handlers flag the reboots the role causes (audit rules, FIPS,
+      # kernel arguments). A kernel that dnf-automatic installed (03.14.01) is
+      # owed one too - sa-02-kernel-current fails until it happens, and the
+      # advisories it fixes stay pending - yet this reported "Reboot required:
+      # False" on a host running the old one (DEFECTS 6b.10). The kernel test
+      # is sa-02's; needs-restarting covers libraries and services.
+      ansible.builtin.shell:
+        cmd: |
+          running=$(uname -r)
+          newest=$(rpm -q --last kernel 2>/dev/null | head -1 | awk '{print $1}' | sed 's/^kernel-//')
+          if [ -n "$newest" ] && [ "$running" != "$newest" ]; then
+            echo "kernel $newest is installed, $running is running"
+          fi
+          needs-restarting -r >/dev/null 2>&1
+          [ $? -eq 1 ] && echo "core libraries or services were updated since boot"
+          true
+        executable: /bin/bash
+      register: nist_pending_reboot
+      changed_when: false
+      check_mode: false
+      tags: [always]
+
     - name: Report what was applied
       ansible.builtin.debug:
         msg: >-
           Overlay {{ meta.version }} applied.
-          Reboot required: {{ nist_reboot_required | default(false) }}.
+          Reboot required: {{ (nist_reboot_required | default(false)) or
+                              (nist_pending_reboot.stdout | default('') | length > 0) }}{{
+            ' (' ~ (nist_pending_reboot.stdout_lines | join('; ')) ~ ')'
+            if nist_pending_reboot.stdout | default('') | length > 0 else '' }}.
           Run ./verify.sh to assess the host against all 97 requirements.
       tags: [always]
 

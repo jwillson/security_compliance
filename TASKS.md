@@ -34,6 +34,7 @@ never been applied.
 | `byo-rl9-02`, first cycle, 2026-09-25 (`tools/harden-cycle.sh`) | **35/31/3/28**, 6 checks failed: 03.01.01 and 03.05.12 (6b.4 — the checks catch it) and 03.04.06 (no separate `/tmp`, the retrofit limit). Dry run, apply, reboot, apply, then `changed=0`. The LUKS requirements PASS with the key in cleartext beside the volumes (6b.5), and 03.10.07 PASSes with no GRUB password (6b.2) |
 | `byo-rl9-02`, from `fresh` at `f96ae2b` (6b.2, 6b.3, 6b.4, 6b.6 fixed) | **35/33/1/28**, 2 checks failed — both 03.04.06, the retrofit limit (no separate `/tmp`). Dry run on the stock host `failed=0`, reboot unattended, then `changed=0`. The before/after evidence shows each fix; 6b.5 (LUKS key placement, TPM bind) is unchanged and still passes checks it should not |
 | `byo-rl9-02`, from `fresh` at `07fb042` (all of 6b fixed) | **35/33/1/28**, 344 checks run, 2 failed — both 03.04.06, the retrofit limit. First-time LUKS path: key staged, volumes formatted and bound to the TPM, key deleted, and the first reboot unlocked them from the TPM alone (42 s). Then `changed=0` |
+| BYO pair with every 6b fix, 2026-09-26 (`harden-cycle.sh`) | `byo-rl9-01` and `byo-log-01` 32/30/7/28: the five retrofit limits, plus `sa-02` / `si-01` from a kernel reboot the apply did not report (6b.10, since fixed and proven on `byo-rl9-02`). `byo-log-01` also found 6b.9 |
 | `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
 
 **Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
@@ -306,8 +307,11 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       disproved two of my own assumptions: PCR 7 does not differ between the
       first and later boots (event logs identical), and a passphrase prompt
       at boot is shown even when the TPM answers it.
-      *Still to do:* the kickstart lab has no TPM, so its hosts will fail
-      both new checks until `vm/build-vm.sh` gives them one (R3).
+      *Correction (2026-09-26):* an earlier note here said the kickstart lab
+      has no TPM. It has had one since the first commit (`vm/build-vm.sh`,
+      `--tpm ... model=tpm-crb`, `9009b90`) — so every kickstart host had a
+      TPM and the silent bind is the only reason none was ever sealed. *Still
+      to do:* prove the fixed role there with a kickstart build (R3).
       *The finding as recorded:* `mp.yml` stages `/root/.luks-key` and `crypttab` points at
       it; the kickstart's `lv_root` is plain xfs. The "key file" is
       `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk
@@ -401,6 +405,32 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       would have been wrong: the bind would then silently run nothing, 1b.7's
       original failure. *Proven:* `--tags 03.13.10` reaches the bind task,
       `failed=0`.
+
+- [x] **6b.9 The collector restarted rsyslog on every run once it had two
+      forwarders.** *Found 2026-09-26 cycling `byo-log-01`* (dry run after
+      settling: `changed=2`). `nist_col_peers` was `cui_hosts | difference(
+      [inventory_hostname])`, and `difference` keeps no order: the
+      PermittedPeer list came out either way round, the template changed and
+      the handler restarted the collector — invisible with one forwarder.
+      *Fix:* `| sort`. *Proven:* apply `changed=3` (rewritten sorted, one
+      restart), then `changed=0`.
+
+- [x] **6b.10 apply.sh said "Reboot required: False" on a host that owed
+      one.** *Found 2026-09-26 cycling `byo-rl9-01`:* dnf-automatic had
+      installed kernel 687.50.1 while 687.48.1 ran, `sa-02-kernel-current`
+      failed and `si-01` counted 8 advisories that apply to the running
+      kernel — and the cycle did not reboot, because the handlers only flag
+      reboots the role itself causes. (`needs-restarting -r` alone is not the
+      test either: it compares install time with boot time, and missed it
+      after an unrelated restart.) *Fix:* `site.yml`'s closing tasks ask the
+      host — the running kernel against the newest installed, as `sa-02`
+      does, and `needs-restarting -r` for libraries and services — and the
+      report gives the reason. *Proven:* `tools/stage-pending-kernel.sh`
+      boots the older kernel of `byo-rl9-02` with the newest as default, as
+      dnf leaves it; apply then reports "Reboot required: True (kernel
+      5.14.0-687.50.1 is installed, 5.14.0-687.10.1 is running)", the cycle
+      reboots on it, and the host ends at 35/33/1/28 with `sa-02` and `si-01`
+      passing, then `changed=0`.
 
 ---
 

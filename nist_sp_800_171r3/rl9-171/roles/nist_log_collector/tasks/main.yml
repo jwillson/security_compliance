@@ -35,7 +35,10 @@
       {{ nist_log_tls and nist_col_ca | length > 0
          and nist_col_cert | length > 0 and nist_col_key | length > 0 }}
     # Every forwarder in the inventory, by the name its certificate carries.
-    nist_col_peers: "{{ groups['cui_hosts'] | default([]) | difference([inventory_hostname]) }}"
+    # Sorted: `difference` does not keep an order, so with two forwarders the
+    # list came out either way round, rewrote the config and restarted the
+    # collector's rsyslog on every run (DEFECTS 6b.9).
+    nist_col_peers: "{{ groups['cui_hosts'] | default([]) | difference([inventory_hostname]) | sort }}"
   tags: ["03.03.05", "03.13.08"]
 
 - name: Warn that the collector cannot listen for lack of certificates
