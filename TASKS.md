@@ -71,21 +71,29 @@ is believed.
       stated precisely (Rocky/RHEL 9 minors, and what differs on OpenSSH
       8.7 vs ≥ 9.2 after 6b.3); a *Known limitations* section carrying
       everything under *Not blockers*.
-- [ ] **R5 `SECURITY.md`.** A security tool needs a private route for
-      vulnerability reports: GitHub private vulnerability reporting, plus
-      what counts as in scope (a false PASS is a vulnerability).
-- [ ] **R6 CI.** A GitHub Actions workflow running `make validate`,
-      `make test` and `make catalog-check` on every push and PR. None needs
-      a host; `catalog-check` needs `pdftotext` (poppler-utils).
-- [ ] **R7 Versioned.** `CHANGELOG.md`, and a `v1.0.0` tag that matches
-      `meta.version` in the overlay. The overlay has claimed 1.0.0 since
-      before 6b.1; decide whether the release is 1.0.0 or the overlay bumps.
+- [x] **R5 `SECURITY.md`.** *Written 2026-09-26:* private reporting through
+      GitHub's private vulnerability reporting, a false PASS in scope, a 7-day
+      acknowledgement target (the owner's to confirm). *At release:* enable
+      private vulnerability reporting in the repository settings — GitHub
+      offers it only on public repositories.
+- [x] **R6 CI.** *Done 2026-09-26* (`.github/workflows/ci.yml`): validate,
+      the 56 unit tests, catalog-check, the playbook's syntax check and a parse
+      of every script, on every push and pull request; actions pinned to SHAs.
+      The first run passed, and showed the catalog reproduces with the
+      runner's poppler 24.02 as with the laptop's 26.01.
+- [ ] **R7 Versioned.** *`CHANGELOG.md` written 2026-09-26.* Recommended:
+      release as **1.0.0** — never released before — with the changelog saying
+      development builds reported the same number. *At release:* fill in
+      "Proven at this release" from R3's run, date the entry, and tag
+      `v1.0.0` on that commit.
 - [ ] **R8 History scanned with a real secret scanner** (gitleaks or
       trufflehog) before visibility changes. A pattern grep on 2026-09-25
       (private keys, `$6$` hashes, tokens, `.secrets/`, keys, images,
       inventories, reports) found nothing, but a grep is not a scanner.
-- [ ] **R9 `CONTRIBUTING.md`** carrying *How work arrives* below: fix the
-      check first, a lab run before merge, closed items to `DEFECTS.md`.
+- [x] **R9 `CONTRIBUTING.md`.** *Written 2026-09-26:* the acceptance rules
+      (a finding is a lead until a host confirms it; fix the check first; prove
+      it on a host; script everything; docs in the repo), the rules the code
+      keeps, and what never goes in the repository.
 
 **Not blockers** — ship as documented limitations:
 6.2a (interop with a non-rsyslog receiver; after 6b.6 the audit path is
