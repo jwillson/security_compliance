@@ -11,53 +11,39 @@ procedure is `docs/RUNBOOK.md`.
 
 ## Where the tool stands
 
-**Consistent** — `make validate` passes: 97 active requirements (33 withdrawn),
-334 checks defined and referenced, 32 machine ODPs + 62 organizational across
-49 requirements, and every machine ODP asserted by a check. Disposition is
-**37 technical, 32 partial, 28 organizational**.
+As of 2026-09-26, at the head of `main`.
+
+**Consistent** — `make validate`: 97 active requirements (33 withdrawn), 340
+checks defined and referenced, 32 machine ODPs each asserted by a check, 62
+organizational across 49 requirements. Disposition **37 technical, 32
+partial, 28 organizational**. `make catalog-check`: the catalog still
+reproduces byte for byte from the PDF.
 
 **Tested** — `make test`: 41 unit tests for the assessor and the validator.
-`make catalog-check` proves `catalog/requirements.json` still reproduces byte
-for byte from the PDF. Since 6b.1 the assessor never reads a command that
-could not run as a clean result: a missing tool or an undeclared exit status
-is ERROR, and it refuses to run unprivileged or off RHEL 9.
+The assessor never reads a command that could not run as a clean result
+(6b.1); every check reads effective state.
 
-**Proven against running hosts.** `./apply.sh` is idempotent and
-`--check --diff` is a real drift detector, including on a host that has
-never been applied.
+**Proven against running hosts**, by `tools/harden-cycle.sh` (dry run,
+apply, reboot when owed, apply, `changed=0`, verify, evidence before and
+after):
 
 | Lab | Result |
 | --- | --- |
-| Kickstart, rebuilt with rotated secrets (5.1) | `rl9-cui-01` 36/33/0/28, `rl9-log-01` 35/34/0/28 — 334 checks, **0 failed** both |
-| BYO retrofit, no `.secrets/` at all (2.1) | `byo-rl9-01` and `byo-log-01` 34/30/5/28 — 6 checks failed, **all five requirements documented retrofit limits** (2.2) |
-| BYO pair, 2026-09-25, after a week powered off | 33/30/6/28 on both — the five retrofit limits plus `si-01`: 21 security advisories pending. A host finding, cleared by the next apply |
-| `byo-rl9-02`, first cycle, 2026-09-25 (`tools/harden-cycle.sh`) | **35/31/3/28**, 6 checks failed: 03.01.01 and 03.05.12 (6b.4 — the checks catch it) and 03.04.06 (no separate `/tmp`, the retrofit limit). Dry run, apply, reboot, apply, then `changed=0`. The LUKS requirements PASS with the key in cleartext beside the volumes (6b.5), and 03.10.07 PASSes with no GRUB password (6b.2) |
-| `byo-rl9-02`, from `fresh` at `f96ae2b` (6b.2, 6b.3, 6b.4, 6b.6 fixed) | **35/33/1/28**, 2 checks failed — both 03.04.06, the retrofit limit (no separate `/tmp`). Dry run on the stock host `failed=0`, reboot unattended, then `changed=0`. The before/after evidence shows each fix; 6b.5 (LUKS key placement, TPM bind) is unchanged and still passes checks it should not |
-| `byo-rl9-02`, from `fresh` at `07fb042` (all of 6b fixed) | **35/33/1/28**, 344 checks run, 2 failed — both 03.04.06, the retrofit limit. First-time LUKS path: key staged, volumes formatted and bound to the TPM, key deleted, and the first reboot unlocked them from the TPM alone (42 s). Then `changed=0` |
-| **Kickstart lab on the laptop**, 2026-09-26, every 6b fix (`make vm`, `make vm-log`, `make pki`, `harden-cycle.sh`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28**, 344 checks, **0 failed** on both, both idempotent. The CUI volumes are sealed to the TPM (crypttab `none`, both `tpm2`) — the first kickstart host the role ever sealed; the collector holds 121,650 auditd records from `rl9-cui-01`, none copied to its syslog |
-| BYO pair with every 6b fix, 2026-09-26 (`harden-cycle.sh`) | `byo-rl9-01` and `byo-log-01` 32/30/7/28: the five retrofit limits, plus `sa-02` / `si-01` from a kernel reboot the apply did not report (6b.10, since fixed and proven on `byo-rl9-02`). `byo-log-01` also found 6b.9 |
-| `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
+| Kickstart, built on the laptop (`inventory/kickstart.yml`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28** — 344 checks run, **0 failed** on both. CUI volumes sealed to the TPM; 121,650 auditd records forwarded over TLS to the collector |
+| BYO retrofit reference (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 6 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
+| BYO with a volume group, a TPM and two accounts | `byo-rl9-02` **35/33/1/28** — 2 checks failed, both 03.04.06 (no separate `/tmp`) |
 
-**Every number in that table overstates, until 6b.2–6b.6 are fixed.** A review
-on 2026-09-25 found five role defects, and in four of them the check was as
-wrong as the role: the check for 03.10.07 passed with no GRUB password
-(03.10.07 is `partial`, so the requirement showed MANUAL — which still
-reads as "the host's part is done"), 03.03.05c passed with no audit record
-forwarded, 03.01.11 / 03.13.09 passed on an SSH setting that does nothing,
-and the LUKS checks cannot see that the key sits beside the data it unlocks. See
-*Open — defects in the role and its checks* below.
+Proven by behaviour, not configuration: an idle SSH session closed at the
+ODP limit (`tools/ssh-idle-test.sh`); GRUB demanding its password to edit an
+entry (`tools/rehearse-grub-edit.py`); the TPM refusing after a PCR 7 change,
+the stale binding reported, resealed, and the next boot unlocking alone
+(`tools/rehearse-pcr7-recovery.py`); every lockout recovery in the RUNBOOK
+(DEFECTS Phase 3). The history behind these numbers — and the defects each
+run found — is `docs/DEFECTS.md`.
 
-Also proven: the TLS **transport** on 6514 with mutual x509 (6.1) — but what
-it carries is syslog, not the audit trail (6b.6); the
-seven timers producing output; `organizational-requirements.md` rendering with
-all 43 ODP sections; `tools/inventory.py` driven by real builds and destroys;
-every lockout recovery in the RUNBOOK rehearsed with a scripted serial
-console (Phase 3), which corrected two of them.
-
-What is open is listed below: five defects in the role and its checks, the
-first priority; one item that needs a receiver we do not have; two that need
-authoring only the system owner can do; three defects found while working
-out how to do them; and the lab work that makes all of it testable here.
+What is open is below: the release blockers first, then one item that needs
+a receiver we do not have, the owner's authoring, and the defects found
+working out how to do it.
 
 ---
 
@@ -70,10 +56,9 @@ is believed.
 
 **Blockers**
 
-- [ ] **R1 No known false PASS.** 6b.2, 6b.3, 6b.4, 6b.6 fixed and proven;
-      6b.5 fixed after the owner's decision, or its requirements downgraded
-      so the report stops implying encryption at rest that the key placement
-      defeats.
+- [x] **R1 No known false PASS.** *Met 2026-09-26:* 6b.2–6b.6 fixed and
+      proven, 6b.5 by the owner's choice (TPM), each with its check changed
+      first so it failed on the defect (DEFECTS.md Phase 6b).
 - [ ] **R2 No data loss in what the tool generates.** 6.6: the SSP and POA&M
       generators must keep what the owner authors.
 - [ ] **R3 A full lab cycle green on the release commit.** Both labs — the
@@ -136,303 +121,11 @@ owner's identity. The rules that keep that honest:
 
 ---
 
-## Open — defects in the role and its checks
+## Defects in the role and its checks — closed
 
-Found by the cloud review of 2026-09-25 (after PR #2), each confirmed on
-`byo-rl9-01` / `byo-log-01` the same day. Continues the 6b series in
-`DEFECTS.md`, where 6b.1 is closed. Fixes are requested from the cloud session
-as one PR, one commit per defect; 6b.5 needs an owner decision first.
-
-- [x] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
-      *Fixed 2026-09-25, check first.* `pe-07-grub-password` now reads what
-      GRUB boots — a real `grub.pbkdf2.` hash inline in `/boot/grub2/grub.cfg`,
-      or `user.cfg` holding one while `grub.cfg` sources it — and the new
-      `pe-07-grub-no-staged-secret` fails on a cleartext copy. Both FAILED on
-      the hardened `byo-rl9-02` before the role changed. The role now writes
-      `GRUB2_PASSWORD=` to `/boot/grub2/user.cfg` as `grub2-setpassword` does,
-      the password passed on stdin and never on disk; an existing hash is kept
-      only if it verifies (PBKDF2-SHA512 from its own salt, which works under
-      FIPS), so a changed `NIST_GRUB_PASSWORD` takes effect; the staged file
-      is removed. The `10_linux` edit, the `/etc/default/grub` edits (which
-      had never run) and the `update grub config` handler are gone: the
-      probe shows all four BLS entries already `--unrestricted` and `grub.cfg`
-      already sourcing `user.cfg`. *Proven on `byo-rl9-02`:* apply
-      `changed=2` then `changed=0`; both checks PASS; a reboot counted down
-      and booted by itself in 29 s (serial log). *Proven by behaviour
-      2026-09-26* with `tools/rehearse-grub-edit.py`: the console catches the
-      one-second menu and presses `e` — GRUB asks for a username; a wrong
-      password gets "access denied"; root and the right one open the editor
-      (the real `linux ($root)/vmlinuz-…` line); Escape, and the default
-      entry boots unattended to a login prompt.
-      *The finding as recorded:*
-      Stock `grub2-tools` ships `/etc/grub.d/01_users` containing the literal
-      template `password_pbkdf2 root ${GRUB2_PASSWORD}`, filled from
-      `user.cfg` only when one exists. The role's guard (`pe.yml:36`) greps
-      that file for `password_pbkdf2`, so it always prints "already-set" and
-      writes nothing; `pe-07-grub-password` greps the same file and passes.
-      *Evidence:* on the hardened guest `rpm -V grub2-tools` shows `01_users`
-      unmodified and no `user.cfg` exists, so GRUB has **no password at
-      all**. The kickstart defers the password to the role (see the comment
-      above `bootloader` in `rl9-cui.ks.j2`), so the kickstart lab took the
-      same path — inferred; that lab is on the other workstation. Also: the
-      password the role meant to set is left in cleartext at
-      `/root/.grub-pw` (0400).
-      *Fix direction:* leave `01_users` stock and write `/boot/grub2/user.cfg`
-      as `grub2-setpassword` does; delete the staged file; the check asserts
-      a real `grub.pbkdf2.` hash, never the template. RHEL 9 boots BLS
-      entries, which carry `grub_arg --unrestricted`, so the `10_linux` edit
-      may be dead code — the test must include a reboot with no console
-      input.
-
-- [x] **6b.3 03.01.11 / 03.13.09: the SSH idle setting asserted does nothing.**
-      *Closed 2026-09-25:* the owner accepted CountMax **1** (ODP-REVIEW A2a).
-      The countmax checks assert `==` and FAILED on 0 first; applied,
-      03.01.11 and 03.13.09 PASS with 0 failed.
-      *Idle termination fixed 2026-09-25, check first; the CountMax value
-      waits on the owner.* **The first fix did not work, and only the
-      behaviour test showed it:** with `ChannelTimeout session=900s` set and
-      `sshd -T` agreeing, `tools/ssh-idle-test.sh` held an idle session open
-      for its full 1,200 s. The suspected cause — ClientAlive probes, which
-      sshd sends *on* the open session channel (serverloop.c) — was refuted
-      by the source: they do not touch the channel's idle clock
-      (`lastused`, reset only by stream reads/writes in channels.c). The
-      real cause: when a session starts a shell, a command or sftp, sshd
-      relabels its channel `session:shell` / `session:command` /
-      `session:subsystem:*` and looks the timeout up again under that name
-      with `match_pattern` (`channel_set_xtype`), so a bare `session` never
-      applies to a running session — the installed man page's description
-      of `session` notwithstanding. The fix is `session*`. New
-      `ac-11-ssh-channel-timeout` and
-      `sc-09-unused-connection-timeout` read `sshd -T`, are referenced by
-      both requirements, and FAILED on `byo-rl9-02` (`none`) — 03.01.11, a
-      `technical` requirement, had been reporting a plain PASS. The role sets
-      `ChannelTimeout session*=` and `UnusedConnectionTimeout` from the
-      accepted `session_timeout_seconds` (900 s), gated on OpenSSH >= 9.2
-      with a warning and a recorded gap below it; `session` is the only
-      channel type a user can open, since every forwarding is disabled. The
-      sshd template now also carries the 03.01.11 tag (`--tags 03.01.11`
-      never deployed it — 1b.7 again), `ma.yml`'s posture record names the
-      real mechanism, and both `host_scope` texts, which claimed
-      ClientAlive 0 "terminates idle network sessions", are corrected.
-      *Proven on `byo-rl9-02`:* `sshd -T` shows `channeltimeout
-      session*=900s`, `unusedconnectiontimeout 900`; 03.01.11 and 03.13.09
-      PASS with 0 checks failed; and by behaviour — `tools/ssh-idle-test.sh`,
-      a session running a silent `sleep 1200`, closed by sshd at **900 s**
-      (with bare `session`: never).
-      *Owner decision, since taken —* `ssh_client_alive_count_max`. 0 disables
-      ClientAlive termination, so dead peers are never reaped. Proposed: **1**,
-      the RHEL 9 STIG value (ODP-REVIEW's precedence puts STIG first): a
-      silent peer is dropped one interval after the first unanswered probe.
-      The two countmax checks then assert `== {odp}` rather than `<=`, which
-      today passes the 0 that disables it. Accept, or name another value.
-      *The finding as recorded:*
-      `odp.ssh_client_alive_count_max: 0`, and the installed OpenSSH 9.9 man
-      page: "Setting a zero ClientAliveCountMax disables connection
-      termination." `ac-11-` and `sc-09-clientalive-countmax` assert
-      `<= ODP`, so they pass it. Raising the value to 1 is not the fix
-      either: a live idle client answers the keepalive probes, so ClientAlive
-      only reaps dead clients — and `<= 1` would still pass 0.
-      *What actually enforces idle today:* `TMOUT=900`, readonly, for bash
-      prompts (`ac.yml:509`). Uncovered: SSH sessions not at a prompt — a
-      foreground program, sftp, forwards. `sshd -T` shows `channeltimeout
-      none`, `unusedconnectiontimeout none`.
-      *Fix direction:* `ChannelTimeout session=` and `UnusedConnectionTimeout`
-      from `session_timeout_seconds`, asserted from `sshd -T`; a nonzero
-      CountMax to reap dead clients, asserted as a range that excludes 0.
-      Needs OpenSSH ≥ 9.2; earlier Rocky 9 minors shipped 8.7p1, so gate on
-      the version and record the gap rather than fail the apply. Correct
-      `ma.yml:48` and the 03.01.11 text, which name ClientAliveInterval as
-      the mechanism.
-      *Owner decision:* this changes `ssh_client_alive_count_max`, a value
-      accepted in `ODP-REVIEW.md` A2 on a premise that was wrong.
-
-- [x] **6b.4 03.01.01 / 03.05.12: account aging does nothing on a host with
-      more than one user.** *Fixed 2026-09-25.* The checks already failed on
-      it (shown by `byo-rl9-02`'s first cycle), so the fix is the role's:
-      both loops quote each name separately (`map('quote') | join(' ')`),
-      and a failing `chage` fails the task naming the account instead of
-      vanishing into `&& changed=1`. Found alongside, the 1b.7 failure again:
-      the account list was computed only under 03.01.01 / 03.01.05, so
-      `--tags 03.05.12` looped over `default([])` — nothing — and reported
-      success; the list task now carries 03.05.12 and the default is gone.
-      *Proven on `byo-rl9-02`:* `--tags 03.05.12` alone and `--tags
-      03.01.01` alone each `changed=1`, together again `changed=0`; the probe
-      shows `byoadmin` and `cuiuser1` both at min=1 max=60 warn=7
-      inactive=35; 03.01.01 and 03.05.12 from FAIL to PART, 0 checks failed.
-      *The finding as recorded:* `ac.yml:36` (inactivity lock) and `ia.yml:368`
-      (password lifetime) loop over
-      `{{ nist_interactive_accounts.stdout_lines | join(' ') | quote }}`:
-      `quote` makes the whole list one word, so with two users the loop runs
-      once on `"alice bob"`, `chage` fails on a user that does not exist, and
-      the task reports `changed=0`. Invisible on the lab, where every host has
-      one interactive account.
-      *The checks are right:* `ac-01-inactive-users` and `ia-12-existing-*`
-      read every account in `/etc/passwd`, so a multi-user host reports FAIL
-      — the one defect of the five the assessment would have shown.
-      *Fix direction:* loop over the list, and let a failing `chage` fail
-      the task. Test with a second interactive account (5.6).
-
-- [x] **6b.5 03.08.09 / 03.13.08: the LUKS key sits beside the data it
-      unlocks.** *Fixed 2026-09-25, owner's choice: bind to the TPM.* Check
-      first: `mp-09-luks-tpm-bound` (every LUKS volume has a clevis tpm2
-      binding) and `mp-09-luks-no-key-on-disk` (crypttab names no key file,
-      `/root/.luks-key` absent), referenced by 03.08.09 and 03.13.08; both
-      FAILED on `byo-rl9-02`, taking 03.08.09 from a false PASS to FAIL.
-      *Root cause of the silent bind:* the role ran `clevis luks bind -d DEV
-      tpm2 CFG -k KEY -y`; clevis parses options with getopts, which stops at
-      the first positional, so `-k` and `-y` were never read, clevis
-      prompted for the passphrase, failed without a terminal, and
-      `failed_when: false` reported `ok`. Reproduced on a throwaway loop
-      image (`tools/probes/clevis-bind-experiment.sh`): the role's order
-      rc=1, options first rc=0, and `clevis luks unlock` with the TPM alone
-      opens it, under FIPS. *The role now* reads each volume's state,
-      stages the key only while a volume needs it, binds with options first
-      (a failure fails the task), and once both are bound sets crypttab to
-      `none`, enables `clevis-luks-askpass.path` and deletes the key; the
-      passphrase slot remains the recovery key. Without a TPM the key stays
-      (the host must boot), a warning says so, and both checks FAIL.
-      A latent idempotence bug went with it: `'bound' in stdout` also
-      matched `already-bound`. *Proven on `byo-rl9-02`:* migrated in place
-      (bound, crypttab `none`, key removed; re-apply `changed=0`), then a
-      reboot unlocked and mounted both volumes from the TPM alone in 41 s
-      (`clevis-luks-askpass` → `systemd-cryptsetup@cui_*`); 03.13.08 PASS,
-      03.08.09 / 03.01.18 / 03.08.03 PART, 0 checks failed.
-      *Recovery rehearsed 2026-09-26* (`tools/rehearse-pcr7-recovery.py`):
-      Secure Boot off changed PCR 7; the boot waited for the passphrase; then
-      `verify.sh` reported the stale binding, `apply.sh --tags 03.08.09`
-      resealed, verify passed and the next boot unlocked alone. That meant
-      two more changes first: a binding the TPM refuses is not "bound" — the
-      check now asks the TPM (`clevis luks pass`) and the role reseals a
-      stale one with `clevis luks regen` (mechanics proven on a PCR 16 loop
-      image, `tools/probes/clevis-stale-experiment.sh`). The rehearsal also
-      disproved two of my own assumptions: PCR 7 does not differ between the
-      first and later boots (event logs identical), and a passphrase prompt
-      at boot is shown even when the TPM answers it.
-      *Correction (2026-09-26):* an earlier note here said the kickstart lab
-      has no TPM. It has had one since the first commit (`vm/build-vm.sh`,
-      `--tpm ... model=tpm-crb`, `9009b90`) — so every kickstart host had a
-      TPM and the silent bind is the only reason none was ever sealed.
-      *Proven 2026-09-26:* the kickstart lab, built on the laptop, seals both
-      volumes to the TPM and passes 03.08.09 / 03.13.08 with 0 checks failed.
-      *The finding as recorded:* `mp.yml` stages `/root/.luks-key` and `crypttab` points at
-      it; the kickstart's `lv_root` is plain xfs. The "key file" is
-      `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk
-      reads it and opens the CUI and backup volumes, so encryption at rest
-      protects against nothing it exists for. The checks (`mp-03-`,
-      `sc-08-luks-*`, `mp-09-luks-cipher`, `sc-10-luks-kdf`) count crypt
-      devices and read ciphers; nothing asks where the key lives.
-      *The intended design was TPM2:* `mp.yml` runs `clevis luks bind ...
-      tpm2` (PCR 7), best-effort with `failed_when: false`. But a successful
-      bind leaves the key file on disk and `crypttab` still pointing at it,
-      and the task's comment — "a host without a TPM keeps the key file,
-      which the auditor reports" — is false: no check reports it.
-      *And the bind does not work where there is a TPM.* On `byo-rl9-02`
-      (TPM 2.0, Secure Boot, first run of the LUKS path on any lab guest)
-      both binds exit 1 with no output, first apply and every one after;
-      `failed_when: false` reports that as `ok`. The platform is not the
-      cause: the clevis packages are installed, PCR 7 reads, and `clevis
-      encrypt tpm2` with the role's exact pin seals (`tools/probe.sh
-      6b-evidence`). It is `clevis luks bind` itself, which writes the LUKS
-      header, so the root cause is left to the fix. Reproduce with
-      `./apply.sh --limit byo-rl9-02 --tags 03.13.10 -v`.
-      **Owner decision before any code:** clevis + TPM2 (needs a vTPM on the
-      guests), clevis + tang (needs a tang server), a passphrase at boot
-      (gives up unattended boot), or root encrypted at install. The cloud
-      session will write the options up with a recommendation.
-      *Testable only with a volume group* — the BYO guests have none (5.6).
-
-- [x] **6b.6 03.03.05c: audit records are never forwarded, and three checks
-      pass.** *Fixed 2026-09-25, check first.* `au-05-collector-receiving`
-      now requires an auditd record (`type=… msg=audit(`) from another host,
-      and the new `au-05-audit-trail-forwarded` requires auditd's syslog
-      plugin running on the forwarder; both FAILED before the role changed
-      (336 checks). *The route:* rsyslog `imfile` on `audit.log` was tried
-      first, to avoid rate limits, and refused — SELinux denies `syslogd_t`
-      on `auditd_log_t` under a `dontaudit` rule (rsyslog logs "Permission
-      denied", no AVC is recorded), and a policy module widening the
-      logger's access to the trail is the wrong trade. So auditd's syslog
-      plugin (`audispd-plugins`, `args = LOG_LOCAL6`), with the two rate
-      limits on that path lifted — journald's for `auditd.service` only
-      (`LogRateLimitIntervalSec=0`), imjournal's in `rsyslog.conf` — and the
-      records forwarded once and stopped, so they are not copied into
-      `/var/log/messages`. The records' identifier is `audispd` on local6;
-      matching `audisp-syslog` (the plugin's status messages) first let
-      6,561 through to the local file before the probe caught it.
-      *Proven on `byo-rl9-02` → `byo-log-01`:* 0 auditd records at the
-      collector all week, then 187 within a minute; over a 60 s window with
-      generated events the collector grew 6,972 → 7,454 while local copies
-      stayed flat; both checks PASS. 6.2a is unblocked.
-      *The finding as recorded:* Nothing routes auditd into rsyslog: no
-      `/etc/audit/plugins.d/syslog.conf`, no `imfile` on `audit.log`. The
-      forwarder ships syslog, which the collector stores.
-      *Evidence:* `byo-rl9-01` holds 111,198 records in
-      `/var/log/audit/audit.log`; the collector's
-      `/var/log/nist-remote/byo-rl9-01/` holds **0** records written by auditd.
-      What does arrive: three status lines from the auditd daemon, and 30
-      `kernel: audit: type=NNNN` lines the kernel printed to kmsg only while
-      auditd was not running (shutdown, boot). `tools/probe.sh 6b-evidence`
-      counts both separately; a bare `grep type=` overcounts, because
-      ansible's own module arguments contain `type=`. `au-05-rsyslog-forwarding`
-      passes on any forwarding rule, `au-05-forward-established` on any open
-      socket, `au-05-collector-receiving` on any remote record.
-      *Fix direction:* the audisp syslog plugin (or `imfile`), sized for about
-      110k records a week on an idle host; the collector check requires an
-      audit record (`type=`) from another host; a forwarder check asserts the
-      plugin is active. 6.2a depends on this.
-
-- [x] **6b.7 `--check` failed on a never-applied host that has a volume
-      group.** *Found and fixed 2026-09-25 on `byo-rl9-02`, its first run.*
-      With room in `vg_sys` and a LUKS passphrase, check mode reports the
-      logical volumes as "would be created" and skips the format and open
-      shell tasks, so `/dev/mapper/cui_data` never exists and "Create
-      filesystems on the encrypted volumes" failed on the missing device
-      (`failed=1`, 118 tasks in). AGENTS.md promises the dry run completes on
-      a never-applied host; 2b.3 made that true only on the paths the labs
-      had exercised — the retrofit guest has no volume group, and the
-      kickstart hosts had their volumes before anyone ran `--check`.
-      *Fix:* the 2b.3 idiom in `mp.yml` — the LV task registers
-      `nist_luks_lvs`, and the filesystem and mount tasks are skipped only in
-      check mode while it is outstanding. *Proven:* reverted to `fresh`, the
-      dry run then completed, `ok=183 changed=123 failed=0`.
-      Moves to DEFECTS.md with the rest of 6b when the series closes.
-
-- [x] **6b.8 `--tags 03.13.10` failed: "'nist_can_encrypt' is undefined".**
-      *Found and fixed 2026-09-25, reproducing 6b.5.* The TPM bind carries
-      the 03.13.10 tag, but the two tasks that compute `nist_vg_free` and
-      `nist_can_encrypt`, which its block depends on, were tagged only
-      03.08.09 / 03.13.08, so selecting 03.13.10 alone evaluated the block's
-      `when` against an undefined fact and failed the play — the promise of
-      1b.7 (a requirement tag selects that requirement's tasks) broken for
-      this one. *Fix:* both tasks also carry 03.13.10. `| default(false)`
-      would have been wrong: the bind would then silently run nothing, 1b.7's
-      original failure. *Proven:* `--tags 03.13.10` reaches the bind task,
-      `failed=0`.
-
-- [x] **6b.9 The collector restarted rsyslog on every run once it had two
-      forwarders.** *Found 2026-09-26 cycling `byo-log-01`* (dry run after
-      settling: `changed=2`). `nist_col_peers` was `cui_hosts | difference(
-      [inventory_hostname])`, and `difference` keeps no order: the
-      PermittedPeer list came out either way round, the template changed and
-      the handler restarted the collector — invisible with one forwarder.
-      *Fix:* `| sort`. *Proven:* apply `changed=3` (rewritten sorted, one
-      restart), then `changed=0`.
-
-- [x] **6b.10 apply.sh said "Reboot required: False" on a host that owed
-      one.** *Found 2026-09-26 cycling `byo-rl9-01`:* dnf-automatic had
-      installed kernel 687.50.1 while 687.48.1 ran, `sa-02-kernel-current`
-      failed and `si-01` counted 8 advisories that apply to the running
-      kernel — and the cycle did not reboot, because the handlers only flag
-      reboots the role itself causes. (`needs-restarting -r` alone is not the
-      test either: it compares install time with boot time, and missed it
-      after an unrelated restart.) *Fix:* `site.yml`'s closing tasks ask the
-      host — the running kernel against the newest installed, as `sa-02`
-      does, and `needs-restarting -r` for libraries and services — and the
-      report gives the reason. *Proven:* `tools/stage-pending-kernel.sh`
-      boots the older kernel of `byo-rl9-02` with the newest as default, as
-      dnf leaves it; apply then reports "Reboot required: True (kernel
-      5.14.0-687.50.1 is installed, 5.14.0-687.10.1 is running)", the cycle
-      reboots on it, and the host ends at 35/33/1/28 with `sa-02` and `si-01`
-      passing, then `changed=0`.
+6b.2–6b.10 are fixed and proven on both labs, with the GRUB-edit and PCR 7
+recovery rehearsals passed; the record is `docs/DEFECTS.md`, Phase 6b. They
+were found by the cloud review of 2026-09-25 and by cycling the labs.
 
 ---
 
@@ -548,23 +241,12 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       workstation, and it will mislead whoever first tries to make the host
       itself a receiver. Correct the comment, or add the rule it describes.
 
-- [ ] **5.6 Make every open defect testable on the laptop lab.** The BYO pair
-      reproduces 6b.2, 6b.3 and 6b.6 as they are. Authorized 2026-09-25: grow
-      the lab as needed, without disturbing the BYO pair's role as the
-      retrofit reference. *Done so far* (`docs/LAB.md`): `vm/byo-guest.sh`
-      builds BYO guests reproducibly, and built `byo-rl9-02` (.144) with a
-      second interactive account (6b.4), a data disk carrying `vg_sys` with
-      10 GB free (6b.5, 2.2's LUKS limits) and a TPM 2.0 — the role's clevis
-      `tpm2` bind has never run before this guest. `vm/byo-snapshot.sh`
-      snapshots disks, NVRAM and TPM state. `tools/inventory.py add
-      --connection byo` replaces the hand-edited inventory entries (proven
-      byte-identical). `tools/probe.sh 6b-evidence` and
-      `tools/assessor-parity.sh` script the evidence and the PR #2 method.
-      `tools/harden-cycle.sh` runs and records a full cycle; its first run,
-      on `byo-rl9-02`, found 6b.7 and 6b.8 and the 6b.5 bind failure, and
-      reproduced 6b.2–6b.6 (`reports/runs/`, before/after evidence).
-      *Remaining:* the syslog-ng container (6.2a, after 6b.6).
-
+- [x] **5.6 Make every open defect testable on the laptop lab.** *Done
+      2026-09-26:* the laptop runs both labs — the BYO guests (`vm/byo-guest.sh`,
+      including `byo-rl9-02` with a volume group, a TPM and two accounts) and
+      the kickstart lab (`make vm`, `make vm-log`), each in its own inventory
+      (docs/LAB.md, *Two labs on one workstation*). Every 6b defect was
+      reproduced and its fix proven here. The syslog-ng receiver is 6.2a's.
 ---
 
 ## Standing caveat
