@@ -156,9 +156,12 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       probe shows all four BLS entries already `--unrestricted` and `grub.cfg`
       already sourcing `user.cfg`. *Proven on `byo-rl9-02`:* apply
       `changed=2` then `changed=0`; both checks PASS; a reboot counted down
-      and booted by itself in 29 s (serial log). *Not yet proven:* pressing
-      `e` at the menu and being asked for the password — the menu shows for
-      one second; do it with `console.py` before release.
+      and booted by itself in 29 s (serial log). *Proven by behaviour
+      2026-09-26* with `tools/rehearse-grub-edit.py`: the console catches the
+      one-second menu and presses `e` — GRUB asks for a username; a wrong
+      password gets "access denied"; root and the right one open the editor
+      (the real `linux ($root)/vmlinuz-…` line); Escape, and the default
+      entry boots unattended to a login prompt.
       *The finding as recorded:*
       Stock `grub2-tools` ships `/etc/grub.d/01_users` containing the literal
       template `password_pbkdf2 root ${GRUB2_PASSWORD}`, filled from
