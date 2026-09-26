@@ -932,6 +932,36 @@ cloud review of 2026-09-25 (6b.2-6b.6) and by cycling the labs (6b.7-6b.10).*
 
 *Moved from TASKS.md on 2026-09-26.*
 
+- [x] **6.2a Prove TLS forwarding to a receiver that is not our own rsyslog.**
+      *Proven 2026-09-26* with `tools/prove-foreign-receiver.sh` on
+      `byo-rl9-02` and `byo-rl9-01`. The receiver is syslog-ng 4.12.0 in a
+      rootful podman container (`vm/siem-container.sh`, image pinned by
+      digest) at `192.168.171.50:6514` on a macvlan child of `virbr17`,
+      requiring a client certificate from the lab CA, with its own
+      certificate for `siem.nist-lab` — a name no inventory host has. The
+      host is pointed at it for the run only, by extra vars; the inventory is
+      never touched and the host is pointed back at its own collector at the
+      end. On each host: `au-05-forward-established`,
+      `au-05-audit-trail-forwarded` and `sc-08-forward-encrypted` PASS (read
+      from the report JSON, so a check that did not run cannot pass); the
+      receiver gained over 11,000 auditd records per run and a `type=SYSCALL`
+      record is legible there; a client with no certificate is refused
+      ("peer did not return a certificate"); and when the host is told to
+      expect `not-the-siem.nist-lab`, nothing reaches the receiver — rsyslog:
+      "peer name not authorized, not permitted to talk to name:
+      /CN=siem.nist-lab".
+      *A false alarm on the way, recorded because it will recur:* the first
+      negative test counted 6,148 records "sent to the wrong peer". The
+      baseline had been taken before the apply, and until the handler
+      restarts rsyslog the old session keeps forwarding — including the
+      apply's own audit records. `tools/probes/permitted-peers-experiment.sh`
+      settled it away from the live forwarding (a throwaway rsyslogd per
+      case, a marker each): the right name and `*.nist-lab` delivered, the
+      wrong name delivered nothing. A test of a forwarding change must take
+      its baseline after rsyslog restarts.
+      *What it does not prove:* a certificate we did not mint, or a SIEM's
+      parser — that is 6.2b.
+
 - [x] **6.6 Both generators destroyed authored content.** *Fixed and proven
       2026-09-26.* Worse than first recorded: the role ran `nist-generate-ssp`
       on **every apply**, rewriting the whole file, so any authored section was
@@ -982,4 +1012,4 @@ cloud review of 2026-09-25 (6b.2-6b.6) and by cycling the labs (6b.7-6b.10).*
       including `byo-rl9-02` with a volume group, a TPM and two accounts) and
       the kickstart lab (`make vm`, `make vm-log`), each in its own inventory
       (docs/LAB.md, *Two labs on one workstation*). Every 6b defect was
-      reproduced and its fix proven here. The syslog-ng receiver is 6.2a's.
+      reproduced and its fix proven here, and 6.2a's syslog-ng receiver runs here.

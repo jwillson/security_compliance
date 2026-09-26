@@ -19,7 +19,8 @@ organizational across 49 requirements. Disposition **37 technical, 32
 partial, 28 organizational**. `make catalog-check`: the catalog still
 reproduces byte for byte from the PDF.
 
-**Tested** — `make test`: 41 unit tests for the assessor and the validator.
+**Tested** — `make test`: 56 unit tests for the assessor, the validator and
+the POA&M register.
 The assessor never reads a command that could not run as a clean result
 (6b.1); every check reads effective state.
 
@@ -61,11 +62,15 @@ is believed.
       first so it failed on the defect (DEFECTS.md Phase 6b).
 - [x] **R2 No data loss in what the tool generates.** *Met 2026-09-26* (6.6):
       the SSP and the POA&M keep what the owner writes, proven by rehearsal.
-- [ ] **R3 A full lab cycle green on the release commit.** Both labs — the
-      kickstart pair (other workstation) and the BYO pair — through apply →
-      reboot → apply → verify, `--check` at `changed=0`, with a second
-      interactive account present (6b.4). The numbers quoted in the READMEs
-      come from this run and nothing earlier.
+- [ ] **R3 A full lab cycle green on the release commit.** Both labs, from a
+      clean state, through apply → reboot → apply → verify, `--check` at
+      `changed=0`, with a second interactive account present (6b.4):
+      `tools/release-run.sh byo` and `tools/release-run.sh kickstart`
+      (docs/LAB.md). A host passes only with no failure beyond the documented
+      retrofit limits. The numbers quoted in the READMEs come from this run
+      and nothing earlier. The READMEs and CHANGELOG are written from it
+      afterwards, so the tag lands on a later commit; `git diff --stat
+      PROVEN..v1.0.0` must then show documentation only.
 - [ ] **R4 The READMEs say only what that run proved.** Current numbers; the
       6.5 caveat where a first-time reader meets it; supported platforms
       stated precisely (Rocky/RHEL 9 minors, and what differs on OpenSSH
@@ -100,10 +105,9 @@ is believed.
       keeps, and what never goes in the repository.
 
 **Not blockers** — ship as documented limitations:
-6.2a (interop with a non-rsyslog receiver; after 6b.6 the audit path is
-proven against our own collector), 6.2b (needs each deployer's SIEM), 6.7
-(a disposition decision), 5.5 (a comment about one workstation), and 6.3 /
-6.4, which are the owner's documents for their own system, not the tool's.
+6.2b (needs each deployer's SIEM; 6.2a proved the path to a third-party
+receiver in the lab) and 6.3 / 6.4, which are the owner's documents for their
+own system, not the tool's.
 
 Redistribution: `NIST.SP.800-171r3.pdf` is a work of the U.S. Government and
 not subject to copyright in the United States; the README should say so next
@@ -143,37 +147,8 @@ were found by the cloud review of 2026-09-25 and by cycling the labs.
 
 ## Open — audit-record forwarding
 
-- [ ] **6.2a Prove TLS forwarding to a receiver that is not our own rsyslog.**
-      The path has only ever run rsyslog→rsyslog between two guests built the
-      same way, with certificates from the same lab CA. Three of the risks in
-      6.2 can be closed without the production SIEM: interop with a different
-      TLS stack, `x509/name` peer matching against a name that is not a lab
-      hostname, and whether our records are parseable on the far side.
-
-      *Decided 2026-09-22: a container, not a VM.* All three forwarding checks
-      read state on the **forwarder** — `au-05-forward-established` reads the
-      established socket, `sc-08-forward-encrypted` reads
-      `log-forwarding-status`, and `au-05-collector-receiving` is gated on
-      `/etc/rsyslog.d/10-nist-collector.conf` so it reports MANUAL against any
-      third-party receiver, which is correct. Nothing in the assessment can
-      distinguish a VM from a container, so the receiver's fidelity buys
-      nothing and its setup cost is real.
-
-      Shape: syslog-ng in podman (a different implementation, not an rsyslog
-      fork), attached to `virbr17` with its own `192.168.171.x` so it is an
-      ordinary peer — this also avoids a host ufw rule, which the lab bridge
-      does not currently have (see 5.5). Certificate needs no new tooling:
-      `tools/lab-pki.sh siem.nist-lab=192.168.171.50` already mints CN + SAN
-      DNS + IP with `serverAuth,clientAuth`.
-      *Done when:* on `byo-rl9-01`, with `nist_log_collector` and
-      `nist_log_collector_name` pointed at it, `au-05-forward-established`
-      and `sc-08-forward-encrypted` both PASS, and an **audit** record
-      (`type=`) written on the CUI host is legible in the container's
-      output. *6b.6 is fixed*, so audit records now travel this path; the
-      receiver must show them, not just syslog.
-      *Constraint:* the receiver must never enter `inventory/hosts.yml`. It is
-      not a CUI host, and `nist_log_collector_name` defaults to
-      `groups['log_hosts'] | first`, so it has to be set explicitly.
+6.2a is closed (docs/DEFECTS.md, Phase 6): forwarding is proven to syslog-ng,
+a receiver the toolkit did not build, with a peer name no lab host has.
 
 - [ ] **6.2b Point forwarding at the real SIEM.** **Blocked: needs the SIEM.**
       What 6.2a cannot close is a certificate we did not mint. Set

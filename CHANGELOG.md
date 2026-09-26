@@ -46,8 +46,11 @@ tagged commit.
   file stays so the host can boot, and the assessment reports it.
 - **OpenSSH before 9.2** (early Rocky 9 minors) cannot close an idle SSH
   session that is not at a shell prompt; the role records the gap.
-- **Forwarding has been proven to this toolkit's own collector only.** A
-  third-party SIEM receiver (TASKS.md 6.2a, 6.2b) is not yet proven.
+- **Forwarding is proven to lab receivers only** — this toolkit's collector,
+  and syslog-ng with certificates from the lab CA (TASKS.md 6.2b). A
+  deployer's SIEM, with a certificate the lab did not mint and a parser of
+  its own, is theirs to prove; `tools/prove-foreign-receiver.sh` is the
+  pattern.
 - **The organizational requirements are the owner's.** 28 requirements have
   no host control and 32 have an organizational residual; the tool lists them
   (`organizational-requirements.md`, the POA&M register) and cannot satisfy
