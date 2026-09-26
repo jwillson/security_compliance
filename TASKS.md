@@ -71,6 +71,12 @@ is believed.
       and nothing earlier. The READMEs and CHANGELOG are written from it
       afterwards, so the tag lands on a later commit; `git diff --stat
       PROVEN..v1.0.0` must then show documentation only.
+      *First attempt, 2026-09-26 at `5d340a1`:* stopped on the BYO lab by
+      three defects, now fixed and awaiting this run's proof — 6b.11 (the dry
+      run failed on a never-applied collector), 6b.12 (`byo-rl9-01`'s hand-made
+      `fresh` snapshot held a rotated password), 6b.13 (virt-install gave
+      every BYO guest a TPM). Next: `release-run.sh byo --rebuild` and
+      `release-run.sh kickstart` at the fixed commit.
 - [ ] **R4 The READMEs say only what that run proved.** Current numbers; the
       6.5 caveat where a first-time reader meets it; supported platforms
       stated precisely (Rocky/RHEL 9 minors, and what differs on OpenSSH

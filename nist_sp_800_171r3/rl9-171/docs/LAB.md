@@ -53,13 +53,16 @@ second factor.
 | --- | --- | --- | --- |
 | `byo-rl9-01` | .141 | cui | **The retrofit reference.** Stock GenericCloud, one root filesystem, no volume group, no TPM, one interactive account. Its five failing requirements are the documented retrofit limits (DEFECTS 2.2). Do not add to it. |
 | `byo-log-01` | .101 | log | The collector the BYO CUI hosts forward to over TLS. |
-| `byo-rl9-02` | .144 | cui | What the reference lacks, for the open defects (TASKS 5.6): a 10 GB data disk carrying `vg_sys` with all of it free (the LUKS path, 6b.5), a TPM 2.0 (the role's clevis `tpm2` bind), and a second interactive account `cuiuser1` (6b.4). |
+| `byo-rl9-02` | .144 | cui | What the reference lacks (DEFECTS 5.6): a 10 GB data disk carrying `vg_sys` with all of it free (the LUKS path, 6b.5), a TPM 2.0 (the role's clevis `tpm2` bind), and a second interactive account `cuiuser1` (6b.4). |
 
-`byo-rl9-01` and `byo-log-01` predate `vm/byo-guest.sh`; they were built by
-hand on 2026-09-17 in the same shape (stock `Rocky-9-GenericCloud-Base` 9.8,
-cloud-init, UEFI with Secure Boot, 3 GB, 2 vCPU). `byo-rl9-02` was the first
-guest built by the script, after a hand-built attempt was destroyed and
-rebuilt to prove the script reproduces it.
+All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`
+9.8, cloud-init, UEFI with Secure Boot, 3 GB, 2 vCPU); their shapes are
+`BYO_SPEC` in `tools/release-run.sh`, and `release-run.sh byo --rebuild`
+rebuilds all three from the stock image. `byo-rl9-01` and `byo-log-01` were
+first built by hand on 2026-09-17 and replaced by script builds on
+2026-09-26, when the release run found the hand-made `byo-rl9-01` snapshot
+unusable (DEFECTS 6b.12). A guest has a TPM only when built with `--tpm`
+(6b.13: virt-install otherwise adds one to every UEFI guest).
 
 ### Build, check, destroy
 

@@ -633,7 +633,9 @@ No amount of testing substitutes for these. Each is a live commitment.
 *Moved from TASKS.md on 2026-09-26, when every item below had been proven on
 both labs - the BYO pair and the kickstart lab built on the laptop - and the
 two rehearsals it needed (GRUB edit, PCR 7 recovery) had passed. Found by the
-cloud review of 2026-09-25 (6b.2-6b.6) and by cycling the labs (6b.7-6b.10).*
+cloud review of 2026-09-25 (6b.2-6b.6), by cycling the labs (6b.7-6b.10),
+and by the first release run (6b.11-6b.13), which are fixed and recorded here
+with the rest; each is closed by the release run that proves it (TASKS R3).*
 
 - [x] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
       *Fixed 2026-09-25, check first.* `pe-07-grub-password` now reads what
@@ -925,6 +927,42 @@ cloud review of 2026-09-25 (6b.2-6b.6) and by cycling the labs (6b.7-6b.10).*
       5.14.0-687.50.1 is installed, 5.14.0-687.10.1 is running)", the cycle
       reboots on it, and the host ends at 35/33/1/28 with `sa-02` and `si-01`
       passing, then `changed=0`.
+
+*Found by the first release run (TASKS R3), 2026-09-26, which starts every
+host from a clean state — something no cycle before it had done for the
+collector or for the retrofit reference.*
+
+- [ ] **6b.11 The dry run failed on a collector that had never been applied.**
+      `./apply.sh --check` on the freshly built `byo-log-01` stopped at the
+      collector role's `ansible.posix.firewalld` task: "Failed to import the
+      required Python library (firewall)". firewalld and its python library
+      come from the overlay's 03.13.01 install in the play before, which
+      check mode does not perform. "The dry run completes on a host never
+      applied" had been proven on CUI hosts only; the old `byo-log-01` had
+      been applied long before the claim was made, and a kickstart collector
+      ships with firewalld. *Fix:* the task carries the overlay's check-mode
+      guard (`not (ansible_check_mode and nist_firewalld_pkg is changed)`).
+      *Proof pending:* the dry run of a rebuilt `byo-log-01` in the next
+      release run.
+
+- [ ] **6b.12 `byo-rl9-01`'s `fresh` snapshot could not be logged into.** The
+      release run reverted it and sudo refused the become password: the
+      snapshot was taken by hand on 2026-09-17 and `byoadmin`'s password was
+      rotated on the 18th. Nothing had reverted to it since, so nothing
+      noticed. A state only a hand build produced is the doctrine's failure
+      case. *Fix:* the guest is destroyed and rebuilt by `vm/byo-guest.sh`
+      like the others, and `tools/release-run.sh byo --rebuild` rebuilds every
+      BYO guest from the stock image, so the release proof depends on no
+      older build. *Proof pending:* that run.
+
+- [ ] **6b.13 Every BYO guest had a TPM, asked for or not.** `byo-guest.sh`
+      passed `--tpm` only with `--tpm`, but virt-install 5.1 gives any UEFI
+      guest an emulated TPM unless told `--tpm none` (virtinst `guest.py`,
+      `_add_default_tpm`); the rebuilt `byo-log-01` came up with one. Harmless
+      there, but `byo-rl9-01` is the no-TPM retrofit reference, and rebuilt
+      this way it would have silently stopped being one. *Fix:* `--tpm none`
+      unless `--tpm` is given. *Proof pending:* `byo-guest.sh check` on the
+      rebuilt guests.
 
 ---
 

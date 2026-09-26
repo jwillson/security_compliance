@@ -123,6 +123,11 @@
     immediate: true
     state: enabled
     zone: "{{ nist_collector_zone }}"
+  # firewalld, and the python library this module needs, come from the
+  # overlay's 03.13.01 tasks in the play before. In check mode on a host that
+  # has never had them that install does not happen, and the dry run failed
+  # here (DEFECTS 6b.11); the overlay's idiom (roles/nist_800_171/tasks/main.yml).
+  when: not (ansible_check_mode and (nist_firewalld_pkg | default({})) is changed)
   tags: ["03.03.05", "03.13.01"]
 
 - name: Let SELinux bind rsyslog to the forwarding port

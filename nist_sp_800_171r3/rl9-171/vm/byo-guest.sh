@@ -245,8 +245,11 @@ cmd_build() {
   # the disk, which cost ~10 minutes of a silent first boot on 2026-09-25.
   # The serial console is logged so a slow or failed boot can be read, not
   # guessed at: /var/log/libvirt/qemu/NAME-serial.log.
-  local extra=()
-  (( tpm )) && extra+=(--tpm "model=tpm-crb,backend.type=emulator,backend.version=2.0")
+  # virt-install gives every UEFI guest an emulated TPM unless told `--tpm
+  # none` (virtinst guest.py, _add_default_tpm), so without this a guest built
+  # without --tpm had one anyway - and byo-rl9-01 is the no-TPM reference.
+  local extra=(--tpm none)
+  (( tpm )) && extra=(--tpm "model=tpm-crb,backend.type=emulator,backend.version=2.0")
   say "defining $name"
   virt_install --connect qemu:///system --name "$name" --memory 3072 --vcpus 2 \
     --osinfo rocky9 --import --noautoconsole --machine q35 \
