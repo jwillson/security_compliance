@@ -76,7 +76,7 @@ it is ever committed.
 | `grub_password`, `luks_passphrase` | What the role is given for 03.10.07 and 03.08.09. |
 | `pki/` | The lab CA and one certificate per host (`tools/lab-pki.sh`). |
 | `NAME/` | One guest's cloud-init seed, its address, and each `--user` account's password. |
-| `askpass.sh`, `wrongpass.sh`, `console.py` | The SSH askpass; a deliberately wrong one for lockout rehearsals; a scripted serial console (DEFECTS Phase 3). |
+| `askpass.sh`, `wrongpass.sh` | The SSH askpass; a deliberately wrong one for lockout rehearsals. (The scripted serial console used to live here too; it is `tools/console.py` now.) |
 | `venv/`, `collections/` | ansible-core and the collections in `requirements.yml`. |
 
 The venv: `uv venv venv && uv pip install --python venv/bin/python ansible-core`,
@@ -110,6 +110,15 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   (`Curl error (28) ... Operation too slow`) stretched that to 8 minutes;
   dnf moves on to other mirrors by itself. Read `/var/log/dnf.log` in the
   guest before assuming the build is stuck.
+- **Scripting the serial console can lock the account.** Three lessons from
+  locking `byoadmin` on `byo-rl9-02` (2026-09-26, recovered by reverting to
+  `hardened`): the serial line acts on CR, not the bare LF pexpect's
+  `sendline` sends, so neither the shell nor `sudo -S` saw a line end; sudo
+  flushes typed-ahead input when it turns echo off, so a password sent before
+  its prompt is discarded; and every attempt that does not succeed — a
+  cancelled or abandoned prompt included — is a faillock failure, three of
+  which lock the account for 900 s over SSH and console alike. `tools/console.py`
+  sends CR, waits for each prompt, and stops at the first refusal.
 - **A throwaway sshd cannot open a session on a hardened guest.** Testing
   sshd options in isolation with `sshd -i` (inetd mode, no port) fails after
   authentication with "A valid context for byoadmin could not be obtained":
@@ -128,6 +137,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | Script | Use |
 | --- | --- |
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
+| `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind TASKS 6b.2–6b.6; run it before and after a fix and diff. |
 | `tools/ssh-idle-test.sh HOST [LIMIT]` | Behaviour, not configuration: opens an SSH session running a silent `sleep` and measures when sshd closes it (03.01.11 / 03.13.09; TMOUT cannot end it). Takes the idle limit plus up to 90 s. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
