@@ -86,10 +86,14 @@ is believed.
       development builds reported the same number. *At release:* fill in
       "Proven at this release" from R3's run, date the entry, and tag
       `v1.0.0` on that commit.
-- [ ] **R8 History scanned with a real secret scanner** (gitleaks or
-      trufflehog) before visibility changes. A pattern grep on 2026-09-25
-      (private keys, `$6$` hashes, tokens, `.secrets/`, keys, images,
-      inventories, reports) found nothing, but a grep is not a scanner.
+- [x] **R8 History scanned with a real secret scanner.** *Done 2026-09-26:*
+      `tools/secret-scan.sh` runs gitleaks 8.30.1 (the binary verified against
+      a SHA-256 pinned in the script) over every commit on every branch: **no
+      leaks**. Shown to work first: in a throwaway repository it found a
+      private key and an AWS key committed and then deleted. It now runs in
+      CI on every push, so the history stays clean. *At release:* run it once
+      more on the release commit.
+
 - [x] **R9 `CONTRIBUTING.md`.** *Written 2026-09-26:* the acceptance rules
       (a finding is a lead until a host confirms it; fix the check first; prove
       it on a host; script everything; docs in the repo), the rules the code

@@ -2,7 +2,8 @@
 # request (TASKS.md R6). Host behaviour is proven on the labs
 # (nist_sp_800_171r3/rl9-171/docs/LAB.md); this proves the tool agrees with
 # itself: the catalog reproduces from the PDF, the overlay, catalog and checks
-# agree, the unit tests pass, the playbook and every script parse.
+# agree, the unit tests pass, the playbook and every script parse, and no
+# secret has ever been committed.
 #
 # Actions are pinned to commit SHAs, not tags: a tag can be moved.
 name: ci
@@ -24,6 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0          # the secret scan reads every commit
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -48,6 +50,9 @@ jobs:
 
       - name: The playbook parses
         run: ansible-playbook --syntax-check -i inventory/hosts.yml.example site.yml
+
+      - name: No secret anywhere in the history
+        run: tools/secret-scan.sh
 
       - name: Every script parses
         run: |
