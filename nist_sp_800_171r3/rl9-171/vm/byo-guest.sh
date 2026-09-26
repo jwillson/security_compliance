@@ -212,8 +212,8 @@ cmd_build() {
   held=$(held_by)
   if [[ -n "$held" ]]; then
     owner=$(for d in $("${VIRSH[@]}" list --all --name); do
-              "${VIRSH[@]}" domiflist "$d" 2>/dev/null | grep -qi " ${held%% *}\$" && echo "$d"
-            done)
+              if "${VIRSH[@]}" domiflist "$d" 2>/dev/null | grep -qi " ${held%% *}\$"; then echo "$d"; fi
+            done)   # an if, not &&: under set -e the loop's last failed grep would end the script
     [[ -z "$owner" ]] || die "$ip is leased to ${held%% *} (guest $owner) until ${held#* }; pick another --ip"
     say "$ip is leased to ${held%% *}, a guest that no longer exists, until ${held#* }; waiting for it to expire"
     local i; for i in $(seq 1 130); do [[ -z "$(held_by)" ]] && break; sleep 30; done
