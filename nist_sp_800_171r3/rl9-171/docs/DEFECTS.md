@@ -634,7 +634,7 @@ No amount of testing substitutes for these. Each is a live commitment.
 both labs - the BYO pair and the kickstart lab built on the laptop - and the
 two rehearsals it needed (GRUB edit, PCR 7 recovery) had passed. Found by the
 cloud review of 2026-09-25 (6b.2-6b.6), by cycling the labs (6b.7-6b.10),
-and by the first release run (6b.11-6b.13), which are fixed and recorded here
+and by the first release run (6b.11-6b.14), which are fixed and recorded here
 with the rest; each is closed by the release run that proves it (TASKS R3).*
 
 - [x] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
@@ -963,6 +963,17 @@ collector or for the retrofit reference.*
       this way it would have silently stopped being one. *Fix:* `--tpm none`
       unless `--tpm` is given. *Proof pending:* `byo-guest.sh check` on the
       rebuilt guests.
+
+- [ ] **6b.14 `byo-guest.sh build` exited 1 after every successful build.**
+      `cmd_check` removes its temporary probe with `trap ... RETURN`, and a
+      RETURN trap outlives the function that sets it: it fired again when
+      `cmd_build` returned, where `$probe` is undefined, and `set -u` ended
+      the script — after the guest, its inventory entry, its certificate and
+      its `fresh` snapshot were all in place. It went unseen because the
+      builds before the release run were read from their output, not their
+      status; `release-run.sh` reads the status, and stopped. *Fix:* the trap
+      clears itself (`trap - RETURN`). *Proof pending:* the rebuilds in the
+      next release run.
 
 ---
 

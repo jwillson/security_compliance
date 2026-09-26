@@ -283,7 +283,10 @@ cmd_check() {
   # Through ansible, not ssh: the inventory carries the second factor and
   # become, so this works on a stock guest and on a hardened one alike.
   # Read-only.
-  local probe; probe=$(mktemp); trap 'rm -f "$probe"' RETURN
+  # The RETURN trap clears itself: left set, it fired again when cmd_build
+  # returned, where $probe is not defined, and set -u failed every build at
+  # its very end (DEFECTS 6b.14).
+  local probe; probe=$(mktemp); trap 'rm -f "$probe"; trap - RETURN' RETURN
   cat > "$probe" <<'EOF'
 #!/bin/bash
 echo "release       $(cat /etc/rocky-release)"

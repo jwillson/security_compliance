@@ -75,7 +75,8 @@ is believed.
       three defects, now fixed and awaiting this run's proof — 6b.11 (the dry
       run failed on a never-applied collector), 6b.12 (`byo-rl9-01`'s hand-made
       `fresh` snapshot held a rotated password), 6b.13 (virt-install gave
-      every BYO guest a TPM). Next: `release-run.sh byo --rebuild` and
+      every BYO guest a TPM). A second attempt at `1eecf18` found 6b.14
+      (`byo-guest.sh build` exited 1 after every successful build). Next: `release-run.sh byo --rebuild` and
       `release-run.sh kickstart` at the fixed commit.
 - [ ] **R4 The READMEs say only what that run proved.** Current numbers; the
       6.5 caveat where a first-time reader meets it; supported platforms
