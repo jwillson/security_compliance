@@ -22,6 +22,7 @@ script="$HERE/probes/$probe.sh"
 [[ -f "$script" ]] || { echo "error: no probe $script" >&2; exit 2; }
 
 cd "$ROOT"
+. lib/inventory-env.sh || exit 2
 # The script module copies the probe to the host and runs it; -b for root.
 ansible "$pattern" -b -m ansible.builtin.script -a "$script" -o 2>/dev/null \
   | python3 -c '

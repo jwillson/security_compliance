@@ -19,8 +19,8 @@
 #  10  snapshot          vm/byo-snapshot.sh save HOST LABEL, if asked
 #
 # Everything is written to reports/runs/HOST-UTC/ (gitignored), and a summary
-# is printed at the end. Source the lab's env.sh first. NIST_LUKS_PASSPHRASE
-# is taken from $NIST_BYO_LAB/luks_passphrase when unset and that file exists,
+# is printed at the end. Source the lab's env.sh first. For a BYO inventory,
+# NIST_LUKS_PASSPHRASE is taken from $NIST_BYO_LAB/luks_passphrase when unset,
 # so a host with a volume group gets its LUKS volumes (03.08.09 / 03.13.08).
 #
 set -uo pipefail
@@ -29,6 +29,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 cd "$ROOT"
+. lib/inventory-env.sh || exit 2
 
 host=${1:-}; shift || true
 snapshot="" probe=1
@@ -44,7 +45,7 @@ done
 inv() {   # print a host variable from the inventory, or nothing
   ansible-inventory --host "$1" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('$2',''))"
 }
-[[ -n "$(inv "$host" ansible_host)" ]] || { echo "error: $host is not in inventory/hosts.yml" >&2; exit 2; }
+[[ -n "$(inv "$host" ansible_host)" ]] || { echo "error: $host is not in $NIST_INVENTORY" >&2; exit 2; }
 
 RUN="$ROOT/reports/runs/$host-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
@@ -53,7 +54,9 @@ say() { echo "==> $*" | tee -a "$SUMMARY"; }
 recap() { grep -E "^$host +:" "$1" | tail -1 | sed 's/  */ /g'; }
 die() { say "STOPPED: $*"; echo "logs: $RUN"; exit 1; }
 
-if [[ -z "${NIST_LUKS_PASSPHRASE:-}" && -f "$LAB/luks_passphrase" ]]; then
+# Only for hosts you brought: a lab inventory's role reads .secrets/luks_passphrase
+# itself, and handing it the BYO lab's passphrase would mix the two labs.
+if [[ "$NIST_INVENTORY_KIND" == byo && -z "${NIST_LUKS_PASSPHRASE:-}" && -f "$LAB/luks_passphrase" ]]; then
   NIST_LUKS_PASSPHRASE=$(cat "$LAB/luks_passphrase"); export NIST_LUKS_PASSPHRASE
   say "NIST_LUKS_PASSPHRASE taken from $LAB/luks_passphrase"
 fi

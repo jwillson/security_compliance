@@ -30,6 +30,7 @@ Connections:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -39,7 +40,10 @@ except ImportError:
     sys.exit("error: PyYAML required (pip install pyyaml)")
 
 ROOT = Path(__file__).resolve().parent.parent
-INVENTORY = ROOT / "inventory" / "hosts.yml"
+# NIST_INVENTORY selects the file, as it does for apply.sh and verify.sh
+# (lib/inventory-env.sh): one inventory per lab, each with its own collector.
+_inv = os.environ.get("NIST_INVENTORY", "inventory/hosts.yml")
+INVENTORY = Path(_inv) if os.path.isabs(_inv) else ROOT / _inv
 
 HEADER = """\
 # Managed by tools/inventory.py (vm/build-vm.sh calls it).
@@ -123,6 +127,14 @@ def cmd_add(args) -> int:
     host["ansible_host"] = args.ip
     host["ansible_user"] = args.user
 
+    # One connection kind per inventory: a second SSH factor serves one lab
+    # (lib/inventory-env.sh refuses a mixed inventory).
+    kinds = {("lab" if ".secrets/" in str(h.get("ansible_ssh_private_key_file", "")) else "byo")
+             for n, h in data["cui_hosts"]["hosts"].items() if n != args.name}
+    if kinds and kinds != {args.connection}:
+        sys.exit(f"error: {INVENTORY.relative_to(ROOT) if INVENTORY.is_relative_to(ROOT) else INVENTORY} "
+                 f"holds {kinds.pop()} hosts; add this {args.connection} host to its own inventory "
+                 "(NIST_INVENTORY=inventory/<lab>.yml)")
     data["cui_hosts"]["hosts"][args.name] = host
     if args.role == "log":
         data.setdefault("log_hosts", {}).setdefault("hosts", {})[args.name] = None

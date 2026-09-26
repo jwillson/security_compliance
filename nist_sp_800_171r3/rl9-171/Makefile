@@ -57,7 +57,7 @@ secrets: .secrets/id_rsa
 # inventory/hosts.yml; a real deployment drops its own ca.crt and HOST.crt/.key
 # into NIST_PKI_DIR instead. Re-run after adding a host; existing ones are kept.
 pki:
-	@[ -f inventory/hosts.yml ] || { echo "no inventory/hosts.yml"; exit 1; }
+	@[ -f "$${NIST_INVENTORY:-inventory/hosts.yml}" ] || { echo "no inventory at $${NIST_INVENTORY:-inventory/hosts.yml}"; exit 1; }
 	@./tools/lab-pki.sh --inventory
 
 .secrets/id_rsa:

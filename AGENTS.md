@@ -130,6 +130,12 @@ export NIST_BECOME_PASSWORD=... NIST_GRUB_PASSWORD=...
 ./apply.sh --check --diff && ./apply.sh && ./verify.sh
 ```
 
+One inventory per lab: `NIST_INVENTORY` picks it (default
+`inventory/hosts.yml`), and `lib/inventory-env.sh` refuses an inventory that
+mixes kickstart-lab hosts (`.secrets/` key) with hosts you brought — each needs
+its own second SSH factor, and the wrong one is a faillock strike
+(`rl9-171/docs/LAB.md`, *Two labs on one workstation*).
+
 `site.yml` has two plays: the overlay over `cui_hosts`, then
 `nist_log_collector` over `log_hosts`. `./tools/inventory.py show` lists the
 hosts and where each forwards its records.

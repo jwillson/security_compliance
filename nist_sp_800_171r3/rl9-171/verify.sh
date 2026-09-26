@@ -30,8 +30,9 @@ for a in ${ASSESS_ARGS[@]+"${ASSESS_ARGS[@]}"}; do
   [[ "$a" =~ ^[A-Za-z0-9._=-]+$ ]] || { echo "error: unsupported argument: $a" >&2; exit 2; }
 done
 
-[[ -f inventory/hosts.yml ]] || {
-  echo "error: no inventory/hosts.yml." >&2
+. lib/inventory-env.sh || exit 1
+[[ -f "$NIST_INVENTORY" ]] || {
+  echo "error: no inventory at $NIST_INVENTORY." >&2
   echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
   echo "  new lab VM:     make vm" >&2
   exit 1

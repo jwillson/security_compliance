@@ -14,6 +14,39 @@ this repository (AGENTS.md, *Doctrine*).
 
 ---
 
+## Two labs on one workstation
+
+The two labs connect differently and must not share an inventory: each has
+its own collector, its own CA, and its own second SSH factor — and offering a
+host the other lab's password is a failed authentication, a faillock strike
+(03.01.08) on every connection. So each lab has its own inventory, chosen with
+`NIST_INVENTORY` (default `inventory/hosts.yml`); `lib/inventory-env.sh`,
+sourced by `apply.sh`, `verify.sh` and the tools, exports it as
+`ANSIBLE_INVENTORY` so every `ansible` call follows.
+
+| Lab | Inventory | Shell | Secrets from |
+| --- | --- | --- | --- |
+| BYO | `inventory/hosts.yml` (the default) | `source ~/.local/share/nist-byo-lab/env.sh` | the environment that `env.sh` sets |
+| Kickstart | `inventory/kickstart.yml` | a **fresh** shell: `export NIST_INVENTORY=inventory/kickstart.yml` | `.secrets/` |
+
+The helper reads the connection kind from the inventory itself — `lab` if the
+hosts use the `.secrets/` key, `byo` otherwise — and from it `lib/ssh-env.sh`
+chooses the askpass and each host's `known_hosts`. It refuses, with the reason:
+
+- an inventory that mixes the two kinds (`tools/inventory.py add` refuses to
+  create one);
+- a lab inventory in a shell that sets `NIST_PKI_DIR`, `NIST_GRUB_PASSWORD`
+  or `NIST_LUKS_PASSPHRASE` — the role prefers the environment to `.secrets/`,
+  so a kickstart run from the BYO shell would quietly get the BYO lab's CA,
+  GRUB password and LUKS passphrase. `NIST_ALLOW_ENV_SECRETS=1` overrides,
+  for when that is really meant.
+
+Before 2026-09-26 the choice was made by whether `.secrets/` existed at all,
+so creating it for the kickstart lab silently gave every BYO host the wrong
+second factor.
+
+---
+
 ## BYO guests
 
 | Guest | Address | Role | What it is for |
@@ -147,6 +180,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind TASKS 6b.2–6b.6; run it before and after a fix and diff. |
 | `tools/rehearse-pcr7-recovery.py HOST` | The RUNBOOK's recovery when the TPM stops releasing the LUKS keys, for real: starts the guest with no Secure Boot keys (PCR 7 changes), checks the boot waits for the passphrase, types it, then verify reports the stale binding, the role reseals, verify passes, and the next boot unlocks alone. PCR 7 and the TPM event log are saved per boot under `reports/runs/`. Reverts to `hardened` at the end. |
 | `tools/rehearse-grub-edit.py HOST` | 03.10.07 by behaviour: reboots with the console attached, catches the one-second GRUB menu, presses `e`, and checks a username is demanded, a wrong password refused, the right one accepted, and the default entry still boots unattended. The edited entry is never booted. |
+| `tools/stage-pending-kernel.sh HOST` | Leaves a host as dnf-automatic would: the newest kernel installed and default, an older one running. `apply.sh` must then report "Reboot required: True" with the reason (DEFECTS 6b.10). |
 | `tools/ssh-idle-test.sh HOST [LIMIT]` | Behaviour, not configuration: opens an SSH session running a silent `sleep` and measures when sshd closes it (03.01.11 / 03.13.09; TMOUT cannot end it). Takes the idle limit plus up to 90 s. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
 

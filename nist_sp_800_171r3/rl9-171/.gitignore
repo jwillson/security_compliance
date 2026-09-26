@@ -6,7 +6,8 @@ iso/*.iso
 iso/CHECKSUM
 
 # Generated per-host, not part of the baseline.
-inventory/hosts.yml
+# Every live inventory: one per lab (NIST_INVENTORY). The example is tracked.
+inventory/*.yml
 reports/*.json
 reports/*.html
 # tools/harden-cycle.sh: one directory of logs and evidence per run.

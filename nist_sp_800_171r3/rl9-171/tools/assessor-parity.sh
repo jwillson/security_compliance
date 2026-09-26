@@ -25,7 +25,8 @@ SUB="${ROOT#"$REPO"/}"
 [[ $# -ge 2 ]] || { sed -n '3,16p' "$0"; exit 2; }
 BASE=$1 NEW=$2; shift 2
 VERIFY_ARGS=("$@")
-[[ -f "$ROOT/inventory/hosts.yml" ]] || { echo "error: no inventory/hosts.yml" >&2; exit 2; }
+. "$ROOT/lib/inventory-env.sh" || exit 2
+[[ -f "$NIST_INVENTORY" ]] || { echo "error: no inventory at $NIST_INVENTORY" >&2; exit 2; }
 
 WORK=$(mktemp -d)
 cleanup() {
@@ -39,7 +40,9 @@ trap cleanup EXIT
 run() {   # label ref
   local label=$1 ref=$2
   git -C "$REPO" worktree add -q --detach "$WORK/$label" "$ref"
-  cp "$ROOT/inventory/hosts.yml" "$WORK/$label/$SUB/inventory/hosts.yml"
+  # Both ways, so a ref from before NIST_INVENTORY existed (which reads
+  # ansible.cfg's inventory/hosts.yml) assesses the same hosts.
+  cp "$NIST_INVENTORY" "$WORK/$label/$SUB/inventory/hosts.yml"
   echo "==> $label: $ref ($(git -C "$REPO" rev-parse --short "$ref"))"
   # verify.sh exits non-zero whenever a host has a deviation; that is
   # expected here, and the reports are what is compared.

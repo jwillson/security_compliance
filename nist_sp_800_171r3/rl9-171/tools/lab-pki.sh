@@ -28,8 +28,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ $FROM_INVENTORY -eq 1 ]]; then
-  # HOST=IP for every cui_hosts member of inventory/hosts.yml (ansible.cfg
-  # names it), so the certificate carries the inventory name and the address.
+  # HOST=IP for every cui_hosts member of the selected inventory
+  # (NIST_INVENTORY, default inventory/hosts.yml), so the certificate carries
+  # the inventory name and the address.
+  . "$(dirname "${BASH_SOURCE[0]}")/../lib/inventory-env.sh" || exit 1
   mapfile -t HOSTS < <(cd "$(dirname "${BASH_SOURCE[0]}")/.." && ansible-inventory --list 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)

@@ -8,12 +8,16 @@
 #   ./apply.sh --check --diff       report drift without changing anything
 #   ./apply.sh --limit rl9-cui-01   one host
 #
+# NIST_INVENTORY picks the inventory (default inventory/hosts.yml): one per
+# lab, see lib/inventory-env.sh.
+#
 # Any additional arguments are passed through to ansible-playbook.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-[[ -f inventory/hosts.yml ]] || {
-  echo "error: no inventory/hosts.yml." >&2
+. lib/inventory-env.sh || exit 1
+[[ -f "$NIST_INVENTORY" ]] || {
+  echo "error: no inventory at $NIST_INVENTORY." >&2
   echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
   echo "  new lab VM:     make vm" >&2
   exit 1
