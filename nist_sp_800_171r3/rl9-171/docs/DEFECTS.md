@@ -634,8 +634,8 @@ No amount of testing substitutes for these. Each is a live commitment.
 both labs - the BYO pair and the kickstart lab built on the laptop - and the
 two rehearsals it needed (GRUB edit, PCR 7 recovery) had passed. Found by the
 cloud review of 2026-09-25 (6b.2-6b.6), by cycling the labs (6b.7-6b.10),
-and by the first release run (6b.11-6b.14), which are fixed and recorded here
-with the rest; each is closed by the release run that proves it (TASKS R3).*
+and by the first release runs (6b.11-6b.14), which the release run at
+`8c332c5` then proved fixed.*
 
 - [x] **6b.2 03.10.07: no GRUB password is ever set, and the check passes.**
       *Fixed 2026-09-25, check first.* `pe-07-grub-password` now reads what
@@ -932,7 +932,7 @@ with the rest; each is closed by the release run that proves it (TASKS R3).*
 host from a clean state — something no cycle before it had done for the
 collector or for the retrofit reference.*
 
-- [ ] **6b.11 The dry run failed on a collector that had never been applied.**
+- [x] **6b.11 The dry run failed on a collector that had never been applied.**
       `./apply.sh --check` on the freshly built `byo-log-01` stopped at the
       collector role's `ansible.posix.firewalld` task: "Failed to import the
       required Python library (firewall)". firewalld and its python library
@@ -942,10 +942,10 @@ collector or for the retrofit reference.*
       been applied long before the claim was made, and a kickstart collector
       ships with firewalld. *Fix:* the task carries the overlay's check-mode
       guard (`not (ansible_check_mode and nist_firewalld_pkg is changed)`).
-      *Proof pending:* the dry run of a rebuilt `byo-log-01` in the next
-      release run.
+      *Proven* by the release run at `8c332c5`: the dry run on the
+      never-applied, freshly rebuilt `byo-log-01` completed with `failed=0`.
 
-- [ ] **6b.12 `byo-rl9-01`'s `fresh` snapshot could not be logged into.** The
+- [x] **6b.12 `byo-rl9-01`'s `fresh` snapshot could not be logged into.** The
       release run reverted it and sudo refused the become password: the
       snapshot was taken by hand on 2026-09-17 and `byoadmin`'s password was
       rotated on the 18th. Nothing had reverted to it since, so nothing
@@ -953,18 +953,20 @@ collector or for the retrofit reference.*
       case. *Fix:* the guest is destroyed and rebuilt by `vm/byo-guest.sh`
       like the others, and `tools/release-run.sh byo --rebuild` rebuilds every
       BYO guest from the stock image, so the release proof depends on no
-      older build. *Proof pending:* that run.
+      older build. *Proven:* `release-run.sh byo --rebuild` at `8c332c5` rebuilt all three
+      guests from the stock image and cycled each to a pass.
 
-- [ ] **6b.13 Every BYO guest had a TPM, asked for or not.** `byo-guest.sh`
+- [x] **6b.13 Every BYO guest had a TPM, asked for or not.** `byo-guest.sh`
       passed `--tpm` only with `--tpm`, but virt-install 5.1 gives any UEFI
       guest an emulated TPM unless told `--tpm none` (virtinst `guest.py`,
       `_add_default_tpm`); the rebuilt `byo-log-01` came up with one. Harmless
       there, but `byo-rl9-01` is the no-TPM retrofit reference, and rebuilt
       this way it would have silently stopped being one. *Fix:* `--tpm none`
-      unless `--tpm` is given. *Proof pending:* `byo-guest.sh check` on the
-      rebuilt guests.
+      unless `--tpm` is given. *Proven:* `byo-guest.sh check` on the rebuilt
+      `byo-rl9-01` and `byo-log-01` reads `tpm none`; `byo-rl9-02`, built with
+      `--tpm`, has one and seals its LUKS keys to it.
 
-- [ ] **6b.14 `byo-guest.sh build` exited 1 after every successful build.**
+- [x] **6b.14 `byo-guest.sh build` exited 1 after every successful build.**
       `cmd_check` removes its temporary probe with `trap ... RETURN`, and a
       RETURN trap outlives the function that sets it: it fired again when
       `cmd_build` returned, where `$probe` is undefined, and `set -u` ended
@@ -972,8 +974,8 @@ collector or for the retrofit reference.*
       its `fresh` snapshot were all in place. It went unseen because the
       builds before the release run were read from their output, not their
       status; `release-run.sh` reads the status, and stopped. *Fix:* the trap
-      clears itself (`trap - RETURN`). *Proof pending:* the rebuilds in the
-      next release run.
+      clears itself (`trap - RETURN`). *Proven:* all three rebuilds in the release run
+      at `8c332c5` exited 0.
 
 ---
 

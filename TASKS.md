@@ -11,7 +11,7 @@ procedure is `docs/RUNBOOK.md`.
 
 ## Where the tool stands
 
-As of 2026-09-26, at the head of `main`.
+As of 2026-09-26, release 1.0.0.
 
 **Consistent** — `make validate`: 97 active requirements (33 withdrawn), 340
 checks defined and referenced, 32 machine ODPs each asserted by a check, 62
@@ -24,27 +24,31 @@ the POA&M register.
 The assessor never reads a command that could not run as a clean result
 (6b.1); every check reads effective state.
 
-**Proven against running hosts**, by `tools/harden-cycle.sh` (dry run,
-apply, reboot when owed, apply, `changed=0`, verify, evidence before and
-after):
+**Proven against running hosts** — the release run (R3) at `8c332c5`,
+`tools/release-run.sh` on both labs from a clean state (kickstart VMs
+reinstalled, BYO guests rebuilt from the stock image): dry run on the
+never-applied host, apply, reboot, apply, dry run at `changed=0`, verify.
 
 | Lab | Result |
 | --- | --- |
-| Kickstart, built on the laptop (`inventory/kickstart.yml`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28** — 344 checks run, **0 failed** on both. CUI volumes sealed to the TPM; 121,650 auditd records forwarded over TLS to the collector |
-| BYO retrofit reference (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 6 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
+| Kickstart, built on the laptop (`inventory/kickstart.yml`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28** — 344 checks run, **0 failed** on both |
+| BYO retrofit (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 6 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
 | BYO with a volume group, a TPM and two accounts | `byo-rl9-02` **35/33/1/28** — 2 checks failed, both 03.04.06 (no separate `/tmp`) |
 
 Proven by behaviour, not configuration: an idle SSH session closed at the
 ODP limit (`tools/ssh-idle-test.sh`); GRUB demanding its password to edit an
 entry (`tools/rehearse-grub-edit.py`); the TPM refusing after a PCR 7 change,
 the stale binding reported, resealed, and the next boot unlocking alone
-(`tools/rehearse-pcr7-recovery.py`); every lockout recovery in the RUNBOOK
-(DEFECTS Phase 3). The history behind these numbers — and the defects each
+(`tools/rehearse-pcr7-recovery.py`); audit records received legible by
+syslog-ng, a certificate-less client refused and a wrong peer name sending
+nothing (`tools/prove-foreign-receiver.sh`, 6.2a); every lockout recovery in
+the RUNBOOK (DEFECTS Phase 3). The history behind these numbers — and the defects each
 run found — is `docs/DEFECTS.md`.
 
-What is open is below: the release blockers first, then one item that needs
-a receiver we do not have, the owner's authoring, and the defects found
-working out how to do it.
+What is open is below. Every release blocker is closed; going public is the
+owner's step in the repository settings. After it: forwarding to a
+deployer's own SIEM (6.2b) and a cross-host review report (6.2c), and the
+owner's authoring (6.3, 6.4).
 
 ---
 
@@ -62,42 +66,32 @@ is believed.
       first so it failed on the defect (DEFECTS.md Phase 6b).
 - [x] **R2 No data loss in what the tool generates.** *Met 2026-09-26* (6.6):
       the SSP and the POA&M keep what the owner writes, proven by rehearsal.
-- [ ] **R3 A full lab cycle green on the release commit.** Both labs, from a
-      clean state, through apply → reboot → apply → verify, `--check` at
-      `changed=0`, with a second interactive account present (6b.4):
-      `tools/release-run.sh byo` and `tools/release-run.sh kickstart`
-      (docs/LAB.md). A host passes only with no failure beyond the documented
-      retrofit limits. The numbers quoted in the READMEs come from this run
-      and nothing earlier. The READMEs and CHANGELOG are written from it
-      afterwards, so the tag lands on a later commit; `git diff --stat
-      PROVEN..v1.0.0` must then show documentation only.
-      *First attempt, 2026-09-26 at `5d340a1`:* stopped on the BYO lab by
-      three defects, now fixed and awaiting this run's proof — 6b.11 (the dry
-      run failed on a never-applied collector), 6b.12 (`byo-rl9-01`'s hand-made
-      `fresh` snapshot held a rotated password), 6b.13 (virt-install gave
-      every BYO guest a TPM). A second attempt at `1eecf18` found 6b.14
-      (`byo-guest.sh build` exited 1 after every successful build). Next: `release-run.sh byo --rebuild` and
-      `release-run.sh kickstart` at the fixed commit.
-- [ ] **R4 The READMEs say only what that run proved.** Current numbers; the
-      6.5 caveat where a first-time reader meets it; supported platforms
-      stated precisely (Rocky/RHEL 9 minors, and what differs on OpenSSH
-      8.7 vs ≥ 9.2 after 6b.3); a *Known limitations* section carrying
-      everything under *Not blockers*.
+- [x] **R3 A full lab cycle green on the release commit.** *Met 2026-09-26
+      at `8c332c5`:* `tools/release-run.sh byo --rebuild` and
+      `tools/release-run.sh kickstart`, every host from a clean state, every
+      host PASS (the table above; CHANGELOG, *Proven at this release*). The
+      two attempts before it stopped on 6b.11-6b.14, fixed and proven by this
+      run (DEFECTS.md, Phase 6b). The tag is on the documentation commit
+      after it; `git diff --stat 8c332c5 v1.0.0` shows documentation only.
+- [x] **R4 The READMEs say only what that run proved.** *Done 2026-09-26:*
+      both READMEs quote R3's numbers and nothing earlier; the 6.5 caveat
+      opens the tool's README and the top-level one; *Supported platforms*
+      says what was run (Rocky 9.8, OpenSSH 9.9) apart from what is expected
+      (other minors, RHEL, OpenSSH before 9.2); *Known limitations* carries
+      the retrofit, TPM, forwarding, ClamAV and organizational limits; the
+      NIST publication's public-domain status sits beside the licence.
 - [x] **R5 `SECURITY.md`.** *Written 2026-09-26:* private reporting through
       GitHub's private vulnerability reporting, a false PASS in scope, a 7-day
-      acknowledgement target (the owner's to confirm). *At release:* enable
-      private vulnerability reporting in the repository settings — GitHub
-      offers it only on public repositories.
+      acknowledgement target (confirmed by the owner 2026-09-26).
 - [x] **R6 CI.** *Done 2026-09-26* (`.github/workflows/ci.yml`): validate,
       the 56 unit tests, catalog-check, the playbook's syntax check and a parse
       of every script, on every push and pull request; actions pinned to SHAs.
       The first run passed, and showed the catalog reproduces with the
       runner's poppler 24.02 as with the laptop's 26.01.
-- [ ] **R7 Versioned.** *`CHANGELOG.md` written 2026-09-26.* Recommended:
-      release as **1.0.0** — never released before — with the changelog saying
-      development builds reported the same number. *At release:* fill in
-      "Proven at this release" from R3's run, date the entry, and tag
-      `v1.0.0` on that commit.
+- [x] **R7 Versioned.** *The owner chose 1.0.0 on 2026-09-26.* `CHANGELOG.md`
+      dated, "Proven at this release" filled from R3, and `v1.0.0` tagged on
+      the documentation commit after `8c332c5`, with the secret scan run on
+      it first.
 - [x] **R8 History scanned with a real secret scanner.** *Done 2026-09-26:*
       `tools/secret-scan.sh` runs gitleaks 8.30.1 (the binary verified against
       a SHA-256 pinned in the script) over every commit on every branch: **no
@@ -110,6 +104,12 @@ is believed.
       (a finding is a lead until a host confirms it; fix the check first; prove
       it on a host; script everything; docs in the repo), the rules the code
       keeps, and what never goes in the repository.
+
+**Going public** — the owner's, in the repository settings, once R3, R4 and
+R7 are done (agreed 2026-09-26): make the repository public; enable private
+vulnerability reporting, which GitHub offers only on public repositories and
+`SECURITY.md` sends reporters to; protect `main` so a pull request must pass
+the `ci` workflow before it merges.
 
 **Not blockers** — ship as documented limitations:
 6.2b (needs each deployer's SIEM; 6.2a proved the path to a third-party
@@ -164,6 +164,30 @@ a receiver the toolkit did not build, with a peer name no lab host has.
       `ca.crt` alongside a certificate the SIEM will accept for each host.
       Confirm `au-05-forward-established` still passes, and that the SIEM
       parses the records rather than merely accepting the connection.
+
+- [ ] **6.2c A cross-host review report on the collector.** *After 1.0.*
+      *Decided 2026-09-26, instead of a lab SIEM VM:* a SIEM would satisfy
+      nothing the tool does not already cover. The host part of 03.03.05
+      (correlation across repositories, statement c) is the collector, proven
+      on both labs and, by 6.2a, to a third-party receiver. What remains of
+      03.03.05a/b and 03.06.02 is a person reviewing and reporting, which is
+      why they are `partial` and read MANUAL with or without a SIEM. A SIEM VM
+      would also be another CUI host to harden and prove, and 4-8 GB the lab
+      does not have.
+      What would help that person: each host's daily `nist-audit-review`
+      summarises its own records only. Give the collector the same for the
+      whole enclave, from `/var/log/remote/<host>/audispd.log` — per host and
+      in total: failed authentications, privileged commands, changes to
+      accounts, audit rules and time, and any host that has stopped sending
+      (no record within a threshold) — at the review frequency ODP, into
+      `/var/log/nist-800-171/`. The records arrive as syslog lines, not as
+      `audit.log`, so `aureport` cannot read them as they are; the parsing is
+      part of the work.
+      *Done when:* on both labs the report names every forwarder, counts
+      events generated for the test on the right host, and flags a
+      forwarder stopped for the test; a check asserts the timer, not the
+      report's contents; 03.03.05 still reports MANUAL. The RUNBOOK says who
+      reads it, and the SSP section on 03.03.05 can cite it.
 
 ---
 

@@ -5,7 +5,7 @@ Notable changes, newest first. Versions follow `meta.version` in
 host and every assessment report records; each release is a `v<version>` tag
 on the commit it was proven at.
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-09-26
 
 The first release. Development builds before it also reported overlay
 `1.0.0`; a report is from this release only if it was produced by the tagged
@@ -32,8 +32,30 @@ before this release, with the evidence for each, is
 
 ### Proven at this release
 
-To be filled in from the release run (TASKS.md R3): both labs cycled at the
-tagged commit.
+Both labs, from a clean state, by `tools/release-run.sh` at commit `8c332c5`:
+the kickstart VMs reinstalled, the BYO guests rebuilt from the stock Rocky 9.8
+GenericCloud image (`--rebuild`). Each host: dry run on the never-applied
+host, apply, the reboot it reported it owed, apply again, dry run at
+`changed=0`, verify. Every host passed. The tag is on a later commit that
+changes documentation only (`git diff --stat 8c332c5 v1.0.0`).
+
+| Host | What it is | Satisfied / partial / not / org. | Checks run, failed |
+| --- | --- | --- | --- |
+| `rl9-cui-01` | kickstart reference build, CUI host | 36 / 33 / 0 / 28 | 344, 0 |
+| `rl9-log-01` | kickstart reference build, collector | 35 / 34 / 0 / 28 | 344, 0 |
+| `byo-rl9-01` | stock image, one filesystem, no volume group, no TPM | 34 / 30 / 5 / 28 | 344, 6 — the retrofit limits below |
+| `byo-log-01` | stock image, collector | 34 / 30 / 5 / 28 | 344, 6 — the same limits |
+| `byo-rl9-02` | stock image with a volume group, a TPM and a second account | 35 / 33 / 1 / 28 | 344, 2 — only the separate filesystems |
+
+Proven by behaviour as well as by the checks, in the lab, before this run:
+an idle SSH session closed by sshd at the 900 s limit; GRUB demanding its
+password to edit an entry; a PCR 7 change making the TPM withhold the LUKS
+keys, the stale binding reported, resealed, and the next boot unlocking
+alone; the owner's SSP sections and POA&M entries surviving regeneration;
+audit records forwarded over mutual TLS to the toolkit's collector and to
+syslog-ng, with a certificate-less client refused and a wrong peer name
+sending nothing. The first release runs found four defects, all fixed and
+proven here (DEFECTS.md 6b.11–6b.14).
 
 ### Known limitations
 

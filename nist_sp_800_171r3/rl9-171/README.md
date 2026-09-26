@@ -21,6 +21,15 @@ Four artifacts, each with one job:
 | `roles/` | `nist_800_171/` applies the overlay to every CUI host; `nist_log_collector/` adds the receiving half of 03.03.05c on a log host |
 | `audit/` | An assessor that verifies the host, written independently of the role |
 
+> **A report with nothing failed is not compliance, and not authorization.**
+> Of the 97 requirements, 28 have no host control at all and 32 more are only
+> partly a host's to enforce, so on about 60 of them a clean host proves
+> little. The tool measures host configuration, read from effective state, on
+> each host it is pointed at. *Compliant* means all 97 satisfied with
+> evidence, a System Security Plan and a POA&M; *authorized* means a person
+> with the authority accepted the residual risk. The tool produces evidence
+> for part of the first and drafts of the other two. It does neither.
+
 Day-to-day procedure — building, applying, assessing, and getting back in when
 a control locks you out — is in [docs/RUNBOOK.md](docs/RUNBOOK.md). The labs
 that prove the tool, and the scripts that build and probe them, are in
@@ -75,7 +84,7 @@ kickstart-built reference lab:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 334 checks run, 0 failed
+ 97 requirements assessed, 344 checks run, 0 failed
 ```
 
 That is the CUI host. The collector reads 35 / 34 / 0 / 28: it forwards
@@ -116,7 +125,8 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-334 checks cover the 69 enforceable requirements. Each declares exactly one
+340 checks cover the 69 enforceable requirements (a run counts 344: a few
+checks serve two requirements). Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
 
@@ -145,7 +155,7 @@ of `catalog/overlay-rocky9.yml`. The role applies them and the checks assert
 against them via `{odp.name}` substitution, so the two can never drift. Change
 the lockout threshold there and both sides follow.
 
-The publication leaves 47 more parameters to the organization that no host
+The publication leaves 62 more parameters, across 49 requirements, to the organization that no host
 setting can satisfy: review frequencies, notification periods, named
 authorities, policy statements. Those live in the same file, under
 `odp_organizational:`, keyed to the requirement that asks for them. Nothing
@@ -159,8 +169,9 @@ assessor observes it on every run. "Report suspected incidents within 1 hour"
 is a commitment, and nothing on the host can demonstrate it was kept. Both
 still have to be written down somewhere.
 
-Both blocks ship with defaults drawn from common DoD CUI practice. **They are
-not your organization's values.** `make validate` will not tell you whether
+Both blocks ship with defaults drawn from common DoD CUI practice, each
+reviewed and accepted for the lab by its owner (`docs/ODP-REVIEW.md`).
+**They are not your organization's values.** `make validate` will not tell you whether
 they are right — only that nothing references a parameter that does not exist.
 
 ---
@@ -211,7 +222,7 @@ guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
 an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
 reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
-334 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
+344 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
 check passes.
 Every failure is an install-time limit the role records rather than hides:
 
@@ -220,11 +231,17 @@ Every failure is an install-time limit the role records rather than hides:
 | 03.04.06 | `cm-06-mount-options`, `cm-06-tmp-separate` | `/home`, `/tmp`, `/var/tmp`, `/var/log`, `/var/log/audit` are not separate filesystems; the role writes `unretrofittable-mounts` naming them |
 | 03.01.18, 03.08.03, 03.08.09, 03.13.08 | one LUKS check each | the encrypted CUI and backup volumes need free space in `vg_sys`; this host has no volume group |
 
+A second stock guest given what the first lacks — a volume group with free
+space, a TPM 2.0, and a second interactive account (`byo-rl9-02`) — reports
+**35 / 33 / 1 / 28**: the LUKS volumes are created and their keys sealed to
+the TPM, and only the separate filesystems remain.
+
 FIPS (03.13.11) is *not* on that list: it retrofits with one reboot. A host
 with an LVM root and 3 GB free passes the LUKS checks too, given
 `NIST_LUKS_PASSPHRASE`. The apply after the reboot records the kernel the
-security updates installed and is otherwise settled; the apply after that
-reports `changed=0`, and so does `./apply.sh --check` on the hardened host.
+security updates installed and changes two or three things only a boot
+settles; `./apply.sh --check` after it reports `changed=0` on every lab host,
+which is what makes the dry run a drift detector.
 
 ```yaml
 # inventory/hosts.yml
@@ -236,9 +253,9 @@ cui_hosts:
       ansible_become: true
 ```
 
-Install-time controls the role cannot retrofit (separate `/var/log/audit`,
-FIPS from first boot) will be reported as deviations rather than silently
-skipped.
+Install-time controls the role cannot retrofit (separate filesystems such as
+`/var/log/audit`) are reported as deviations rather than silently skipped.
+FIPS mode is not one of them: the role enables it and asks for the reboot.
 
 The example inventory documents the connection consequences in full — they are
 the same ones listed below, and each looks like a broken tool the first time.
@@ -305,17 +322,25 @@ nothing, records `tls-certificate-missing`, and is reported by the assessor;
 nothing falls back to plaintext. `nist_log_tls: false` is the explicit
 opt-out (514 plain), and `sc-08-forward-encrypted` reports it.
 
-Proven on the retrofit pair `byo-rl9-01` / `byo-log-01`: the forwarder logs
-"TLS Connection initiated", both ends hold the established 6514 socket, a
-probe record lands in the collector's per-host directory, and the checks
-below pass on the side where each is meaningful.
+Proven on both labs: the forwarder logs "TLS Connection initiated", both ends
+hold the established 6514 socket, auditd records land in the collector's
+per-host directory, and the checks below pass on the side where each is
+meaningful. Proven too against a receiver this toolkit did not build —
+syslog-ng in a container, with a peer name no lab host has
+(`tools/prove-foreign-receiver.sh`): the records arrive legible, a client
+without a certificate is refused, and a forwarder told to expect another name
+sends nothing. A production SIEM, with a certificate the lab did not mint, is
+the deployer's to prove the same way. To forward to one, set
+`nist_log_collector: HOST:PORT` and `nist_log_collector_name` to the name its
+certificate carries, and put its CA in `NIST_PKI_DIR` as `ca.crt`.
 
 Two checks then assert the path rather than the configuration:
 
 | Check | Asserts |
 |---|---|
 | `au-05-forward-established` | rsyslog holds a live TCP connection to the collector. It queues to disk when the collector is unreachable, so a host can look configured and be forwarding nothing. |
-| `au-05-collector-receiving` | The collector holds records from a host other than itself. |
+| `au-05-audit-trail-forwarded` | auditd's syslog plugin is running, so the audit trail itself is forwarded, not only syslog. |
+| `au-05-collector-receiving` | The collector holds auditd records from a host other than itself. |
 
 Both degrade to MANUAL on a single-node lab rather than failing it: no
 collector configured is the one-VM case, not a deviation.
@@ -350,6 +375,11 @@ DSA/ECDSA host keys, so a host trusted before the run presents a different key
 afterwards. `apply.sh` re-records it after a successful run; `verify.sh` never
 does, so an *unexpected* key change is still an error.
 
+**Idle SSH sessions are closed at 15 minutes** (03.01.11, the
+`session_timeout_seconds` ODP), whether or not they sit at a prompt — a
+silent `tail -f` is idle. sshd enforces it with `ChannelTimeout`, which needs
+OpenSSH 9.2 or later.
+
 **Ping stops working.** The firewall default zone target is `DROP` (03.13.06),
 so ICMP echo is dropped. The host is still reachable on its permitted services.
 
@@ -379,8 +409,9 @@ directory in sorted order, so a later file cannot weaken the baseline.
 the host's true state — which is the point of reading effective state rather
 than config files.
 
-The role is also idempotent: two consecutive `./apply.sh` runs report
-`changed=0`, so `./apply.sh --check` is a meaningful drift detector rather than
+The role is also idempotent: once a host has been applied and rebooted and
+applied again, `./apply.sh --check` reports `changed=0` (every host of the
+release run), so the dry run is a meaningful drift detector rather than
 permanent noise.
 
 ---
@@ -411,10 +442,11 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               334 check definitions
+│   └── checks.yml               340 check definitions
 ├── tests/                       unit tests for the assessor and validate.py
 ├── vm/
 │   ├── build-vm.sh              unattended kickstart VM build (the reference lab)
+│   ├── siem-container.sh        syslog-ng stand-in SIEM, for the foreign-receiver proof
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls
 │   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
 │   ├── byo-snapshot.sh          save/revert a guest: disks, NVRAM, TPM state
@@ -423,11 +455,16 @@ rl9-171/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
 │   ├── inventory.py             owns inventory/hosts.yml across VMs
 │   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
-│   ├── probe.sh, probes/        read-only evidence probes run on hosts
+│   ├── probe.sh, probes/        evidence probes and self-cleaning experiments run on hosts
 │   ├── assessor-parity.sh       two assessor versions, same hosts, every check compared
 │   ├── harden-cycle.sh          one recorded apply/reboot/apply/verify cycle on a host
-│   └── ssh-idle-test.sh         an idle SSH session, timed until sshd closes it
-├── lib/ssh-env.sh               supplies the MFA knowledge factor to ssh
+│   ├── release-run.sh           the release gate: a whole lab from clean, every host cycled
+│   ├── rehearse-*.py, *.sh      recovery and behaviour rehearsals (GRUB, PCR 7, the plans)
+│   ├── prove-foreign-receiver.sh  forwarding to a receiver the toolkit did not build
+│   ├── ssh-idle-test.sh         an idle SSH session, timed until sshd closes it
+│   ├── console.py               the guest's serial console, scripted
+│   └── secret-scan.sh           gitleaks over the whole history (also in CI)
+├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile
 └── reports/                     assessment output (generated)
@@ -441,11 +478,13 @@ The role leaves working artifacts behind, not just settings:
 
 | Path | Purpose |
 |---|---|
-| `/etc/nist-800-171/system-security-plan.md` | SSP, generated from live state (03.15.02) |
+| `/etc/nist-800-171/system-security-plan.md` | SSP, regenerated from live state after every assessment (03.15.02); the owner's sections, in `ssp.d/`, are spliced in and kept |
+| `/etc/nist-800-171/ssp.d/` | The SSP sections only the owner can write; see RUNBOOK, *Writing the SSP and working the POA&M* |
+| `/etc/nist-800-171/poam.csv` | The POA&M register: every failed requirement and every partial one's residual, merged at each assessment; the owner's columns are carried forward and resolved items closed with a date, never deleted (03.12.02) |
 | `/etc/nist-800-171/organizational-requirements.md` | What the host cannot enforce |
 | `/etc/nist-800-171/component-inventory.json` | Component inventory (03.04.10) |
 | `/usr/local/sbin/nist-assess` | On-host assessment (03.12.01) |
-| `/usr/local/sbin/nist-generate-poam` | POA&M from failed checks (03.12.02) |
+| `/usr/local/sbin/nist-generate-poam` | Merges the newest assessment into `poam.csv` (03.12.02) |
 | `/usr/local/sbin/nist-offboard-user` | One-action offboarding (03.09.02) |
 | `/usr/local/sbin/nist-sanitize-media` | Media sanitization (03.08.03) |
 | `/usr/local/sbin/nist-privilege-report` | Privilege review evidence (03.01.05c) |
@@ -460,15 +499,45 @@ refresh, malware scan, and security errata (`dnf-automatic`).
 
 ---
 
-## Requirements
+## Supported platforms
 
-- **Control workstation**: `ansible-core` ≥2.14, `python3-yaml`, `poppler-utils`
-  (for `pdftotext`), and for VM builds `libvirt`, `virt-install`, `qemu`,
-  `swtpm`, `edk2-ovmf`. `podman` is optional (kickstart validation).
-- **Target**: Rocky Linux 9, reachable over SSH with sudo.
+| | Proven | Expected to work, not run |
+|---|---|---|
+| **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky 9 and RHEL 9 minors: same packages, not run on RHEL |
+| **Control workstation** | Ubuntu 26.04 (the labs); ubuntu-24.04 in CI for everything that needs no host | Any Linux with the tools below |
 
-Ansible collections (`ansible.posix`, `community.general`) install
-automatically on first `./apply.sh`.
+**OpenSSH before 9.2** — the 8.7p1 of early Rocky 9 minors — has no
+`ChannelTimeout`. The role then warns, leaves the idle-session settings out,
+and records the gap; 03.01.11 and 03.13.09 report it. That path is not
+exercised on a lab host: the role applies security errata, which bring any
+host that can reach its repositories to 9.9.
+
+Control workstation: `ansible-core` ≥ 2.14, `python3-yaml`, `poppler-utils`
+(for `pdftotext`), and for the labs `libvirt`, `virt-install`, `qemu`,
+`swtpm`, `edk2-ovmf` (`ovmf` on Ubuntu); `podman` for kickstart validation
+and the stand-in SIEM. Ansible collections (`ansible.posix`,
+`community.general`) install automatically on first `./apply.sh`. Target:
+reachable over SSH, with sudo.
+
+---
+
+## Known limitations
+
+- **Retrofit hosts** cannot get what only an installer creates: a host
+  without separate `/tmp`, `/var/tmp`, `/var/log`, `/var/log/audit` and
+  `/home` fails 03.04.06, and one without a volume group with 3 GB free
+  cannot have the LUKS volumes (03.01.18, 03.08.03, 03.08.09, 03.13.08). The
+  role records both.
+- **A TPM 2.0 keeps the LUKS keys off the disk.** Without one the key file
+  stays so the host can boot, and the assessment reports it. With one, a
+  firmware or Secure Boot change stops the TPM releasing the keys; the boot
+  waits for the passphrase, and the RUNBOOK's recovery reseals (rehearsed).
+- **Forwarding is proven to lab receivers**: this toolkit's collector and
+  syslog-ng, both with lab certificates. Your SIEM is yours to prove.
+- **ClamAV is off by default** (it needs EPEL), so 03.14.02 is partial.
+- **The organizational requirements are the owner's.** The tool lists them
+  (`organizational-requirements.md`, the POA&M register) and drafts the SSP
+  around them; it cannot satisfy them.
 
 ---
 
@@ -479,6 +548,10 @@ automatically on first `./apply.sh`.
 - The overlay's ODP values are defensible defaults drawn from the DoD CUI
   baseline and the SSG RHEL 9 CUI profile. **They are not your organization's
   values** — review the `odp:` and `odp_organizational:` blocks before use.
+- `NIST.SP.800-171r3.pdf` is a work of the U.S. Government, not subject to
+  copyright in the United States, and is included so the catalog can be
+  reproduced from it. Everything else is under the repository's
+  Apache-2.0 licence.
 - `fapolicyd` enforces deny-by-default execution. On a host with unprofiled
   workloads this can block applications; set `nist_fapolicyd_permissive: true`
   to log instead while profiling.
