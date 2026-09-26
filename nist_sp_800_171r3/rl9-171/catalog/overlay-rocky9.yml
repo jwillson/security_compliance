@@ -1379,14 +1379,17 @@ requirements:
     disposition: partial
     tasks: tasks/ca.yml
     host_scope: >
-      Generates the POA&M input automatically: every failed or partially
-      implemented requirement from the most recent assessment is emitted as a
-      structured POA&M item with the requirement ID, the observed deviation, and
-      the date first observed.
+      Keeps the POA&M as a register (/etc/nist-800-171/poam.csv) merged from
+      every scheduled assessment: each failing requirement is a deviation item
+      (the failed checks), each partially implemented one a residual item (the
+      overlay's residual), with the date first observed. The owner's columns are
+      carried forward on every run; a resolved deviation is closed with its date,
+      never deleted; residuals are closed by the owner. A check confirms every
+      failing requirement is tracked.
     residual: >
       Assigning owners, remediation dates, and resources is a management
       activity.
-    checks: [ca-02-poam-generator, ca-02-poam-output]
+    checks: [ca-02-poam-generator, ca-02-poam-register]
 
   - id: "03.12.03"
     title: Continuous Monitoring
@@ -1625,9 +1628,12 @@ requirements:
     tasks: tasks/pl.yml
     host_scope: >
       Generates the machine-derivable portions of the SSP directly from the
-      host: constituent components (from the 03.04.10 inventory), the
-      operational environment, the safeguards in place (this overlay, with the
-      assessed status of each requirement), and the CUI location from 03.04.11.
+      host, on every apply and after every scheduled assessment: constituent
+      components (from the 03.04.10 inventory), the operational environment, the
+      safeguards in place (this overlay, with the assessed status of each
+      requirement), and the CUI location from 03.04.11. The sections the owner
+      writes (/etc/nist-800-171/ssp.d/) are spliced in and never overwritten, and
+      the plan states which are still unwritten.
     residual: >
       Threat description, role assignment, and approval are authored by the
       system owner.

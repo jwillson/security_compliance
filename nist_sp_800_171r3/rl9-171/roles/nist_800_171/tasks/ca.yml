@@ -46,6 +46,14 @@
         [Service]
         Type=oneshot
         ExecStart={{ nist_bin_dir }}/nist-assess --json {{ nist_report_dir }}/assessment-latest.json --quiet
+        # nist-assess exits 1 when the host has deviations - a result, not a
+        # failure of the service - and the plans below must follow it.
+        SuccessExitStatus=1
+        # 03.12.02 / 03.15.02: the POA&M register and the SSP follow every
+        # assessment, so neither describes an older state of the host. Both
+        # keep what the owner authored (DEFECTS 6.6).
+        ExecStartPost={{ nist_bin_dir }}/nist-generate-poam
+        ExecStartPost={{ nist_bin_dir }}/nist-generate-ssp
     - name: nist-assessment.timer
       content: |
         [Unit]
@@ -73,6 +81,15 @@
 # ===========================================================================
 # 03.12.02 Plan of Action and Milestones
 # ===========================================================================
+- name: "03.12.02 | Install the POA&M register logic"
+  ansible.builtin.copy:
+    src: nist_poam.py
+    dest: "{{ nist_bin_dir }}/nist_poam.py"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: ["03.12.02"]
+
 - name: "03.12.02 | Install the POA&M generator"
   ansible.builtin.template:
     src: generate-poam.sh.j2

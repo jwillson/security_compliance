@@ -1596,10 +1596,32 @@ checks:
     command: "test -x /usr/local/sbin/nist-generate-poam && echo present"
     expect_output: "present"
 
-  - id: ca-02-poam-output
-    description: The POA&M output directory exists
-    command: "test -d /var/log/nist-800-171 && echo present"
-    expect_output: "present"
+  - id: ca-02-poam-register
+    description: Every requirement failing the latest assessment has an open POA&M item
+    # Replaces ca-02-poam-output, which only tested that the report directory
+    # existed and so could not fail (DEFECTS 6.6). The register persists
+    # (nist_poam.py); a failing requirement with no active deviation item in
+    # it is a deviation the plan does not track.
+    command: |
+      python3 - <<'PY'
+      import csv, json, os, sys
+      a = "/var/log/nist-800-171/assessment-latest.json"
+      r = "/etc/nist-800-171/poam.csv"
+      # The register follows the scheduled assessment; before its first run
+      # there is nothing to track yet - MANUAL, not a deviation.
+      if not os.path.exists(a):
+          print("no scheduled assessment has run yet"); sys.exit(1)
+      if not os.path.exists(r):
+          sys.exit(print("no POA&M register at " + r) or 0)
+      failing = {q["id"] for q in json.load(open(a)).get("requirements", [])
+                 if q.get("status") in ("FAIL", "ERROR")}
+      tracked = {row["Requirement"] for row in csv.DictReader(open(r))
+                 if row.get("Kind") == "deviation" and row.get("Status") in ("Open", "Risk Accepted")}
+      for req in sorted(failing - tracked):
+          print("untracked deviation: " + req)
+      PY
+    expect_empty: true
+    manual_if_absent: true
 
   - id: ca-03-aide-timer-enabled
     description: Continuous monitoring includes integrity checking

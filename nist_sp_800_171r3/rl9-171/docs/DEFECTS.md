@@ -925,3 +925,61 @@ cloud review of 2026-09-25 (6b.2-6b.6) and by cycling the labs (6b.7-6b.10).*
       5.14.0-687.50.1 is installed, 5.14.0-687.10.1 is running)", the cycle
       reboots on it, and the host ends at 35/33/1/28 with `sa-02` and `si-01`
       passing, then `changed=0`.
+
+---
+
+## Phase 6 — closed items
+
+*Moved from TASKS.md on 2026-09-26.*
+
+- [x] **6.6 Both generators destroyed authored content.** *Fixed and proven
+      2026-09-26.* Worse than first recorded: the role ran `nist-generate-ssp`
+      on **every apply**, rewriting the whole file, so any authored section was
+      lost at the next apply; and `nist-generate-poam` wrote a fresh dated CSV
+      each run, so the owner's columns never carried forward and a resolved
+      item simply vanished. Its check, `ca-02-poam-output`, only tested that
+      the report directory existed and could not fail.
+      *Now:* the owner's SSP sections live in `/etc/nist-800-171/ssp.d/` (or
+      come from `NIST_SSP_DIR` on the workstation) and are spliced in on every
+      regeneration, with a table of which are written. The POA&M is a
+      register, `/etc/nist-800-171/poam.csv`, merged by `nist_poam.py`
+      (stdlib, 15 unit tests): owner columns carried forward, resolved
+      deviations closed with their date and kept, residuals closed by the
+      owner, an assessment older than 24 h refused. Both plans regenerate after
+      every scheduled assessment (`ExecStartPost`, with `SuccessExitStatus=1`
+      because nist-assess exits 1 on deviations). `ca-02-poam-register`
+      replaces the directory check: every failing requirement must be tracked;
+      it FAILED on a host with no register before the change.
+      *Proven* with `tools/rehearse-authored-plans.sh` on `byo-rl9-01`:
+      authored sections and an owner's entry survived the scheduled
+      assessment service and a second apply; the rehearsal text was removed.
+      fapolicyd (enforcing) runs the module as root without a denial.
+
+- [x] **6.7 The POA&M omitted the obligations that are not FAILs.** *Resolved
+      2026-09-26 with 6.6.* Not a decision after all: the overlay's 03.12.02
+      host_scope already promised "every failed or partially implemented
+      requirement", and the generator emitted only FAILs. Every partial
+      requirement is now a `residual` item carrying the overlay's residual
+      text (`byo-rl9-01`: 5 deviations, 32 residuals). The 28 purely
+      organizational requirements are not items — they have no host part — and
+      the SSP's section 8 names `organizational-requirements.md` as their
+      register.
+
+- [x] **5.5 `vm/nist-lab-network.xml` claims a ufw rule this host lacks.** The
+      comment says the host's ufw policy "already permits nist-lab qemu
+      guests". On this laptop `ufw status` shows rules for `virbr0` and
+      `virbr-k8s` and none for `virbr17`, with default incoming deny. Guest to
+      guest traffic crosses the bridge and never the host INPUT chain, so the
+      lab works and nothing is broken — but the comment describes the other
+      workstation, and it will mislead whoever first tries to make the host
+      itself a receiver. Correct the comment, or add the rule it describes.
+      *Fixed 2026-09-26:* the comment now says what is true on both
+      workstations — no host rule is needed for the lab, only for making the
+      workstation itself a receiver.
+
+- [x] **5.6 Make every open defect testable on the laptop lab.** *Done
+      2026-09-26:* the laptop runs both labs — the BYO guests (`vm/byo-guest.sh`,
+      including `byo-rl9-02` with a volume group, a TPM and two accounts) and
+      the kickstart lab (`make vm`, `make vm-log`), each in its own inventory
+      (docs/LAB.md, *Two labs on one workstation*). Every 6b defect was
+      reproduced and its fix proven here. The syslog-ng receiver is 6.2a's.

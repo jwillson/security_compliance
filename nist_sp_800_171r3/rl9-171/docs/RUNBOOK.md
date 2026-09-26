@@ -263,7 +263,9 @@ On the host:
 
 | Path | What |
 |---|---|
-| `/etc/nist-800-171/system-security-plan.md` | SSP generated from live state (03.15.02) |
+| `/etc/nist-800-171/system-security-plan.md` | SSP, regenerated on every apply and assessment; your sections spliced in (03.15.02) |
+| `/etc/nist-800-171/ssp.d/` | The SSP sections you write — never overwritten (see *Writing the SSP and working the POA&M*) |
+| `/etc/nist-800-171/poam.csv` | The POA&M register, merged after every assessment; your columns carried forward (03.12.02) |
 | `/etc/nist-800-171/organizational-requirements.md` | Everything the host cannot enforce, with the ODP values committed to |
 | `/etc/nist-800-171/component-inventory.json` | Component inventory (03.04.10) |
 | `/etc/nist-800-171/overlay-version` | Which overlay version is applied |
@@ -272,7 +274,7 @@ On the host:
 | `/etc/nist-800-171/authorized-ports.d/` | Authorized listening ports, one fragment per role. The port checks subtract this; a port opened by hand and not declared here is a finding |
 | `/etc/nist-800-171/log-collector-status` | On a collector: port, record directory, retention |
 | `/var/log/nist-800-171/assessment-latest.json` | Most recent on-host assessment |
-| `/var/log/nist-800-171/poam-*.csv` | POA&M generated from failed checks (03.12.02) |
+| `/var/log/nist-800-171/poam-*.csv` | Dated snapshots of the register, for the record |
 | `/var/log/nist-800-171/oscap-report-*.html` | Vulnerability scan output |
 | `/var/log/nist-800-171/security-advisories-*.txt` | Advisories (03.14.03) |
 
@@ -350,10 +352,51 @@ FAIL  03.13.11  Cryptographic Protection
      cannot reach its repositories, a firewalld that is not running); do not
      add the status to `ok_rc` unless it genuinely means "nothing found".
 3. **Re-verify the one requirement:** `./verify.sh --requirement 03.13.11`
-4. **Record what you could not fix.** `sudo nist-generate-poam` turns failed
-   checks into a POA&M in `/var/log/nist-800-171/`.
+4. **Record what you could not fix.** It already is: every failing
+   requirement is an item in the POA&M register after the next scheduled
+   assessment (or `sudo nist-generate-poam` now). Fill in its plan — below.
 
 ---
+
+## Writing the SSP and working the POA&M
+
+Both plans are regenerated from the host — on every apply and after every
+scheduled assessment — and both keep what you write. (They used to rewrite
+themselves from scratch, destroying it: DEFECTS 6.6.)
+
+**The SSP's three sections only you can write** go in `/etc/nist-800-171/ssp.d/`
+on the host, as Markdown; the plan splices them in and its first table says
+which are written and when:
+
+| File | Section | What an assessor looks for |
+|---|---|---|
+| `02-information-types.md` | 2. Information types | The CUI categories this system processes, stores and transmits, by NARA CUI Registry category and marking, and which of the three for each. (The CUI *locations* are generated.) |
+| `03-threats.md` | 3. Threats of concern | Threats specific to this system, not a generic list — e.g. credential theft against its few administrators, supply chain through its package repositories, insider misuse of `cuiusers`, loss of the hardware, tampering with the audit trail — and where each comes from (ATT&CK technique IDs, CISA advisories). |
+| `07-roles.md` | 7. Roles and responsibilities | Who holds each role — System Owner (accepts residual risk, approves the plan), System Administrator, Audit Administrator, ISSO. One person holding all of them is fine; say so. A Markdown table works. |
+
+To keep them under version control, put them in a repository of your own —
+not this public one — and set `NIST_SSP_DIR` to that directory: each apply
+installs them, replacing the host's copies. Without it, edit on the host.
+
+**The POA&M register** is `/etc/nist-800-171/poam.csv`, root-only. Each row is
+an item:
+
+- `deviation` — a requirement the host fails; the weakness is the failed
+  checks. It closes itself, with the date, when the requirement passes; if it
+  fails again later that is a new item.
+- `residual` — a partial requirement's organizational obligation (the
+  overlay's residual). The host can never evidence it, so **you** close it:
+  set `Status` to `Closed` and say why in `Closure` (the procedure exists, the
+  training was delivered, ...). It is not reopened.
+- `Risk Accepted` — for either kind, when the System Owner accepts the risk
+  instead; say who and until when in `Owner Notes`.
+
+Your columns — `Scheduled Completion`, `Responsible Party`, `Resources
+Required`, `Milestones`, `Owner Notes` — and your `Status` / `Closure`
+changes are carried forward on every merge. Edit with anything that keeps it
+a CSV (`sudo -e /etc/nist-800-171/poam.csv`). `ca-02-poam-register` fails if
+a failing requirement has no active item. Purely organizational requirements
+are not items; their register is `organizational-requirements.md`.
 
 ## Changing policy
 

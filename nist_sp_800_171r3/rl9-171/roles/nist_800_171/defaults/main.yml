@@ -37,6 +37,14 @@ nist_log_collector: ""
 # back to plaintext on its own.
 nist_log_tls: true
 nist_pki_dir: "{{ lookup('env', 'NIST_PKI_DIR') or (playbook_dir + '/.secrets/pki') }}"
+
+# 03.15.02: the SSP sections only the owner can write - 02-information-types.md,
+# 03-threats.md, 07-roles.md - live on the host in {{ nist_conf_dir }}/ssp.d/
+# and are spliced into the plan on every regeneration. Set NIST_SSP_DIR to a
+# directory holding those files on the control workstation (the owner's own,
+# private repository - never this one) and each apply installs them, replacing
+# the host's copies; unset, the host's ssp.d/ is left alone.
+nist_ssp_dir: "{{ lookup('env', 'NIST_SSP_DIR') }}"
 # The name the collector's certificate carries (CN and SAN), which the
 # forwarder checks against the peer it is talking to. Defaults to the
 # inventory name of the log_hosts member.

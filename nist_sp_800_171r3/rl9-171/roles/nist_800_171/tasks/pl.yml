@@ -13,7 +13,27 @@
     mode: "0750"
   tags: ["03.15.02"]
 
-- name: "03.15.02 | Generate the machine-derivable portions of the SSP"
+- name: "03.15.02 | Create the directory for the owner's SSP sections"
+  ansible.builtin.file:
+    path: "{{ nist_conf_dir }}/ssp.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  tags: ["03.15.02"]
+
+- name: "03.15.02 | Install the owner's SSP sections from NIST_SSP_DIR"
+  ansible.builtin.copy:
+    src: "{{ nist_ssp_dir }}/{{ item }}"
+    dest: "{{ nist_conf_dir }}/ssp.d/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: [02-information-types.md, 03-threats.md, 07-roles.md]
+  when: nist_ssp_dir | length > 0 and (nist_ssp_dir ~ '/' ~ item) is file
+  tags: ["03.15.02"]
+
+- name: "03.15.02 | Generate the SSP"
   # A regenerated document, not a configuration change - see the note on the
   # inventory generator in cm.yml.
   ansible.builtin.command:

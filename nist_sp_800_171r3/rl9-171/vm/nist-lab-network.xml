@@ -1,10 +1,14 @@
 <!--
   Isolated NAT network for the NIST 800-171r3 CUI lab.
 
-  Uses bridge virbr17, which the host's ufw policy already permits
-  ("nist-lab qemu guests"). Keeping the CUI VM off the shared `default`
-  network also matches 03.13.01 (boundary protection): lab traffic is
-  separated from whatever else uses the default bridge.
+  Uses bridge virbr17. Guest-to-guest traffic (forwarding to the collector)
+  crosses the bridge and never the workstation's INPUT chain, and NAT out is
+  routed, so no host firewall rule is needed. One workstation's ufw happens to
+  allow the bridge ("nist-lab qemu guests"); the laptop's does not, and the
+  lab works on both. A rule would be needed only to make the workstation
+  itself a receiver on this network. Keeping the CUI VM off the shared
+  `default` network also matches 03.13.01 (boundary protection): lab traffic
+  is separated from whatever else uses the default bridge.
 -->
 <network>
   <name>nist-lab</name>

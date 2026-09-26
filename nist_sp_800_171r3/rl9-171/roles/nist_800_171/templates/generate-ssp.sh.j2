@@ -1,12 +1,33 @@
 #!/usr/bin/env bash
-# 03.15.02  Generate the machine-derivable portions of the System Security Plan.
+# 03.15.02  Generate the System Security Plan.
 #
-# Everything here is read from the running host, so the SSP describes what is
-# actually deployed rather than what someone believed was deployed. The
-# narrative sections (threats, roles, approval) remain the system owner's.
+# The machine-derivable sections are read from the running host, so the SSP
+# describes what is actually deployed rather than what someone believed was
+# deployed. The narrative sections - information types, threats, roles - are
+# the system owner's, written in {{ nist_conf_dir }}/ssp.d/ and spliced in on
+# every run: this script used to rewrite the whole file, so anything authored
+# into it was lost at the next apply or assessment (DEFECTS 6.6). It runs on
+# every apply and after every scheduled assessment.
 set -uo pipefail
 OUT="{{ nist_conf_dir }}/system-security-plan.md"
 INV="{{ nist_conf_dir }}/component-inventory.json"
+SSPD="{{ nist_conf_dir }}/ssp.d"
+
+# authored FILE -> the owner's text, or nothing.
+authored() { [ -s "$SSPD/$1" ] && cat "$SSPD/$1"; }
+# status FILE -> "authored YYYY-MM-DD" or "not yet written".
+status() {
+  if [ -s "$SSPD/$1" ]; then echo "authored $(date -u -r "$SSPD/$1" +%Y-%m-%d)"
+  else echo "**not yet written**"; fi
+}
+# placeholder FILE WHAT -> where the owner writes this section.
+placeholder() {
+  cat <<EOF
+> **AUTHOR:** $2 Write it in \`$SSPD/$1\` (Markdown); it is spliced in here on
+> every regeneration and never overwritten. 03.15.02 stays partially satisfied
+> until it is.
+EOF
+}
 
 {
 cat <<HEADER
@@ -18,8 +39,14 @@ cat <<HEADER
 **Generated:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 > Sections marked GENERATED are derived from the running system and are
-> refreshed whenever this script runs. Sections marked AUTHOR must be completed
-> by the system owner; 03.15.02 is only partially satisfied until they are.
+> refreshed whenever this plan is regenerated. Sections marked AUTHOR are the
+> system owner's, kept in \`$SSPD/\`.
+
+| Authored section | File | Status |
+|---|---|---|
+| 2. Information types | \`ssp.d/02-information-types.md\` | $(status 02-information-types.md) |
+| 3. Threats of concern | \`ssp.d/03-threats.md\` | $(status 03-threats.md) |
+| 7. Roles and responsibilities | \`ssp.d/07-roles.md\` | $(status 07-roles.md) |
 
 ## 1. Constituent system components (GENERATED - 03.15.02a.1)
 
@@ -37,12 +64,25 @@ Full component inventory: \`$INV\` (03.04.10).
 
 ## 2. Information types (AUTHOR - 03.15.02a.2)
 
-Identify the CUI categories this system processes, stores, and transmits.
-CUI is stored at the locations recorded in \`{{ nist_conf_dir }}/cui-locations\`:
+HEADER
+
+authored 02-information-types.md || placeholder 02-information-types.md \
+  "Identify the CUI categories this system processes, stores and transmits, by NARA CUI Registry category and marking."
+
+cat <<LOCATIONS
+
+CUI is stored at the locations recorded in \`{{ nist_conf_dir }}/cui-locations\` (GENERATED):
 
 $(sed 's/^/    /' {{ nist_conf_dir }}/cui-locations 2>/dev/null || echo "    (not yet recorded)")
 
 ## 3. Threats of concern (AUTHOR - 03.15.02a.3)
+
+LOCATIONS
+
+authored 03-threats.md || placeholder 03-threats.md \
+  "Name the threats this system must withstand, specific to it, and cite where each comes from."
+
+cat <<GENERATED
 
 ## 4. Operational environment and connections (GENERATED - 03.15.02a.4)
 
@@ -64,7 +104,7 @@ The applicability of each is recorded in the overlay at
 
 Latest assessment result:
 
-HEADER
+GENERATED
 
 if [ -f "{{ nist_report_dir }}/assessment-latest.json" ]; then
   python3 - <<'PY'
@@ -72,15 +112,17 @@ import json
 try:
     d = json.load(open("{{ nist_report_dir }}/assessment-latest.json"))
     s = d.get("summary", {})
-    print(f"| Result | Count |")
-    print(f"|---|---|")
+    print(f"Assessed {d.get('assessment', {}).get('assessed_at', '?')}.\n")
+    print("| Result | Count |")
+    print("|---|---|")
     for k in ("pass", "fail", "error", "not_applicable", "manual"):
         if k in s:
             print(f"| {k.replace('_',' ').title()} | {s[k]} |")
     print()
     fails = [r for r in d.get("requirements", []) if r.get("status") == "FAIL"]
     if fails:
-        print("Requirements not currently satisfied:\n")
+        print("Requirements not currently satisfied (each is a POA&M item, "
+              "`{{ nist_conf_dir }}/poam.csv`):\n")
         for r in fails:
             print(f"- **{r['id']}** {r.get('title','')}")
 except Exception as e:
@@ -90,9 +132,14 @@ else
   echo "_No assessment has been run yet. Run \`nist-assess\` to populate this section._"
 fi
 
-cat <<'FOOTER'
+cat <<'ROLES'
 
 ## 7. Roles and responsibilities (AUTHOR - 03.15.02a.7)
+
+ROLES
+
+authored 07-roles.md || { placeholder 07-roles.md \
+  "Name who holds each role. The System Owner accepts residual risk and approves this plan; if one person holds every role, say so."; cat <<'TABLE'
 
 | Role | Individual | Responsibility |
 |---|---|---|
@@ -100,14 +147,21 @@ cat <<'FOOTER'
 | System Administrator | | Applies and maintains the overlay |
 | Audit Administrator | | Reviews audit records (03.03.05) |
 | ISSO | | Assesses requirements (03.12.01); maintains POA&M (03.12.02) |
+TABLE
+}
+
+cat <<'FOOTER'
 
 ## 8. Organizational requirements (GENERATED)
 
 The requirements this host cannot enforce are enumerated in
 `organizational-requirements.md` in this directory. Each requires a documented
 organizational control before the system may be authorized to process CUI.
+The residual obligations of the partially satisfied requirements are tracked
+as items in the POA&M register, `poam.csv`.
 FOOTER
-} > "$OUT"
+} > "$OUT.new"
 
-chmod 0600 "$OUT"
+chmod 0600 "$OUT.new"
+mv -f "$OUT.new" "$OUT"
 echo "wrote $OUT"

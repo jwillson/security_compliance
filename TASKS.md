@@ -59,8 +59,8 @@ is believed.
 - [x] **R1 No known false PASS.** *Met 2026-09-26:* 6b.2–6b.6 fixed and
       proven, 6b.5 by the owner's choice (TPM), each with its check changed
       first so it failed on the defect (DEFECTS.md Phase 6b).
-- [ ] **R2 No data loss in what the tool generates.** 6.6: the SSP and POA&M
-      generators must keep what the owner authors.
+- [x] **R2 No data loss in what the tool generates.** *Met 2026-09-26* (6.6):
+      the SSP and the POA&M keep what the owner writes, proven by rehearsal.
 - [ ] **R3 A full lab cycle green on the release commit.** Both labs — the
       kickstart pair (other workstation) and the BYO pair — through apply →
       reboot → apply → verify, `--check` at `changed=0`, with a second
@@ -175,78 +175,21 @@ were found by the cloud review of 2026-09-25 and by cycling the labs.
 
 ## Open — the system owner's authoring
 
-- [ ] **6.3 Author the three SSP sections no host can fill.**
-      `sudo nist-generate-ssp` writes 92 lines; sections 1, 4, 5, 6 and 8 are
-      generated from live state and refresh on every run. Three are marked
-      AUTHOR and are empty:
-      * **§2 Information types** — the CUI categories this system processes,
-        stores and transmits, by NARA registry category and marking.
-        Populating `/etc/nist-800-171/cui-locations` feeds the section's
-        location list automatically; naming the categories is prose.
-      * **§3 Threats of concern** — system-specific, not a generic list:
-        credential theft against the single admin account, supply chain via
-        the dnf repositories (where the 4.2 EPEL decision earns its place),
-        insider misuse of `cuiusers`, physical loss of the host, audit-trail
-        tampering. Cite a derivation an assessor can follow.
-      * **§7 Roles and responsibilities** — four rows; System Owner is the one
-        that matters, as the party who accepts residual risk and approves the
-        plan. If every role is the same person, state that rather than leaving
-        rows blank.
-      *Read 6.6 first:* authoring into the generated file destroys the work.
+- [ ] **6.3 Author the three SSP sections no host can fill.** Write
+      `02-information-types.md`, `03-threats.md` and `07-roles.md` in
+      `/etc/nist-800-171/ssp.d/` on each host, or keep them in a private
+      repository of your own and set `NIST_SSP_DIR` (RUNBOOK, *Writing the SSP
+      and working the POA&M*, says what an assessor looks for in each). They
+      are spliced into the plan on every regeneration and never overwritten
+      (6.6); the plan's first table says which are still unwritten.
 
-- [ ] **6.4 Complete the POA&M.** `sudo nist-generate-poam` reads the timer's
-      `assessment-latest.json` and wrote 5 open items on `byo-rl9-01`, one per
-      failing requirement (03.01.18, 03.04.06, 03.08.03, 03.08.09, 03.13.08 —
-      the retrofit limits of 2.2), with First Observed set and Scheduled
-      Completion, Responsible Party, Resources Required and Milestones empty
-      for the owner. `poam-first-observed.json` preserves the observation date
-      across runs and drops an item once it stops failing.
-      *Read 6.6 and 6.7 first:* the columns you fill are not carried forward,
-      and the 32 partial residuals and 28 organizational requirements are
-      absent from the file.
-      Run the generators by full path (`/usr/local/sbin/nist-generate-poam`)
-      from automation; a login shell's PATH finds them by name.
+- [ ] **6.4 Work the POA&M.** `/etc/nist-800-171/poam.csv` holds every
+      deviation and every partial requirement's residual, merged after each
+      assessment. Fill `Scheduled Completion`, `Responsible Party`,
+      `Resources Required`, `Milestones` for the open items; close residuals
+      with evidence, or mark them `Risk Accepted` (RUNBOOK). Your entries are
+      carried forward on every run.
 
----
-
-## Open — defects found while working out 6.3 and 6.4
-
-- [ ] **6.6 Both generators destroy authored content.** `generate-ssp.sh`
-      writes with a truncating redirect (`} > "$OUT"`), so every word authored
-      into sections 2, 3 and 7 of `system-security-plan.md` is lost the next
-      time the script runs — and 03.15.02 is only satisfied once those
-      sections exist, so the tool destroys the evidence for the requirement it
-      generates. `generate-poam.sh` has the sibling problem: it writes a new
-      `poam-$(date).csv` per run, so management's columns are not carried into
-      the next one. Fix: an include directory both scripts read and splice
-      (`{{ nist_conf_dir }}/ssp.d/`, and a stable POA&M keyed on POAM ID that
-      merges the owner's columns by ID).
-      *Until this is fixed, author the prose anywhere but those two files.*
-
-- [ ] **6.7 The POA&M omits the obligations that are not FAILs.**
-      `generate-poam.sh` opens an item only for `FAIL` or `ERROR`, so the
-      32 partial requirements' residual obligations and the 28 purely
-      organizational ones never appear — they live only in
-      `organizational-requirements.md`. An assessor will expect them tracked.
-      Either emit them as rows with a disposition that distinguishes them
-      from host findings, or state in the SSP that the register serves that
-      purpose. This is a decision before it is a change.
-
-- [ ] **5.5 `vm/nist-lab-network.xml` claims a ufw rule this host lacks.** The
-      comment says the host's ufw policy "already permits nist-lab qemu
-      guests". On this laptop `ufw status` shows rules for `virbr0` and
-      `virbr-k8s` and none for `virbr17`, with default incoming deny. Guest to
-      guest traffic crosses the bridge and never the host INPUT chain, so the
-      lab works and nothing is broken — but the comment describes the other
-      workstation, and it will mislead whoever first tries to make the host
-      itself a receiver. Correct the comment, or add the rule it describes.
-
-- [x] **5.6 Make every open defect testable on the laptop lab.** *Done
-      2026-09-26:* the laptop runs both labs — the BYO guests (`vm/byo-guest.sh`,
-      including `byo-rl9-02` with a volume group, a TPM and two accounts) and
-      the kickstart lab (`make vm`, `make vm-log`), each in its own inventory
-      (docs/LAB.md, *Two labs on one workstation*). Every 6b defect was
-      reproduced and its fix proven here. The syslog-ng receiver is 6.2a's.
 ---
 
 ## Standing caveat
