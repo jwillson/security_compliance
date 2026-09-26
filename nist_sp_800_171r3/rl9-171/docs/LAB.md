@@ -119,6 +119,12 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   cancelled or abandoned prompt included — is a faillock failure, three of
   which lock the account for 900 s over SSH and console alike. `tools/console.py`
   sends CR, waits for each prompt, and stops at the first refusal.
+- **A passphrase prompt at boot is not a TPM failure.** systemd shows the
+  prompt for each CUI volume on every boot while `clevis-luks-askpass`
+  answers it from the TPM; a script that answers what it sees cannot tell a
+  refused TPM from a working one. Judge by whether the login prompt arrives
+  with nobody answering (the CUI mounts gate boot). And `findmnt` given two
+  paths reads them as a source and a target and matches nothing.
 - **A throwaway sshd cannot open a session on a hardened guest.** Testing
   sshd options in isolation with `sshd -i` (inetd mode, no port) fails after
   authentication with "A valid context for byoadmin could not be obtained":
@@ -139,6 +145,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind TASKS 6b.2–6b.6; run it before and after a fix and diff. |
+| `tools/rehearse-pcr7-recovery.py HOST` | The RUNBOOK's recovery when the TPM stops releasing the LUKS keys, for real: starts the guest with no Secure Boot keys (PCR 7 changes), checks the boot waits for the passphrase, types it, then verify reports the stale binding, the role reseals, verify passes, and the next boot unlocks alone. PCR 7 and the TPM event log are saved per boot under `reports/runs/`. Reverts to `hardened` at the end. |
 | `tools/rehearse-grub-edit.py HOST` | 03.10.07 by behaviour: reboots with the console attached, catches the one-second GRUB menu, presses `e`, and checks a username is demanded, a wrong password refused, the right one accepted, and the default entry still boots unattended. The edited entry is never booted. |
 | `tools/ssh-idle-test.sh HOST [LIMIT]` | Behaviour, not configuration: opens an SSH session running a silent `sleep` and measures when sshd closes it (03.01.11 / 03.13.09; TMOUT cannot end it). Takes the idle limit plus up to 90 s. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |

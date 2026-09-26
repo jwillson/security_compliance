@@ -120,11 +120,16 @@
     - name: "03.08.09 | Read the state of the encrypted volumes"
       ansible.builtin.shell:
         cmd: |
+          # "bound" only if the TPM releases the key now: a binding made
+          # before a firmware or Secure Boot update changed PCR 7 is still
+          # listed, but the TPM refuses it - "stale", and repaired below.
           for lv in lv_cui lv_backup; do
             dev=/dev/{{ nist_vg_name }}/$lv
+            slot=$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '/tpm2/ {print $1; exit}')
             if ! cryptsetup isLuks "$dev" 2>/dev/null; then echo "$lv=unformatted"
-            elif clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then echo "$lv=bound"
-            else echo "$lv=unbound"; fi
+            elif [ -z "$slot" ]; then echo "$lv=unbound"
+            elif clevis luks pass -d "$dev" -s "$slot" >/dev/null 2>&1; then echo "$lv=bound"
+            else echo "$lv=stale"; fi
           done
         executable: /bin/bash
       register: nist_luks_state
@@ -220,17 +225,25 @@
       # clevis prompted for the passphrase, failed without a terminal, and
       # failed_when: false hid it on every host (DEFECTS 6b.5). A failed bind
       # now fails the task.
+      # A stale binding (the TPM refuses it since PCR 7 changed) is resealed
+      # to the current state with `clevis luks regen`, the passphrase on
+      # stdin - so after a firmware update, recovery is the passphrase at the
+      # console once, then this task (RUNBOOK, "When you are locked out").
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           dev=/dev/{{ nist_vg_name }}/{{ item }}
-          if clevis luks list -d "$dev" 2>/dev/null | grep -q tpm2; then
+          slot=$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '/tpm2/ {print $1; exit}')
+          if [ -n "$slot" ] && clevis luks pass -d "$dev" -s "$slot" >/dev/null 2>&1; then
             echo "already-bound"
-            exit 0
+          elif [ -n "$slot" ]; then
+            clevis luks regen -q -d "$dev" -s "$slot" < /root/.luks-key > /dev/null
+            echo "resealed"
+          else
+            clevis luks bind -y -k /root/.luks-key \
+              -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' < /dev/null
+            echo "bound"
           fi
-          clevis luks bind -y -k /root/.luks-key \
-            -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' < /dev/null
-          echo "bound"
         executable: /bin/bash
       loop: [lv_cui, lv_backup]
       register: nist_clevis
@@ -245,7 +258,7 @@
         nist_luks_tpm_ok: >-
           {{ nist_tpm_dev.stat.exists and (nist_luks_all_bound or
              (nist_clevis.results | default([]) | selectattr('stdout', 'defined')
-              | map(attribute='stdout') | select('search', 'bound$')
+              | map(attribute='stdout') | select('search', '(bound|resealed)$')
               | list | length == 2)) }}
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 

@@ -295,10 +295,19 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       reboot unlocked and mounted both volumes from the TPM alone in 41 s
       (`clevis-luks-askpass` → `systemd-cryptsetup@cui_*`); 03.13.08 PASS,
       03.08.09 / 03.01.18 / 03.08.03 PART, 0 checks failed.
-      *Still to do:* rehearse the recovery row the RUNBOOK now has (PCR 7
-      changed → passphrase at the console → `clevis luks regen`); and the
-      kickstart lab has no TPM, so its hosts will fail both new checks until
-      `vm/build-vm.sh` gives them one (R3).
+      *Recovery rehearsed 2026-09-26* (`tools/rehearse-pcr7-recovery.py`):
+      Secure Boot off changed PCR 7; the boot waited for the passphrase; then
+      `verify.sh` reported the stale binding, `apply.sh --tags 03.08.09`
+      resealed, verify passed and the next boot unlocked alone. That meant
+      two more changes first: a binding the TPM refuses is not "bound" — the
+      check now asks the TPM (`clevis luks pass`) and the role reseals a
+      stale one with `clevis luks regen` (mechanics proven on a PCR 16 loop
+      image, `tools/probes/clevis-stale-experiment.sh`). The rehearsal also
+      disproved two of my own assumptions: PCR 7 does not differ between the
+      first and later boots (event logs identical), and a passphrase prompt
+      at boot is shown even when the TPM answers it.
+      *Still to do:* the kickstart lab has no TPM, so its hosts will fail
+      both new checks until `vm/build-vm.sh` gives them one (R3).
       *The finding as recorded:* `mp.yml` stages `/root/.luks-key` and `crypttab` points at
       it; the kickstart's `lv_root` is plain xfs. The "key file" is
       `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk

@@ -1418,10 +1418,19 @@ checks:
     # Its bind had its options after the pin, so getopts never saw -k and the
     # bind failed on every host, silently (DEFECTS 6b.5). A host without a TPM
     # fails this: it has nowhere to seal the key.
+    # A binding that exists is not enough: after a firmware or Secure Boot
+    # update changes PCR 7, the binding is still listed but the TPM refuses
+    # it. `clevis luks pass` asks the TPM for the key (to /dev/null) - the
+    # effective state, not the header.
     command: |
       for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
-        clevis luks list -d "$d" 2>/dev/null | grep -q tpm2 || echo "not TPM-bound: $d"
+        slot=$(clevis luks list -d "$d" 2>/dev/null | awk -F: '/tpm2/ {print $1; exit}')
+        if [ -z "$slot" ]; then
+          echo "not TPM-bound: $d"
+        elif ! clevis luks pass -d "$d" -s "$slot" >/dev/null 2>&1; then
+          echo "stale binding - the TPM will not release the key: $d (slot $slot)"
+        fi
       done
     expect_empty: true
 
