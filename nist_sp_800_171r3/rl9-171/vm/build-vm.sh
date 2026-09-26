@@ -109,11 +109,15 @@ if [[ "$ISO" != "$IMAGE_DIR"/* ]]; then
   ISO="$STAGED"
 fi
 
-# UEFI firmware: locate OVMF wherever the distro puts it.
+# UEFI firmware: a presence check only - `virt-install --boot uefi` lets
+# libvirt pick the image from its firmware descriptors. Paths differ by
+# distro; Ubuntu ships only the 4 MB build (OVMF_CODE_4M.fd), which the list
+# lacked until the kickstart lab was first built on an Ubuntu workstation.
 OVMF=""
 for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd \
          /usr/share/edk2/ovmf/OVMF_CODE.fd \
          /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+         /usr/share/OVMF/OVMF_CODE_4M.fd \
          /usr/share/OVMF/OVMF_CODE.fd; do
   [[ -f "$c" ]] && { OVMF="$c"; break; }
 done

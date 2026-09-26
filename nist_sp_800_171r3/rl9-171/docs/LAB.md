@@ -4,7 +4,7 @@ Two labs prove this tool, and they answer different questions.
 
 | Lab | Built by | Proves | Where |
 | --- | --- | --- | --- |
-| **Kickstart** | `vm/build-vm.sh` (`make vm`, `make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. | The owner's older workstation, with `.secrets/`. |
+| **Kickstart** | `vm/build-vm.sh` (`make vm`, `make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. | Either workstation, with `.secrets/`: the owner's older one, and since 2026-09-26 the Ubuntu laptop too (`rl9-cui-01` .143, `rl9-log-01` .184, in `inventory/kickstart.yml`). |
 | **BYO** ("bring your own") | `vm/byo-guest.sh` | The portability claim: the role hardening a stock Rocky 9 host this toolkit did not build, driven from a control workstation with no `.secrets/`. | The owner's Ubuntu laptop. |
 
 Both run on libvirt (`qemu:///system`) on the isolated NAT network `nist-lab`
@@ -27,7 +27,7 @@ sourced by `apply.sh`, `verify.sh` and the tools, exports it as
 | Lab | Inventory | Shell | Secrets from |
 | --- | --- | --- | --- |
 | BYO | `inventory/hosts.yml` (the default) | `source ~/.local/share/nist-byo-lab/env.sh` | the environment that `env.sh` sets |
-| Kickstart | `inventory/kickstart.yml` | a **fresh** shell: `export NIST_INVENTORY=inventory/kickstart.yml` | `.secrets/` |
+| Kickstart | `inventory/kickstart.yml` | a **fresh** shell: `source ~/.local/share/nist-byo-lab/tools.sh` (the ansible tooling alone, no secrets), then `export NIST_INVENTORY=inventory/kickstart.yml` | `.secrets/` |
 
 The helper reads the connection kind from the inventory itself — `lab` if the
 hosts use the `.secrets/` key, `byo` otherwise — and from it `lib/ssh-env.sh`
@@ -104,7 +104,8 @@ it is ever committed.
 
 | Path | What |
 | --- | --- |
-| `env.sh` | Source before `apply.sh` / `verify.sh`: the ansible venv, `NIST_BECOME_PASSWORD`, `NIST_GRUB_PASSWORD`, `SSH_ASKPASS` (the second factor once 03.05.03 applies), `NIST_PKI_DIR`. |
+| `tools.sh` | The ansible venv and collections on `PATH`, and nothing else — what a kickstart-lab shell sources. |
+| `env.sh` | Source before `apply.sh` / `verify.sh` for the BYO lab (it sources `tools.sh`): the ansible venv, `NIST_BECOME_PASSWORD`, `NIST_GRUB_PASSWORD`, `SSH_ASKPASS` (the second factor once 03.05.03 applies), `NIST_PKI_DIR`. |
 | `byoadmin_password` | `byoadmin`'s password on every BYO guest: sudo, and the SSH second factor. |
 | `grub_password`, `luks_passphrase` | What the role is given for 03.10.07 and 03.08.09. |
 | `pki/` | The lab CA and one certificate per host (`tools/lab-pki.sh`). |
@@ -164,6 +165,14 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   pam_selinux refuses a session from an sshd not running in `sshd_t`, and
   policy does not allow starting one there. Test the real sshd by behaviour
   instead (`tools/ssh-idle-test.sh`), and read OpenSSH's source for mechanism.
+- **`build-vm.sh` on Ubuntu.** Its firmware presence check knew only the
+  Fedora/RHEL paths; Ubuntu ships `/usr/share/OVMF/OVMF_CODE_4M.fd`. Found by
+  the first kickstart build on the laptop.
+- **A tool that runs `ansible` itself must source `lib/ssh-env.sh`**, not
+  just the inventory helper: once 03.05.03 is applied every connection needs
+  the second factor, which for the kickstart lab only `ssh-env.sh` supplies,
+  and a newly built host's key must be seeded into `.secrets/known_hosts`
+  first. `harden-cycle.sh`, `probe.sh` and `stage-pending-kernel.sh` do.
 - **A silent firmware delay.** Without a boot order the firmware tried other
   devices first and the kernel started ~10 minutes after the domain did.
   `byo-guest.sh` puts `hd` first, and logs the serial console to

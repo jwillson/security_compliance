@@ -22,7 +22,12 @@ script="$HERE/probes/$probe.sh"
 [[ -f "$script" ]] || { echo "error: no probe $script" >&2; exit 2; }
 
 cd "$ROOT"
-. lib/inventory-env.sh || exit 2
+# ssh-env, not just inventory-env: this script runs ansible itself (probes,
+# the reboot), and once 03.05.03 is applied every connection needs the second
+# factor - for a lab inventory only ssh-env supplies it - and a host key
+# already known (a kickstart host is new until seeded).
+. lib/ssh-env.sh || exit 2
+nist_seed_known_hosts
 # The script module copies the probe to the host and runs it; -b for root.
 ansible "$pattern" -b -m ansible.builtin.script -a "$script" -o 2>/dev/null \
   | python3 -c '

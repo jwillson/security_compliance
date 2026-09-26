@@ -34,6 +34,7 @@ never been applied.
 | `byo-rl9-02`, first cycle, 2026-09-25 (`tools/harden-cycle.sh`) | **35/31/3/28**, 6 checks failed: 03.01.01 and 03.05.12 (6b.4 — the checks catch it) and 03.04.06 (no separate `/tmp`, the retrofit limit). Dry run, apply, reboot, apply, then `changed=0`. The LUKS requirements PASS with the key in cleartext beside the volumes (6b.5), and 03.10.07 PASSes with no GRUB password (6b.2) |
 | `byo-rl9-02`, from `fresh` at `f96ae2b` (6b.2, 6b.3, 6b.4, 6b.6 fixed) | **35/33/1/28**, 2 checks failed — both 03.04.06, the retrofit limit (no separate `/tmp`). Dry run on the stock host `failed=0`, reboot unattended, then `changed=0`. The before/after evidence shows each fix; 6b.5 (LUKS key placement, TPM bind) is unchanged and still passes checks it should not |
 | `byo-rl9-02`, from `fresh` at `07fb042` (all of 6b fixed) | **35/33/1/28**, 344 checks run, 2 failed — both 03.04.06, the retrofit limit. First-time LUKS path: key staged, volumes formatted and bound to the TPM, key deleted, and the first reboot unlocked them from the TPM alone (42 s). Then `changed=0` |
+| **Kickstart lab on the laptop**, 2026-09-26, every 6b fix (`make vm`, `make vm-log`, `make pki`, `harden-cycle.sh`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28**, 344 checks, **0 failed** on both, both idempotent. The CUI volumes are sealed to the TPM (crypttab `none`, both `tpm2`) — the first kickstart host the role ever sealed; the collector holds 121,650 auditd records from `rl9-cui-01`, none copied to its syslog |
 | BYO pair with every 6b fix, 2026-09-26 (`harden-cycle.sh`) | `byo-rl9-01` and `byo-log-01` 32/30/7/28: the five retrofit limits, plus `sa-02` / `si-01` from a kernel reboot the apply did not report (6b.10, since fixed and proven on `byo-rl9-02`). `byo-log-01` also found 6b.9 |
 | `byo-rl9-01`, same afternoon | 32/30/7/28 — the role's update timer installed 13 of the 21 advisories and a new kernel by itself; `sa-02-kernel-current` then fails 03.16.02 until a reboot. The timer working, and the assessor saying a reboot is owed |
 
@@ -310,8 +311,9 @@ as one PR, one commit per defect; 6b.5 needs an owner decision first.
       *Correction (2026-09-26):* an earlier note here said the kickstart lab
       has no TPM. It has had one since the first commit (`vm/build-vm.sh`,
       `--tpm ... model=tpm-crb`, `9009b90`) — so every kickstart host had a
-      TPM and the silent bind is the only reason none was ever sealed. *Still
-      to do:* prove the fixed role there with a kickstart build (R3).
+      TPM and the silent bind is the only reason none was ever sealed.
+      *Proven 2026-09-26:* the kickstart lab, built on the laptop, seals both
+      volumes to the TPM and passes 03.08.09 / 03.13.08 with 0 checks failed.
       *The finding as recorded:* `mp.yml` stages `/root/.luks-key` and `crypttab` points at
       it; the kickstart's `lv_root` is plain xfs. The "key file" is
       `nist_luks_passphrase` itself, in plaintext. Anyone holding the disk

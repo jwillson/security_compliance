@@ -29,7 +29,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 cd "$ROOT"
-. lib/inventory-env.sh || exit 2
+# ssh-env, not just inventory-env: this script runs ansible itself (probes,
+# the reboot), and once 03.05.03 is applied every connection needs the second
+# factor - for a lab inventory only ssh-env supplies it - and a host key
+# already known (a kickstart host is new until seeded).
+. lib/ssh-env.sh || exit 2
+nist_seed_known_hosts
 
 host=${1:-}; shift || true
 snapshot="" probe=1

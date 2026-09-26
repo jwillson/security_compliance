@@ -46,11 +46,15 @@ except Exception:
 hv = d.get("_meta", {}).get("hostvars", {})
 for h in d.get("cui_hosts", {}).get("hosts", []):
     v = hv.get(h, {})
-    m = re.search(r"UserKnownHostsFile=(\S+)", str(v.get("ansible_ssh_common_args", "")))
-    f = m.group(1).replace("{{ playbook_dir }}", os.environ["ROOT_DIR"]) if m \
-        else os.path.expanduser("~/.ssh/known_hosts")
-    print(f"{v.get(\"ansible_host\", h)}\t{f}")
-' 2>/dev/null
+    # The inventory holds the unrendered template, spaces included, so it is
+    # rendered before the path is read.
+    args = str(v.get("ansible_ssh_common_args", "")).replace("{{ playbook_dir }}", os.environ["ROOT_DIR"])
+    m = re.search(r"UserKnownHostsFile=(\S+)", args)
+    f = m.group(1) if m else os.path.expanduser("~/.ssh/known_hosts")
+    addr = v.get("ansible_host", h)
+    print(f"{addr}\t{f}")
+'
+
 }
 
 # Record the host key of every inventory host that is not already known.
