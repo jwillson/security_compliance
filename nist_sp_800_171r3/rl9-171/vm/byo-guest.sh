@@ -202,10 +202,23 @@ cmd_build() {
   # lease holds it for another: the guest silently gets a different address
   # and the wait below times out. Deriving the MAC from the address avoids
   # this for rebuilds; a guest built any other way can still leave one.
-  local held
-  held=$("${VIRSH[@]}" net-dhcp-leases "$NET" | awk -v ip="$ip/24" -v mac="$mac" \
-           '$5 == ip && $3 != mac {print $3 " until " $1 " " $2}')
-  [[ -z "$held" ]] || die "$ip is leased to $held; wait for it to expire or pick another --ip"
+  # A lease held by a MAC that no defined guest has belongs to a guest that is
+  # gone (the hand-built byo-log-01 had a random MAC): wait out its expiry -
+  # at most the network's lease time, an hour - rather than stop. A lease held
+  # by a live guest is a real conflict.
+  local held owner
+  held_by() { "${VIRSH[@]}" net-dhcp-leases "$NET" | awk -v ip="$ip/24" -v mac="$mac" \
+                '$5 == ip && $3 != mac {print $3, $1 "T" $2}'; }
+  held=$(held_by)
+  if [[ -n "$held" ]]; then
+    owner=$(for d in $("${VIRSH[@]}" list --all --name); do
+              "${VIRSH[@]}" domiflist "$d" 2>/dev/null | grep -qi " ${held%% *}\$" && echo "$d"
+            done)
+    [[ -z "$owner" ]] || die "$ip is leased to ${held%% *} (guest $owner) until ${held#* }; pick another --ip"
+    say "$ip is leased to ${held%% *}, a guest that no longer exists, until ${held#* }; waiting for it to expire"
+    local i; for i in $(seq 1 130); do [[ -z "$(held_by)" ]] && break; sleep 30; done
+    [[ -z "$(held_by)" ]] || die "the lease on $ip did not expire"
+  fi
 
   ensure_lab; ensure_base
   (( tpm )) && ensure_swtpm

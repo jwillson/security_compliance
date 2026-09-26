@@ -131,8 +131,13 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   applies.
 - **A pinned address handed to someone else.** dnsmasq will not give a pinned
   address to a new MAC while an unexpired lease holds it for another, and the
-  guest silently takes a different address. `byo-guest.sh` refuses to build
-  onto an address leased to a different MAC and says until when.
+  guest silently takes a different address. `byo-guest.sh` derives the MAC
+  from the address, so a rebuild keeps it. When a different MAC holds the
+  lease it refuses if a defined guest owns that MAC, and otherwise - a guest
+  already destroyed, like the hand-built `byo-log-01` with its random MAC -
+  waits out the expiry (at most the network's hour) and then builds.
+  (`dhcp_release` would free it at once; it is in `dnsmasq-utils`, which this
+  workstation does not have.)
 - **First boot is slow.** A login can authenticate and then stall until
   logind and cloud-init settle; `cloud-init status` is not readable by an
   unprivileged user. The wait polls `/var/lib/cloud/instance/boot-finished`
