@@ -1,0 +1,44 @@
+---
+# Imported at the start of both plays in site.yml: no host is changed unless
+# it is not the control workstation and is Rocky Linux 9. The workstation
+# test comes first: on a workstation that is itself Rocky 9 it is the only
+# one that refuses.
+
+- name: Refuse to harden the control workstation
+  # AGENTS.md: apply.sh changes the target, never the machine you write on.
+  # Nothing enforced that (issue #7): an inventory naming localhost, a
+  # loopback address or a local connection - or the workstation's own
+  # address - would have hardened the operator's machine (LUKS, GRUB, the
+  # firewall). The machine-id comparison catches the last case whatever the
+  # address; the controller's is read with errors ignored, as a controller
+  # need not have one. From the cloud review's branch, extended to the
+  # collector play, which it did not cover.
+  ansible.builtin.assert:
+    that:
+      - ansible_connection | default('ssh') != 'local'
+      - inventory_hostname not in ['localhost', '127.0.0.1', '::1']
+      - ansible_host | default(inventory_hostname) not in ['localhost', '127.0.0.1', '::1']
+      - not (ansible_host | default(inventory_hostname)) is match('^127\.')
+      - >-
+        (lookup('ansible.builtin.file', '/etc/machine-id', errors='ignore') | default('', true) | trim) == ''
+        or (lookup('ansible.builtin.file', '/etc/machine-id', errors='ignore') | trim)
+           != (ansible_facts['machine_id'] | default('') | trim)
+    fail_msg: >-
+      {{ inventory_hostname }} is the control workstation itself (local
+      connection, loopback address, or the same machine-id). Only a host you
+      intend to harden, or a throwaway Rocky 9 VM, may be a target.
+  tags: [always]
+
+- name: Confirm the target is Rocky Linux 9
+  # Rocky only (ODP-REVIEW I3, issue #7): the role and the checks still name
+  # Rocky's GPG key, release file, repository IDs and EFI path, and nothing
+  # has been run on RHEL. RHEL support is a task that needs a RHEL host.
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Rocky'
+      - ansible_facts['distribution_major_version'] == '9'
+    fail_msg: >-
+      This overlay targets Rocky Linux 9. Found
+      {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}.
+  tags: [always]

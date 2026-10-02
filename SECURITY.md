@@ -1,6 +1,6 @@
 # Security policy
 
-This repository hardens Rocky Linux 9 / RHEL 9 hosts that handle Controlled
+This repository hardens Rocky Linux 9 hosts that handle Controlled
 Unclassified Information, and assesses them against NIST SP 800-171r3. People
 act on what it reports, so a defect that makes it *say* a host is protected
 when it is not is treated as a vulnerability, not an ordinary bug.
@@ -13,7 +13,7 @@ request for anything in scope below until a fix is released.
 
 Include what you can of:
 
-- the commit or release you ran, and the Rocky / RHEL minor version of the host;
+- the commit or release you ran, and the Rocky Linux minor version of the host;
 - how to reproduce it — the command, the inventory shape (no real addresses
   or credentials), and what you expected;
 - the relevant lines of `./verify.sh` output or the assessment JSON, with host

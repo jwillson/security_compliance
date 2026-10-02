@@ -19,16 +19,8 @@
     - catalog/overlay-rocky9.yml
 
   pre_tasks:
-    - name: Confirm the target is Rocky Linux 9
-      ansible.builtin.assert:
-        that:
-          - ansible_facts['distribution'] == 'Rocky'
-          - ansible_facts['distribution_major_version'] == '9'
-        fail_msg: >-
-          This overlay targets Rocky Linux 9. Found
-          {{ ansible_facts['distribution'] }}
-          {{ ansible_facts['distribution_version'] }}.
-      tags: [always]
+    - name: Guard the target
+      ansible.builtin.import_tasks: guard-target.yml
 
     # The kickstart creates this directory in %post, so a host built by this
     # toolkit already has it and the task below used to succeed by accident.
@@ -114,6 +106,12 @@
 
   vars_files:
     - catalog/overlay-rocky9.yml
+
+  # The same guard as the first play: a host listed only in log_hosts is
+  # never seen by it (issue #7).
+  pre_tasks:
+    - name: Guard the target
+      ansible.builtin.import_tasks: guard-target.yml
 
   roles:
     - role: nist_log_collector

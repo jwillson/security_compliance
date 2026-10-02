@@ -102,7 +102,7 @@ TASKS.md says the repository went public, which it has not.
       assessment merged by hand closes what it never examined.
 - [x] #12 the last-change loop swallows `chage` failures; `--skip-tags
       03.01.01` breaks `ia.yml`.
-- [ ] #7 a workstation guard on both plays; the documents say Rocky (I3).
+- [x] #7 a workstation guard on both plays; the documents say Rocky (I3).
 
 - [ ] #11, the rest: LUKS passphrase rotation (`luksChangeKey`, a RUNBOOK
       procedure, per-host passphrases). Boot behaviour when the TPM refuses
@@ -118,7 +118,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) 7.10 and 7.11 (#13), 7.12 (#5).
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) 7.10 and 7.11 (#13), 7.12 (#5), 7.13 (#7).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed
@@ -326,6 +326,9 @@ Recorded so they do not get re-litigated:
   checks could not fail and 4 were inverted. `os/` and `stig/` were r2-tagged.
   Both worthwhile pieces were ported before removal.
 - Supporting distributions other than the RHEL 9 family. The overlay is
-  Rocky 9 specific by design and `site.yml` asserts it.
+  Rocky 9 specific by design and `site.yml` asserts it. RHEL 9 itself is
+  *planned* but not supported yet (ODP-REVIEW I3): the role and the checks
+  name Rocky's GPG key, release file, repository IDs and EFI path, and it
+  needs a RHEL host to prove.
 - Shipping ClamAV, or fapolicyd in permissive mode (4.2, 4.3). Both decided
   2026-09-17; the gaps are recorded rather than hidden.

@@ -135,7 +135,7 @@ passes on the absence of something (`expect_empty`, `expect_no_match`) also
 needs an exit status it declares normal (`ok_rc`, default `[0]`), so `sshd -T`
 refusing a broken config or `dnf` unable to reach its repositories reports
 `ERROR`, not `PASS`; a tool that is not installed is `ERROR` whatever its
-output. The assessor refuses to run unprivileged or off RHEL 9 unless told
+output. The assessor refuses to run unprivileged or off the RHEL 9 family unless told
 `--allow-unsupported`, and then marks the report. `make test` covers these
 rules, and `make catalog-check` proves the catalog still reproduces from the
 PDF.
@@ -510,7 +510,7 @@ refresh, malware scan, and security errata (`dnf-automatic`).
 
 | | Proven | Expected to work, not run |
 |---|---|---|
-| **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky 9 and RHEL 9 minors: same packages, not run on RHEL |
+| **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky Linux 9 minors. **Not RHEL 9** yet: `site.yml` refuses it, since the role and checks name Rocky's GPG key, release file, repository IDs and EFI path (ODP-REVIEW I3) |
 | **Control workstation** | Ubuntu 26.04 (the labs); ubuntu-24.04 in CI for everything that needs no host | Any Linux with the tools below |
 
 **OpenSSH before 9.2** — the 8.7p1 of early Rocky 9 minors — has no

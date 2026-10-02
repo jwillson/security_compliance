@@ -1,6 +1,6 @@
 # security_compliance
 
-POSIX hardening for CUI systems. Target family: **Rocky Linux 9 / RHEL 9**.
+POSIX hardening for CUI systems. Target: **Rocky Linux 9** (RHEL 9 is not supported until a RHEL host proves it; ODP-REVIEW I3).
 
 The tool is `nist_sp_800_171r3/rl9-171/`. Work from there unless you are
 deliberately reading history.

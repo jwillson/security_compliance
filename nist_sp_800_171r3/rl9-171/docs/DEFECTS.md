@@ -1352,3 +1352,21 @@ source, and nothing from it is taken without its own proof here.*
       41-item register re-saved with a byte-order mark merged with every ID
       kept and a backup written, and an assessment scoped to one requirement
       refused; the scheduled service still succeeds.
+
+- [x] **7.13 Nothing kept the playbook off the workstation, and the documents
+      claimed RHEL (#7).** AGENTS.md forbids applying to the machine you
+      write on, but no task enforced it: an inventory naming `localhost`, a
+      loopback address, a local connection or the workstation's own address
+      would have hardened the operator's machine. And the READMEs,
+      CHANGELOG, SECURITY.md and AGENTS.md said "Rocky Linux 9 / RHEL 9"
+      while `site.yml` refused RHEL. *Owner decision* (ODP-REVIEW I3): Rocky
+      Linux 9 only until a RHEL host proves it - the branch's RHEL admission
+      is not taken. *Fix:* `guard-target.yml`, imported at the start of both
+      plays (the branch guarded only the first, so a host listed only in
+      `log_hosts` was never checked), refuses a local connection, a loopback
+      name or address, or the controller's own machine-id, and then asserts
+      Rocky 9 - the workstation test first, since on a workstation that is
+      itself Rocky 9 it is the only one that refuses. The documents say
+      Rocky Linux 9. *Proven:* `tools/test-workstation-guard.sh` - an
+      inventory naming this machine in both groups is refused by both plays
+      with no role task reached, and `byo-rl9-01` passes the guard.

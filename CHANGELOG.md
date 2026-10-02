@@ -15,7 +15,7 @@ before this release, with the evidence for each, is
 
 ### What it is
 
-- NIST SP 800-171r3 (May 2024) for Rocky Linux 9 / RHEL 9: the 97 active
+- NIST SP 800-171r3 (May 2024) for Rocky Linux 9: the 97 active
   requirements extracted from the publication (the catalog reproduces byte
   for byte from the PDF, with poppler 24.02 and 26.01 alike), each mapped in
   an overlay to what the host enforces — 37 technical, 32 partial, 28
