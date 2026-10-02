@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by apply.sh, verify.sh and the tools that reach hosts.
 #
 # One workstation can drive more than one lab - the kickstart lab (hosts built

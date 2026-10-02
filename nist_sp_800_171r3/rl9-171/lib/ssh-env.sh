@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by apply.sh and verify.sh.
 #
 # 03.05.03 Multi-factor authentication: a hardened host requires
