@@ -1073,7 +1073,11 @@ collector or for the retrofit reference.*
 *A cloud review on 2026-09-26 filed GitHub issues #3-#15 and pushed fixes for
 #3-#7 to a branch. Verified against `main` on 2026-10-01 (TASKS.md, *Release
 1.0.1*): most findings hold. Each item below cites its issue; the branch was a
-source, and nothing from it is taken without its own proof here.*
+source, and nothing from it is taken without its own proof here. The branch
+(`claude/dazzling-archimedes-kus9kd`, commits `6b7d6ca` and `911431b`) was
+deleted on 2026-10-02, after 1.0.1, at the owner's request: what it had of
+use was taken and re-proven, and its TASKS.md said the repository had gone
+public when it had not.*
 
 - [x] **7.1 A failed TPM bind reported success, then the key was deleted
       (#3).** The bind script had `set -o pipefail` and no `set -e`: a failed

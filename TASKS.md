@@ -65,7 +65,8 @@ in the code and the worst proven on a lab host: most hold, and 1.0.0 carries
 false PASSes on technical requirements and two lockout paths — R1 was not
 met after all. The owner's decisions are `docs/ODP-REVIEW.md` I1-I4.
 
-*The branch is a source, not a merge.* Taken, each re-proven here: the bind
+*The branch is a source, not a merge* (deleted 2026-10-02 at the owner's
+request, its useful parts taken; DEFECTS.md, Phase 7). Taken, each re-proven here: the bind
 fix (#3 — `tools/probes/bind-script-experiment.sh` on `byo-rl9-02`: main's
 script prints `bound` and exits 0 after a failed bind, the branch's exits 1;
 first bind and re-run work), the POA&M hardening and its tests (#5), the
