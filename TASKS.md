@@ -110,7 +110,7 @@ TASKS.md says the repository went public, which it has not.
       (ODP-REVIEW I4).
 
 **P3 — CI, tooling, documents**
-- [ ] #14 CI's syntax check runs on an empty inventory (the example does
+- [x] #14 CI's syntax check runs on an empty inventory (the example does
       not parse — R6 claimed more than it did); unpinned installs; code that
       parses only on Python 3.12. ("apply.sh exits silently" is wrong; the
       misleading message is `verify.sh`'s.)
@@ -118,7 +118,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) 7.10 and 7.11 (#13), 7.12 (#5), 7.13 (#7), 7.14 (#11, rotation). P2 is complete.
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) 7.10 and 7.11 (#13), 7.12 (#5), 7.13 (#7), 7.14 (#11, rotation). P2 is complete. 7.15 (#14).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed

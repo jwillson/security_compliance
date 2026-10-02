@@ -98,7 +98,9 @@ ensure_swtpm() {
 ensure_base() {
   sudo test -f "$BASE" && return 0
   say "fetching $IMAGE_NAME and verifying its checksum"
-  local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  # Self-clearing, as in cmd_check (DEFECTS 6b.14): left set, the trap fires
+  # again when a later function returns, where $tmp is undefined.
+  local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"; trap - RETURN' RETURN
   curl -fsSL --retry 3 -o "$tmp/$IMAGE_NAME" "$IMAGE_URL/$IMAGE_NAME"
   curl -fsSL --retry 3 -o "$tmp/CHECKSUM" "$IMAGE_URL/CHECKSUM"
   (cd "$tmp" && grep "($IMAGE_NAME)" CHECKSUM \
@@ -121,7 +123,7 @@ randpw() { python3 -c 'import secrets,string;a=string.ascii_letters+string.digit
 # ---------------------------------------------------------------------------
 write_seed() {   # NAME DIR DATA_GB USERS...
   local name=$1 dir=$2 data_gb=$3; shift 3
-  local key hash; key=$(cat "$KEY.pub"); hash=$(openssl passwd -6 "$(cat "$LAB/byoadmin_password")")
+  local key hash; key=$(cat "$KEY.pub"); hash=$(openssl passwd -6 -stdin < "$LAB/byoadmin_password")   # stdin: not in any process's argv
   {
     cat <<EOF
 #cloud-config
@@ -149,7 +151,7 @@ EOF
   - name: $u
     shell: /bin/bash
     lock_passwd: false
-    passwd: "$(openssl passwd -6 "$(cat "$pw")")"
+    passwd: "$(openssl passwd -6 -stdin < "$pw")"
 EOF
     done
     cat <<EOF

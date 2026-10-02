@@ -14,7 +14,7 @@
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HERE/.."
+cd "$HERE/.." || exit 2
 # ssh-env, not just inventory-env: this script runs ansible itself (the reboot), and once 03.05.03 is applied every connection needs the second
 # factor - for a lab inventory only ssh-env supplies it - and a host key
 # already known (a kickstart host is new until seeded).

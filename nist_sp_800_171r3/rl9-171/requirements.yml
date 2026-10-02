@@ -1,7 +1,8 @@
 ---
 # Ansible collections the role depends on.
 collections:
+  # Exact versions, the ones the labs proved (issue #14).
   - name: ansible.posix
-    version: ">=1.5.0"
+    version: "2.2.2"
   - name: community.general
-    version: ">=8.0.0"
+    version: "13.4.0"

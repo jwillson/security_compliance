@@ -1386,3 +1386,30 @@ source, and nothing from it is taken without its own proof here.*
       passphrase and back, the second run unchanged, the TPM still unlocking
       both volumes, 03.08.09 verifying with nothing failed, nothing left in
       `/run`.
+
+- [x] **7.15 CI checked less than it said, and the tooling's loose ends
+      (#14; #13's parity point).** CI's playbook syntax check ran against an
+      empty inventory: Ansible's YAML plugin reads only `.yml`/`.yaml`/`.json`
+      names, so `hosts.yml.example` fell through to the INI parser, failed,
+      and the step passed on a warning - R6 claimed more than it proved. The
+      installs were unpinned; CI tested only Python 3.12 while the assessor,
+      the POA&M merge and the check commands run on Rocky 9's Python 3.9
+      (3.9.25 on the lab); there was no timeout and no shellcheck. Three
+      scripts `cd`-ed without checking; `byo-guest.sh` and the Makefile put
+      passwords in `openssl passwd`'s argv; `ensure_base` left a RETURN trap
+      set (6b.14's shape); `verify.sh` without Ansible on PATH showed a
+      traceback and "no hosts in group cui_hosts"; `assessor-parity.sh`
+      compared statuses only. *Wrong as filed:* "apply.sh exits silently" -
+      it fails visibly. *Fix:* CI parses a `.yml` copy of the example with
+      `ANSIBLE_INVENTORY_UNPARSED_FAILED`, syntax-checks both playbooks,
+      pins `ansible-core` 2.21.4, PyYAML 6.0.3 and the collections
+      (`ansible.posix` 2.2.2, `community.general` 13.4.0, what the labs
+      run), adds a Python 3.9 job for the host-side code and tests, a
+      timeout, and `shellcheck -S error`; `|| exit 2` on each `cd`;
+      `openssl passwd -stdin`; the trap clears itself; `inventory-env.sh`
+      says when `ansible-inventory` is missing; the parity tool lists every
+      check whose assertion changed under an unchanged status and counts
+      evidence changes. *Proven:* the 3.9 job's commands pass locally under
+      Python 3.9.21; `assessor-parity.sh v1.0.0 HEAD --host byo-rl9-01`
+      lists the ten assertions this release changed while their status held.
+      *Not changed:* the v1.0.0 tag is annotated but not signed.

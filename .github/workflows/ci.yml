@@ -18,6 +18,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: nist_sp_800_171r3/rl9-171
@@ -35,7 +36,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq poppler-utils
-          pip install --quiet pyyaml ansible-core
+          # Pinned to what the labs run (issue #14): an unpinned install made
+          # each run test whatever was newest that day.
+          pip install --quiet pyyaml==6.0.3 ansible-core==2.21.4
           ansible-galaxy collection install -r requirements.yml
           pdftotext -v 2>&1 | head -1
 
@@ -48,10 +51,18 @@ jobs:
       - name: The catalog reproduces byte for byte from the PDF
         run: make catalog-check
 
-      - name: The playbooks parse
+      - name: The example inventory parses, and the playbooks with it
+        # Ansible's YAML inventory plugin reads only .yml/.yaml/.json names, so
+        # hosts.yml.example fell through to the INI parser, failed, and the
+        # syntax check ran on an empty inventory with a warning (issue #14).
+        # A copy named .yml, and an unparsed inventory is fatal.
+        env:
+          ANSIBLE_INVENTORY_UNPARSED_FAILED: "true"
         run: |
-          ansible-playbook --syntax-check -i inventory/hosts.yml.example site.yml
-          ansible-playbook --syntax-check -i inventory/hosts.yml.example rotate-luks-passphrase.yml
+          cp inventory/hosts.yml.example "$RUNNER_TEMP/hosts.yml"
+          ansible-inventory -i "$RUNNER_TEMP/hosts.yml" --graph | tee /dev/stderr | grep -q '@cui_hosts'
+          ansible-playbook --syntax-check -i "$RUNNER_TEMP/hosts.yml" site.yml
+          ansible-playbook --syntax-check -i "$RUNNER_TEMP/hosts.yml" rotate-luks-passphrase.yml
 
       - name: No secret anywhere in the history
         run: tools/secret-scan.sh
@@ -61,3 +72,30 @@ jobs:
           set -e
           for f in $(git ls-files '*.sh' apply.sh verify.sh); do bash -n "$f"; done
           python -m py_compile $(git ls-files '*.py') audit/nist-assess
+
+      - name: No shell script has an error shellcheck can see
+        # Errors only: warnings are reviewed by hand, not gated here.
+        run: shellcheck -S error $(git ls-files '*.sh') apply.sh verify.sh
+
+  host-python:
+    # The assessor, the POA&M merge and the check commands run on the host,
+    # under Rocky 9's /usr/bin/python3 - 3.9. CI tested only 3.12, so code
+    # that parses only on 3.12 went unnoticed (issue #14).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: nist_sp_800_171r3/rl9-171
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.9"
+      - name: The host-side code parses and its tests pass on Python 3.9
+        run: |
+          pip install --quiet pyyaml==6.0.3
+          python -m py_compile audit/nist-assess roles/nist_800_171/files/nist_poam.py
+          python -m unittest discover -s tests -p 'test_assessor.py'
+          python -m unittest discover -s tests -p 'test_poam.py'

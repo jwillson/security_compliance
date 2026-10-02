@@ -63,10 +63,14 @@ def load(d):
     for p in sorted(Path(d).glob("*.json")):
         host = p.name.rsplit("-", 1)[0]
         data = json.loads(p.read_text())
+        checks = [c for r in data["requirements"] for c in r.get("checks", [])]
         out[host] = (
             data["summary"],
-            {c["id"]: c["status"] for r in data["requirements"] for c in r.get("checks", [])},
+            {c["id"]: c["status"] for c in checks},
             {r["id"]: r["status"] for r in data["requirements"]},
+            # The assertion and what was seen, too: a status alone hides a
+            # check whose assertion changed and still passes (issue #13).
+            {c["id"]: (c.get("expected", ""), c.get("evidence", "")) for c in checks},
         )
     return out
 
@@ -75,7 +79,7 @@ differs = False
 for host in sorted(set(base) | set(new)):
     if host not in base or host not in new:
         print(f"{host}: assessed by only one side"); differs = True; continue
-    (bs, bc, br), (ns, nc, nr) = base[host], new[host]
+    (bs, bc, br, bx), (ns, nc, nr, nx) = base[host], new[host]
     dc = [(k, bc.get(k), nc.get(k)) for k in sorted(set(bc) | set(nc)) if bc.get(k) != nc.get(k)]
     dr = [(k, br.get(k), nr.get(k)) for k in sorted(set(br) | set(nr)) if br.get(k) != nr.get(k)]
     fmt = lambda s: f"{s['pass']}/{s['manual']}/{s['fail']}/{s['not_applicable']} err={s['error']}"
@@ -86,7 +90,16 @@ for host in sorted(set(base) | set(new)):
         print(f"    check        {k:40s} {a} -> {b}")
     for k, a, b in dr:
         print(f"    requirement  {k:40s} {a} -> {b}")
-    differs |= bool(dc or dr)
+    # Same status, different assertion: listed, and a difference. Evidence
+    # varies run to run (times, counts), so it is only counted.
+    same = [k for k in set(bc) & set(nc) if bc[k] == nc[k]]
+    da = sorted(k for k in same if bx[k][0] != nx[k][0])
+    de = sum(1 for k in same if bx[k][1] != nx[k][1])
+    for k in da:
+        print(f"    assertion    {k:40s} {bx[k][0]!r} -> {nx[k][0]!r} (status {bc[k]} both)")
+    if de:
+        print(f"    evidence differs on {de} check(s) with the same status (informational)")
+    differs |= bool(dc or dr or da)
 print("PARITY" if not differs else "DIFFERENCES FOUND")
 sys.exit(1 if differs else 0)
 PY

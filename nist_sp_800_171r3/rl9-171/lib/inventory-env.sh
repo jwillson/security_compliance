@@ -26,6 +26,13 @@ esac
 export NIST_INVENTORY
 export ANSIBLE_INVENTORY="$NIST_INVENTORY"
 
+# Without ansible-inventory the kind below reads "empty" and verify.sh went
+# on to a Python traceback and "no hosts in group cui_hosts" (issue #14).
+command -v ansible-inventory >/dev/null 2>&1 || {
+  echo "error: ansible-inventory is not on PATH - install ansible-core, or source your lab's tools.sh/env.sh" >&2
+  return 2 2>/dev/null || exit 2
+}
+
 NIST_INVENTORY_KIND="$(
   [ -f "$NIST_INVENTORY" ] || { echo empty; exit 0; }
   ansible-inventory --list 2>/dev/null | python3 -c '

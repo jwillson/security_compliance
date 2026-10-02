@@ -23,7 +23,7 @@
 #
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HERE/.."
+cd "$HERE/.." || exit 2
 . lib/ssh-env.sh || exit 2
 nist_seed_known_hosts
 host=${1:?usage: tools/prove-foreign-receiver.sh HOST [--keep]}; keep=${2:-}

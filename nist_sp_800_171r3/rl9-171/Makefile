@@ -66,7 +66,7 @@ pki:
 	@python3 -c "import secrets,string; a=string.ascii_letters+string.digits+'!@%^_-+='; \
 	  open('.secrets/admin_password','w').write(''.join(secrets.choice(a) for _ in range(24))+chr(10)); \
 	  open('.secrets/luks_passphrase','w').write(''.join(secrets.choice(a) for _ in range(40))+chr(10))"
-	@openssl passwd -6 "$$(cat .secrets/admin_password)" > .secrets/admin_password_hash
+	@openssl passwd -6 -stdin < .secrets/admin_password > .secrets/admin_password_hash
 	@printf '%s\n' '#!/usr/bin/env bash' \
 	  '# Supplies the knowledge factor for hosts enforcing 03.05.03 MFA' \
 	  '# (sshd AuthenticationMethods publickey,password).' \
