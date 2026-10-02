@@ -1370,3 +1370,19 @@ source, and nothing from it is taken without its own proof here.*
       Rocky Linux 9. *Proven:* `tools/test-workstation-guard.sh` - an
       inventory naming this machine in both groups is refused by both plays
       with no role task reached, and `byo-rl9-01` passes the guard.
+
+- [x] **7.14 The LUKS passphrase could not be rotated (#11, the rest).** The
+      role set the passphrase once; nothing changed it after, and the
+      environment variable gave every host the same one. *Fix:*
+      `rotate-luks-passphrase.yml` changes each volume's passphrase keyslot
+      with `luksChangeKey` (PBKDF2), proves the new passphrase opens it and
+      the old one does not, rewrites the on-disk key of a host without a
+      usable TPM, stages both passphrases in RAM and removes them whatever
+      happens, and reports no change on a second run; the RUNBOOK has the
+      procedure, and per-host passphrases are an inventory variable. The
+      other open half of #11, boot behaviour on a TPM refusal, is decided:
+      wait for the passphrase (ODP-REVIEW I4). *Proven:*
+      `tools/rehearse-luks-rotation.sh byo-rl9-02` - rotated to a random
+      passphrase and back, the second run unchanged, the TPM still unlocking
+      both volumes, 03.08.09 verifying with nothing failed, nothing left in
+      `/run`.

@@ -48,8 +48,10 @@ jobs:
       - name: The catalog reproduces byte for byte from the PDF
         run: make catalog-check
 
-      - name: The playbook parses
-        run: ansible-playbook --syntax-check -i inventory/hosts.yml.example site.yml
+      - name: The playbooks parse
+        run: |
+          ansible-playbook --syntax-check -i inventory/hosts.yml.example site.yml
+          ansible-playbook --syntax-check -i inventory/hosts.yml.example rotate-luks-passphrase.yml
 
       - name: No secret anywhere in the history
         run: tools/secret-scan.sh

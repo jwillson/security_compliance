@@ -24,6 +24,7 @@ has been rehearsed against this baseline on a retrofit guest; where the rehearsa
 - [When you are locked out](#when-you-are-locked-out)
 - [Other things that will bite you](#other-things-that-will-bite-you)
 - [Rotating the automation account's password](#rotating-the-automation-accounts-password)
+- [Rotating the LUKS passphrase](#rotating-the-luks-passphrase)
 - [Rotating the lab credentials](#rotating-the-lab-credentials)
 - [Decommissioning](#decommissioning)
 
@@ -578,6 +579,33 @@ So change it, then update the stored copy, then run anything else:
    works with the new factor and `ia-12-exempt-rotated` passes.
 
 If the account is locked anyway: *When you are locked out*, faillock.
+
+---
+
+## Rotating the LUKS passphrase
+
+The passphrase is what opens the CUI and backup volumes when the TPM will
+not - recovery at the console - and what the role is given to create them.
+Rotate it on the schedule your key management sets (03.13.10), when someone
+who knew it leaves, or when it may have been seen:
+
+```bash
+NIST_LUKS_PASSPHRASE=<current> NIST_LUKS_NEW_PASSPHRASE=<new> \
+  ansible-playbook rotate-luks-passphrase.yml --limit <host>
+```
+
+It changes the passphrase keyslot of each volume (PBKDF2), proves the new one
+opens it and the old one no longer does, and on a host that keeps its key on
+disk (no TPM, or Secure Boot off) rewrites that file. The TPM binding is a
+separate keyslot and keeps working. Both passphrases are staged in RAM and
+removed. A second run reports no change. **Then** give the role the new one:
+set `NIST_LUKS_PASSPHRASE` to it, and keep it where you keep recovery
+secrets - without it, a boot the TPM refuses cannot be unlocked.
+
+One passphrase for every host is the simple arrangement, and the weak one: a
+host's own `nist_luks_passphrase` in the inventory (vault-encrypted) takes
+precedence over the environment, so each host can have its own. Rehearsed
+with `tools/rehearse-luks-rotation.sh` (DEFECTS 7.14).
 
 ---
 

@@ -1,0 +1,103 @@
+# Rotate the passphrase of the encrypted CUI and backup volumes (03.08.09,
+# 03.13.10; issue #11). The role sets the passphrase once and nothing changed
+# it after - a passphrase every host shared, kept as long as the hosts.
+#
+#   NIST_LUKS_PASSPHRASE=<current> NIST_LUKS_NEW_PASSPHRASE=<new> \
+#     ansible-playbook rotate-luks-passphrase.yml --limit HOST
+#
+# Per volume: the passphrase keyslot is changed with `cryptsetup
+# luksChangeKey` (PBKDF2, the FIPS-approved KDF sc-10-luks-kdf requires);
+# the new passphrase must open the volume and the old one must not, or the
+# run fails for that host. The TPM binding is a separate keyslot and is not
+# touched. A host that keeps its key on disk because the TPM cannot hold it
+# (no TPM, or Secure Boot off) has that file rewritten too, or it would not
+# boot. Both passphrases reach the host on stdin and are staged in RAM
+# (/run), removed at the end. Already rotated (the new one opens, the old one
+# does not) is reported as unchanged.
+#
+# Afterwards the new passphrase is the one to give the role and to keep for
+# recovery: set NIST_LUKS_PASSPHRASE to it, or the host's own
+# nist_luks_passphrase in the inventory (one per host, vault-encrypted, is
+# the stronger arrangement). RUNBOOK, "Rotating the LUKS passphrase".
+
+- name: Rotate the LUKS passphrase of the CUI volumes
+  hosts: cui_hosts
+  become: true
+  gather_facts: true
+
+  vars:
+    nist_vg_name: vg_sys
+    old_pw: "{{ nist_luks_passphrase | default(lookup('env', 'NIST_LUKS_PASSPHRASE')) }}"
+    new_pw: "{{ lookup('env', 'NIST_LUKS_NEW_PASSPHRASE') }}"
+
+  pre_tasks:
+    - name: Guard the target
+      ansible.builtin.import_tasks: guard-target.yml
+
+    - name: Both passphrases are needed, and they must differ
+      ansible.builtin.assert:
+        that:
+          - old_pw | length > 0
+          - new_pw | length > 0
+          - old_pw != new_pw
+        fail_msg: >-
+          Set NIST_LUKS_PASSPHRASE to the current passphrase and
+          NIST_LUKS_NEW_PASSPHRASE to the new one; they must differ.
+      no_log: true
+
+  tasks:
+    - name: Rotate, and remove the staged passphrases whatever happens
+      block:
+        - name: Stage both passphrases in RAM
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              umask 077
+              IFS= read -r old; IFS= read -r new
+              printf '%s' "$old" > /run/nist-luks-old
+              printf '%s' "$new" > /run/nist-luks-new
+            executable: /bin/bash
+            stdin: "{{ old_pw }}\n{{ new_pw }}"
+          changed_when: false
+          no_log: true
+
+        - name: Change the passphrase keyslot of each volume
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              dev=/dev/{{ nist_vg_name }}/{{ item }}
+              [ -e "$dev" ] && cryptsetup isLuks "$dev" || { echo "absent"; exit 0; }
+              opens() { cryptsetup open --test-passphrase --key-file "$1" "$dev" 2>/dev/null; }
+              if opens /run/nist-luks-new && ! opens /run/nist-luks-old; then echo "unchanged"; exit 0; fi
+              opens /run/nist-luks-old || { echo "the current passphrase does not open $dev" >&2; exit 1; }
+              cryptsetup luksChangeKey --pbkdf pbkdf2 --key-file /run/nist-luks-old "$dev" /run/nist-luks-new
+              opens /run/nist-luks-new || { echo "the new passphrase does not open $dev" >&2; exit 1; }
+              ! opens /run/nist-luks-old || { echo "the old passphrase still opens $dev" >&2; exit 1; }
+              echo "rotated"
+            executable: /bin/bash
+          loop: [lv_cui, lv_backup]
+          register: nist_luks_rotate
+          changed_when: "'rotated' in nist_luks_rotate.stdout"
+
+        - name: Rewrite the key a host without a usable TPM keeps on disk
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              [ -f /root/.luks-key ] || { echo "none"; exit 0; }
+              if cmp -s /run/nist-luks-new /root/.luks-key; then echo "unchanged"; exit 0; fi
+              umask 077
+              cp /run/nist-luks-new /root/.luks-key.new && mv -f /root/.luks-key.new /root/.luks-key
+              echo "rewritten"
+            executable: /bin/bash
+          register: nist_luks_diskkey
+          changed_when: "'rewritten' in nist_luks_diskkey.stdout"
+
+      always:
+        - name: Remove the staged passphrases
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop: [/run/nist-luks-old, /run/nist-luks-new]
+          # Scratch, not a change to the host: a run that rotated nothing
+          # reports changed=0.
+          changed_when: false
