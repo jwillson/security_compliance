@@ -19,7 +19,7 @@
 
 meta:
   name: nist-800-171r3-rocky9
-  version: "1.0.0"
+  version: "1.0.1"
   baseline: NIST SP 800-171r3 (May 2024)
   platform: Rocky Linux 9
   catalog: catalog/requirements.json
