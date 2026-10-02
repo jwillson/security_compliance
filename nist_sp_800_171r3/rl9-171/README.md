@@ -84,7 +84,7 @@ kickstart-built reference lab:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 344 checks run, 0 failed
+ 97 requirements assessed, 351 checks run, 0 failed
 ```
 
 That is the CUI host. The collector reads 35 / 34 / 0 / 28: it forwards
@@ -125,7 +125,7 @@ the role wrote:
 So a setting that was written but never took effect — a typo'd sysctl, a rule
 rejected by the kernel, a service that failed to start — is caught.
 
-340 checks cover the 69 enforceable requirements (a run counts 344: a few
+346 checks cover the 69 enforceable requirements (a run counts 351: a few
 checks serve two requirements). Each declares exactly one
 assertion (`expect_output`, `expect_match`, `expect_int`, …) and reports the
 expected value alongside what was actually observed.
@@ -222,14 +222,14 @@ guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
 an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
 reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
-344 checks, 6 failed — against 36 / 33 / 0 / 28 for a host on which every
+351 checks, 9 failed — against 36 / 33 / 0 / 28 for a host on which every
 check passes.
 Every failure is an install-time limit the role records rather than hides:
 
 | Requirement | Check | Why a retrofit cannot satisfy it |
 |---|---|---|
 | 03.04.06 | `cm-06-mount-options`, `cm-06-tmp-separate` | `/home`, `/tmp`, `/var/tmp`, `/var/log`, `/var/log/audit` are not separate filesystems; the role writes `unretrofittable-mounts` naming them |
-| 03.01.18, 03.08.03, 03.08.09, 03.13.08 | one LUKS check each | the encrypted CUI and backup volumes need free space in `vg_sys`; this host has no volume group |
+| 03.01.18, 03.08.03, 03.08.09, 03.13.08 | the LUKS checks (`ac-18-luks-root-or-data`, `mp-03-luks-present`, `mp-09-luks-cipher`, `mp-09-luks-tpm-bound`, `sc-08-luks-cipher`, `sc-08-luks-encrypted`) | the encrypted CUI and backup volumes need free space in `vg_sys`; this host has no volume group |
 
 A second stock guest given what the first lacks — a volume group with free
 space, a TPM 2.0, and a second interactive account (`byo-rl9-02`) — reports
@@ -449,7 +449,7 @@ rl9-171/
 │   └── nist_log_collector/      the receiving half of 03.03.05c
 ├── audit/
 │   ├── nist-assess              the assessor
-│   └── checks.yml               340 check definitions
+│   └── checks.yml               346 check definitions
 ├── tests/                       unit tests for the assessor and validate.py
 ├── vm/
 │   ├── build-vm.sh              unattended kickstart VM build (the reference lab)

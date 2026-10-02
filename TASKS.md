@@ -11,28 +11,30 @@ procedure is `docs/RUNBOOK.md`.
 
 ## Where the tool stands
 
-As of 2026-09-26, release 1.0.0.
+As of 2026-10-02, release 1.0.1.
 
-**Consistent** — `make validate`: 97 active requirements (33 withdrawn), 340
+**Consistent** — `make validate`: 97 active requirements (33 withdrawn), 346
 checks defined and referenced, 32 machine ODPs each asserted by a check, 62
 organizational across 49 requirements. Disposition **37 technical, 32
 partial, 28 organizational**. `make catalog-check`: the catalog still
 reproduces byte for byte from the PDF.
 
-**Tested** — `make test`: 56 unit tests for the assessor, the validator and
-the POA&M register.
+**Tested** — `make test`: 95 unit tests for the assessor, the validator and
+the POA&M register, the shipped checks among them run against the values a
+defective host shows; the host-side code also under Python 3.9 in CI.
 The assessor never reads a command that could not run as a clean result
 (6b.1); every check reads effective state.
 
-**Proven against running hosts** — the release run (R3) at `8c332c5`,
-`tools/release-run.sh` on both labs from a clean state (kickstart VMs
-reinstalled, BYO guests rebuilt from the stock image): dry run on the
-never-applied host, apply, reboot, apply, dry run at `changed=0`, verify.
+**Proven against running hosts** — the 1.0.1 release run: both labs from a
+clean state (kickstart VMs reinstalled, BYO guests rebuilt from the stock
+image) cycled at `6c609be`, assessed at `733ec8d` (a check corrected; nothing
+that hardens a host changed): dry run on the never-applied host, apply,
+reboot, apply, dry run at `changed=0`, verify.
 
 | Lab | Result |
 | --- | --- |
-| Kickstart, built on the laptop (`inventory/kickstart.yml`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28** — 344 checks run, **0 failed** on both |
-| BYO retrofit (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 6 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
+| Kickstart, built on the laptop (`inventory/kickstart.yml`) | `rl9-cui-01` **36/33/0/28**, `rl9-log-01` **35/34/0/28** — 351 checks run, **0 failed** on both |
+| BYO retrofit (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 9 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
 | BYO with a volume group, a TPM and two accounts | `byo-rl9-02` **35/33/1/28** — 2 checks failed, both 03.04.06 (no separate `/tmp`) |
 
 Proven by behaviour, not configuration: an idle SSH session closed at the
@@ -54,12 +56,14 @@ owner's authoring (6.3, 6.4).
 
 ## Release 1.0.1 — the review after 1.0.0
 
-**Going public waits for this.** A cloud review on 2026-09-26 filed issues
+**Done 2026-10-02** - every issue closed, the release run green on both
+labs (the status above), `v1.0.1` tagged; going public is the owner's step
+(*Going public*, below). A cloud review on 2026-09-26 filed issues
 #3-#15 and pushed fixes for #3-#7 to `claude/dazzling-archimedes-kus9kd`
 (two commits, no PR). Verified against `main` on 2026-10-01, every claim read
 in the code and the worst proven on a lab host: most hold, and 1.0.0 carries
 false PASSes on technical requirements and two lockout paths — R1 was not
-met after all. The owner's decisions are `docs/ODP-REVIEW.md` I1-I3.
+met after all. The owner's decisions are `docs/ODP-REVIEW.md` I1-I4.
 
 *The branch is a source, not a merge.* Taken, each re-proven here: the bind
 fix (#3 — `tools/probes/bind-script-experiment.sh` on `byo-rl9-02`: main's
@@ -123,7 +127,11 @@ Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed
 commit, and `docs/DEFECTS.md` records each issue with its proof — then 1.0.1
-is tagged and the repository can go public.
+is tagged and the repository can go public. *Met 2026-10-02:* cycled at
+`6c609be`, where the run found one more defect - `si-08-logrotate-clean`
+failed every freshly built host (DEFECTS 7.9, corrected) - and assessed at
+`733ec8d` with `release-run.sh --reverify`, since nothing that hardens a host
+changed.
 
 ---
 
@@ -180,8 +188,8 @@ is believed.
       it on a host; script everything; docs in the repo), the rules the code
       keeps, and what never goes in the repository.
 
-**Going public** — the owner's, in the repository settings, once R3, R4 and
-R7 are done (agreed 2026-09-26): make the repository public; enable private
+**Going public** — the owner's, in the repository settings, once 1.0.1 is
+tagged (agreed 2026-09-26, held for 1.0.1 on 2026-10-01): make the repository public; enable private
 vulnerability reporting, which GitHub offers only on public repositories and
 `SECURITY.md` sends reporters to; protect `main` so a pull request must pass
 the `ci` workflow before it merges.

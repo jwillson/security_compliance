@@ -31,7 +31,7 @@ residual risk authorizes a system. The tool produces the host evidence, a
 System Security Plan it keeps regenerating around what the owner writes, and a
 POA&M register — see its [README](nist_sp_800_171r3/rl9-171/README.md).
 
-What the 1.0.0 release run proved, every host from a clean start (CHANGELOG,
+What the 1.0.1 release run proved, every host from a clean start (CHANGELOG,
 *Proven at this release*):
 
 | Host | Satisfied / partial / not / organizational |

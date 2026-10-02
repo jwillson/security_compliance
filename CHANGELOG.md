@@ -5,6 +5,74 @@ Notable changes, newest first. Versions follow `meta.version` in
 host and every assessment report records; each release is a `v<version>` tag
 on the commit it was proven at.
 
+## [1.0.1] — 2026-10-02
+
+A review of 1.0.0 (GitHub issues #3–#15) found false PASSes on technical
+requirements, two lockout paths and a step that could delete the LUKS key; a
+monthly log rotation found one more. Every finding was checked in the code
+before it was fixed, each fix is test-first where a check is involved and
+proven on a lab host, and each is recorded with its evidence in
+`docs/DEFECTS.md`, Phase 7 (7.1–7.16). Owner decisions: `docs/ODP-REVIEW.md`
+I1–I4.
+
+### Fixed
+
+- **A failed TPM bind reported success**, after which the role deleted the
+  LUKS key and set crypttab to `none` (7.1). The bind now fails the task.
+- **No TPM seal while Secure Boot is off** (7.2, I1): such a seal opens for
+  any boot medium. The host is treated as one without a TPM and the rest of
+  the role carries on; `mp-09-secure-boot` reports it; the PCR 7 recovery
+  rehearsal proves the path.
+- **Idle sessions** (7.3): `ClientAliveInterval 0` and `TMOUT=0` passed; a
+  terminal session printing output was never ended. logind's
+  `StopIdleSessionSec` now ends it (901 s in the test); the TMOUT checks read
+  a login shell.
+- **The automation account** is exempt from password expiry, which would
+  have cut off its key-and-password sign-in on day 60; its rotation is
+  checked instead (7.4, I2).
+- **Forwarding** (7.5): records are filed under the peer they came from, not
+  the hostname they claim; the disk queue is bounded, so an outage cannot
+  fill the disk and take the host to single-user.
+- **GRUB** (7.6): no password is set while a boot entry would ask for it; the
+  check reads what GRUB reads.
+- **LUKS** (7.7, 7.14): the key is staged in RAM, never on disk where a TPM
+  holds it; the cipher checks see every LUKS device; the passphrase can be
+  rotated (`rotate-luks-passphrase.yml`); a TPM refusal at boot waits for the
+  passphrase (I4).
+- **Log rotation failed every day on every host** (7.9): the system logs
+  were never rotated; btmp and wtmp were recreated readable.
+- **Checks that could not fail** (7.10) and a refused assessment that looked
+  like a successful one (7.11).
+- **The POA&M register** survives a spreadsheet re-save and closes only what
+  was assessed (7.12).
+- **The playbook refuses the control workstation**; Rocky Linux 9 only (7.13,
+  I3).
+- **Tooling** (7.8, 7.15, 7.16): the lab scripts refuse a domain that is not a
+  lab guest; CI parses the example inventory, pins its tools and runs the
+  host-side code on Python 3.9; the BYO lab directory has a script to create
+  it; SECURITY.md has a fallback reporting channel.
+
+### Proven at this release
+
+Both labs from a clean state - kickstart VMs reinstalled, BYO guests rebuilt
+from the stock Rocky 9.8 GenericCloud image (`release-run.sh byo --rebuild`) -
+hardened and cycled at `6c609be`, then assessed at `733ec8d`, which corrected
+one check and changed nothing that hardens a host (`release-run.sh
+--reverify`). Every host passed the release gate: settled at `changed=0`, no
+check failed beyond its documented limits.
+
+| Host | What it is | Satisfied / partial / not / org. | Checks run, failed |
+| --- | --- | --- | --- |
+| `rl9-cui-01` | kickstart reference build, CUI host | 36 / 33 / 0 / 28 | 351, 0 |
+| `rl9-log-01` | kickstart reference build, collector | 35 / 34 / 0 / 28 | 351, 0 |
+| `byo-rl9-01` | stock image, one filesystem, no volume group, no TPM | 34 / 30 / 5 / 28 | 351, 9 — the retrofit limits |
+| `byo-log-01` | stock image, collector | 34 / 30 / 5 / 28 | 351, 9 — the same limits |
+| `byo-rl9-02` | stock image with a volume group, a TPM and a second account | 35 / 33 / 1 / 28 | 351, 2 — only the separate filesystems |
+
+The retrofit hosts fail 9 checks where 1.0.0 showed 6: the LUKS checks no
+longer pass on a host that has no LUKS volume at all. The requirement-level
+results are unchanged.
+
 ## [1.0.0] — 2026-09-26
 
 The first release. Development builds before it also reported overlay
