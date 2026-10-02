@@ -376,9 +376,15 @@ afterwards. `apply.sh` re-records it after a successful run; `verify.sh` never
 does, so an *unexpected* key change is still an error.
 
 **Idle SSH sessions are closed at 15 minutes** (03.01.11, the
-`session_timeout_seconds` ODP), whether or not they sit at a prompt — a
-silent `tail -f` is idle. sshd enforces it with `ChannelTimeout`, which needs
-OpenSSH 9.2 or later.
+`session_timeout_seconds` ODP), whether or not they sit at a prompt. A
+session with no traffic at all is closed by sshd's `ChannelTimeout` (OpenSSH
+9.2 or later); a terminal session with no *input* is stopped by logind
+(`StopIdleSessionSec`) even while it prints — a `tail -f` nobody is typing
+into is idle. A single Ansible task silent for longer than that would be cut
+off too, which is why long-running tasks in the role run asynchronously.
+The automation account is exempt from password expiry instead of being
+locked out by it; see the RUNBOOK, *Rotating the automation account's
+password*.
 
 **Ping stops working.** The firewall default zone target is `DROP` (03.13.06),
 so ICMP echo is dropped. The host is still reachable on its permitted services.
@@ -528,10 +534,14 @@ reachable over SSH, with sudo.
   `/home` fails 03.04.06, and one without a volume group with 3 GB free
   cannot have the LUKS volumes (03.01.18, 03.08.03, 03.08.09, 03.13.08). The
   role records both.
-- **A TPM 2.0 keeps the LUKS keys off the disk.** Without one the key file
-  stays so the host can boot, and the assessment reports it. With one, a
-  firmware or Secure Boot change stops the TPM releasing the keys; the boot
-  waits for the passphrase, and the RUNBOOK's recovery reseals (rehearsed).
+- **A TPM 2.0 with Secure Boot enforced keeps the LUKS keys off the disk.**
+  The keys are sealed to PCR 7, the Secure Boot state; with Secure Boot off
+  that seal would open for any boot medium, so the role does not make it.
+  Without a TPM, or with Secure Boot off, the key file stays so the host can
+  boot, and the assessment reports it. With both, a firmware or Secure Boot
+  change stops the TPM releasing the keys; the boot waits for the
+  passphrase, and the RUNBOOK's recovery restores Secure Boot and, if
+  needed, reseals (rehearsed).
 - **Forwarding is proven to lab receivers**: this toolkit's collector and
   syslog-ng, both with lab certificates. Your SIEM is yours to prove.
 - **ClamAV is off by default** (it needs EPEL), so 03.14.02 is partial.

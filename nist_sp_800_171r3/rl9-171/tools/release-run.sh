@@ -55,10 +55,12 @@ declare -A BYO_SPEC=(
 )
 # Failures a host is expected to show, by check id (DEFECTS 2.2): byo-rl9-01
 # has one root filesystem and no volume group; byo-rl9-02 has a volume group
-# but no separate /tmp. Anything else failing fails the release.
+# but no separate /tmp. Anything else failing fails the release. Since 1.0.1
+# mp-09-luks-tpm-bound fails on a host with no LUKS device at all, where it
+# passed vacuously before (issue #4).
 declare -A EXPECTED_FAIL=(
-  [byo-rl9-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher sc-08-luks-encrypted"
-  [byo-log-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher sc-08-luks-encrypted"
+  [byo-rl9-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-encrypted"
+  [byo-log-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-encrypted"
   [byo-rl9-02]="cm-06-mount-options cm-06-tmp-separate"
 )
 case "$lab" in

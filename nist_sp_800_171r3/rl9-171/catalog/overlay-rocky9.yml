@@ -312,8 +312,8 @@ odp_organizational:
   - id: auth_refresh
     requirement: "03.05.12"
     parameter: "Authenticator refresh"
-    value: "local passwords every 60 days (PASS_MAX_DAYS, enforced) and on compromise or role change; SSH keys and hardware tokens on compromise, role change, or 1 year"
-    rationale: "60 days is the RHEL 9 STIG value and is what password_max_age enforces. A deliberate deviation from SP 800-63B, which prefers no calendar expiry; recorded so the SSP and the evidence agree."
+    value: "local passwords every 60 days (PASS_MAX_DAYS, enforced) and on compromise or role change; the automation account's password every 60 days by hand (RUNBOOK, no enforced expiry; ia-12-exempt-rotated reports it overdue); SSH keys and hardware tokens on compromise, role change, or 1 year"
+    rationale: "60 days is the RHEL 9 STIG value and is what password_max_age enforces. A deliberate deviation from SP 800-63B, which prefers no calendar expiry; recorded so the SSP and the evidence agree. The automation account signs in with key and password (03.05.03), so enforced expiry would cut off the run that hardens the host; the owner exempted it from maximum age and inactivity on 2026-10-01 (ODP-REVIEW I2)."
 
   # 03.06.02 Incident Monitoring, Reporting, and Response Assistance
   - id: ir_report_time
@@ -664,11 +664,13 @@ requirements:
     tasks: tasks/ac.yml
     host_scope: >
       Sessions terminate automatically on the ODP trigger (idle expiry): shell
-      TMOUT ends an idle login shell, and sshd ChannelTimeout ends an SSH session
-      idle for the same period whatever runs in it (OpenSSH >= 9.2; the role
-      records the gap on an older sshd). ClientAlive settings detect dead peers
-      and are not idle termination (DEFECTS 6b.3).
-    checks: [ac-11-tmout-set, ac-11-ssh-clientalive-interval, ac-11-ssh-clientalive-countmax, ac-11-ssh-logingracetime, ac-11-ssh-channel-timeout, sc-09-unused-connection-timeout]
+      TMOUT ends an idle login shell; sshd ChannelTimeout ends an SSH session
+      with no traffic for the same period (OpenSSH >= 9.2; the role records
+      the gap on an older sshd); and logind StopIdleSessionSec ends a terminal
+      session with no input for the period even while it prints output
+      (issue #9: ChannelTimeout counts output as activity). ClientAlive
+      settings detect dead peers and are not idle termination (DEFECTS 6b.3).
+    checks: [ac-11-tmout-set, ac-11-ssh-clientalive-interval, ac-11-ssh-clientalive-countmax, ac-11-ssh-logingracetime, ac-11-ssh-channel-timeout, sc-09-unused-connection-timeout, ac-11-logind-idle-session]
 
   - id: "03.01.12"
     title: Remote Access
@@ -1094,7 +1096,9 @@ requirements:
     host_scope: >
       Local password lifetime is enforced (PASS_MAX_DAYS, PASS_MIN_DAYS,
       PASS_WARN_AGE at the ODP values, applied to existing accounts as well as
-      defaults), accounts created without a password are locked, and
+      defaults; the automation account has no maximum age, so expiry cannot
+      lock out the run, and a password of it older than the maximum is
+      reported instead - ODP-REVIEW I2), accounts created without a password are locked, and
       authenticator content is protected by shadow file permissions and the
       FIPS hash policy.
     residual: >
@@ -1107,7 +1111,8 @@ requirements:
       tokens.
     checks: [ia-12-pass-max-days, ia-12-pass-min-days, ia-12-pass-warn-age,
              ia-12-existing-max-days, ia-12-existing-min-days,
-             ia-12-no-never-expire, ia-12-shadow-perms, ia-12-gshadow-perms]
+             ia-12-no-never-expire, ia-12-exempt-rotated, ia-12-shadow-perms,
+             ia-12-gshadow-perms]
 
 # ===========================================================================
 # 03.06 INCIDENT RESPONSE
@@ -1260,7 +1265,7 @@ requirements:
       Off-host backup storage, rotation, and restoration testing are handled by
       the enterprise backup service.
     checks: [mp-09-luks-cipher, mp-09-backup-path-perms, mp-09-luks-tpm-bound,
-             mp-09-luks-no-key-on-disk]
+             mp-09-luks-no-key-on-disk, mp-09-secure-boot]
 
 # ===========================================================================
 # 03.09 PERSONNEL SECURITY
@@ -1460,11 +1465,13 @@ requirements:
       CUI is encrypted in transit and at rest: all remote access is SSH under
       the FIPS crypto policy with approved ciphers, cleartext protocols are
       absent, and the CUI and backup filesystems are LUKS2 volumes using an
-      approved cipher with the key never stored in cleartext on the device.
+      approved cipher with the key never stored in cleartext on the device:
+      it is sealed to the TPM against PCR 7, and only while Secure Boot is
+      enforced - with it off the key stays on disk and is reported.
     checks: [sc-08-crypto-policy, sc-08-luks-encrypted, sc-08-luks-cipher,
              sc-08-no-cleartext-services, sc-08-ssh-ciphers-approved,
              sc-08-gnutls-policy, sc-08-forward-encrypted, mp-09-luks-tpm-bound,
-             mp-09-luks-no-key-on-disk]
+             mp-09-luks-no-key-on-disk, mp-09-secure-boot]
 
   - id: "03.13.09"
     title: Network Disconnect

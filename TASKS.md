@@ -74,14 +74,14 @@ does not support (I3); the workstation guard covers only the first play; its
 TASKS.md says the repository went public, which it has not.
 
 **P1 — lockout, data loss, or a false PASS on a `technical` requirement**
-- [ ] #3 a failed TPM bind reported success, then the key was deleted.
-- [ ] #4 sealing with Secure Boot off (I1: refuse, keep going, report);
+- [x] #3 a failed TPM bind reported success, then the key was deleted.
+- [x] #4 sealing with Secure Boot off (I1: refuse, keep going, report);
       `mp-09-luks-tpm-bound` widened to partitions and disks, PCR 7 in the
       sha256 bank, no pass on a host with no LUKS device.
-- [ ] #9 03.01.11: `ClientAliveInterval 0` passes three checks; `TMOUT=0`
+- [x] #9 03.01.11: `ClientAliveInterval 0` passes three checks; `TMOUT=0`
       can pass (a file grep, not effective state); an idle session that
       produces output is never ended, and the overlay says it is.
-- [ ] #12 aging cuts the automation account off on day 60 (I2: exempt, and
+- [x] #12 aging cuts the automation account off on day 60 (I2: exempt, and
       a rotation runbook); the inactivity check passes 99999.
 - [ ] #10 a full disk from the unbounded forwarding queue drops the host to
       single-user (`SINGLE`); the collector files by the sender-claimed
@@ -100,7 +100,7 @@ TASKS.md says the repository went public, which it has not.
       match).
 - [ ] #5 the POA&M register: an Excel re-save erases every ID; a scoped
       assessment merged by hand closes what it never examined.
-- [ ] #12 the last-change loop swallows `chage` failures; `--skip-tags
+- [x] #12 the last-change loop swallows `chage` failures; `--skip-tags
       03.01.01` breaks `ia.yml`.
 - [ ] #7 a workstation guard on both plays; the documents say Rocky (I3).
 
@@ -112,6 +112,8 @@ TASKS.md says the repository went public, which it has not.
 - [ ] #15 SECURITY.md's only channel does not exist while private — add a
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
+
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed

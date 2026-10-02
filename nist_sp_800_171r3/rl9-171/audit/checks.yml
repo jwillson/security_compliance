@@ -47,9 +47,14 @@ checks:
     command: |
       # Field 7 of /etc/shadow is the inactivity period and field 3 the last
       # change date. Both must be set: with no last-change date the aging
-      # fields are inert, which `chage -l` hides by printing "never".
+      # fields are inert, which `chage -l` hides by printing "never". The
+      # period must be the ODP or shorter - "set" accepted 99999 (issue #12).
+      # An account the role declared exempt in aging-exempt (the automation
+      # account, ODP-REVIEW I2) is skipped, and only that one.
+      ex=$(sed 's/#.*//' /etc/nist-800-171/aging-exempt 2>/dev/null | awk 'NF {print $1}')
       for u in $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){print $1}' /etc/passwd); do
-        awk -F: -v u="$u" '$1==u { if ($7=="" || $3=="") print u }' /etc/shadow
+        printf '%s\n' $ex | grep -qx -- "$u" && continue
+        awk -F: -v u="$u" '$1==u { if ($7=="" || $7+0 > {odp.account_inactivity_days} || $3=="") print u ": inactive=" ($7=="" ? "unset" : $7) ", last change=" ($3=="" ? "unset" : $3) }' /etc/shadow
       done
     expect_empty: true
 
@@ -298,12 +303,18 @@ checks:
 
   - id: ac-10-tmout-set
     description: Idle shell sessions time out at the ODP period
-    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    # Effective state: TMOUT as a login shell has it, not the smallest value
+    # in any file - that read 0 as compliant (issue #9). 0 or unset turns
+    # the timeout off, so it prints nothing and fails as absent.
+    command: |
+      t=$(env -i HOME=/var/empty bash --login -c 'echo "$TMOUT"' 2>/dev/null); [ "${t:-0}" -gt 0 ] 2>/dev/null && echo "$t"
     expect_int: "<= {odp.idle_lock_seconds}"
 
   - id: ac-10-tmout-readonly
     description: A user cannot extend their own idle timeout
-    command: "grep -rh 'readonly TMOUT' /etc/profile.d/ /etc/profile 2>/dev/null | grep -c . || true"
+    # Effective state: whether a login shell ends up with TMOUT read-only.
+    command: |
+      env -i HOME=/var/empty bash --login -c 'readonly -p' 2>/dev/null | grep -c ' TMOUT=' || true
     expect_int: ">= 1"
 
   - id: ac-10-tmux-lock
@@ -318,13 +329,19 @@ checks:
 
   - id: ac-11-tmout-set
     description: Sessions terminate automatically on idle expiry
-    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    # Effective state: TMOUT as a login shell has it, not the smallest value
+    # in any file - that read 0 as compliant (issue #9). 0 or unset turns
+    # the timeout off, so it prints nothing and fails as absent.
+    command: |
+      t=$(env -i HOME=/var/empty bash --login -c 'echo "$TMOUT"' 2>/dev/null); [ "${t:-0}" -gt 0 ] 2>/dev/null && echo "$t"
     expect_int: "<= {odp.session_timeout_seconds}"
 
   - id: ac-11-ssh-clientalive-interval
-    description: sshd drops idle sessions at the ODP interval
+    description: sshd probes for dead peers at the ODP interval
+    # Dead-peer detection, not idle termination (that is ChannelTimeout and
+    # logind). Equality: "<=" passed 0, which turns ClientAlive off (issue #9).
     command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
-    expect_int: "<= {odp.ssh_client_alive_interval}"
+    expect_int: "== {odp.ssh_client_alive_interval}"
 
   - id: ac-11-ssh-clientalive-countmax
     description: sshd terminates rather than probing indefinitely
@@ -334,6 +351,19 @@ checks:
     # Equality, not "<=": 0 disables ClientAlive termination altogether, and
     # "<= 1" would pass it (DEFECTS 6b.3; owner decision 2026-09-25).
     expect_int: "== {odp.ssh_client_alive_count_max}"
+
+  - id: ac-11-logind-idle-session
+    description: logind ends a login session with no input for the ODP period, even one printing output
+    # ChannelTimeout counts traffic both ways, so a session showing `tail -f`
+    # or `watch` is never idle to sshd, and TMOUT acts only at a prompt
+    # (issue #9). logind judges a terminal session by its last input (the
+    # tty's atime) and stops it after StopIdleSessionSec - the RHEL 9 STIG's
+    # control. Read from logind itself over D-Bus, the effective value, in
+    # microseconds; "infinity" (the default) means it never checks.
+    command: |
+      busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager StopIdleSessionUSec 2>/dev/null \
+        | awk '{ if ($2 == "18446744073709551615") print "infinity (logind never ends an idle session)"; else printf "%d\n", $2 / 1000000 }'
+    expect_int: "== {odp.session_timeout_seconds}"
 
   - id: ac-11-ssh-channel-timeout
     description: sshd closes a session idle for the ODP period, whatever runs in it
@@ -1240,7 +1270,10 @@ checks:
   - id: ia-12-existing-max-days
     description: Existing accounts carry the ODP maximum age
     command: |
+      # The automation account, declared exempt (ODP-REVIEW I2), is skipped.
+      ex=$(sed 's/#.*//' /etc/nist-800-171/aging-exempt 2>/dev/null | awk 'NF {print $1}')
       for u in $(awk -F: '($3>=1000 && $3!=65534 && $7 !~ /(nologin|false)$/){print $1}' /etc/passwd); do
+        printf '%s\n' $ex | grep -qx -- "$u" && continue
         v=$(chage -l "$u" 2>/dev/null | awk -F: '/Maximum number/ {gsub(/ /,"",$2); print $2}')
         case "$v" in ''|never) echo "$u:unset";; *) [ "$v" -gt {odp.password_max_age} ] && echo "$u:$v";; esac
       done
@@ -1262,14 +1295,34 @@ checks:
   - id: ia-12-no-never-expire
     description: No interactive account has a non-expiring authenticator
     command: |
-      awk -F: '($2 ~ /^\$/ && ($5=="" || $5=="99999")){print $1}' /etc/shadow \
+      # UIDs from /etc/passwd: `id -u` failing fell back to 0, so an account
+      # it could not resolve was never reported. The automation account,
+      # declared exempt (ODP-REVIEW I2), is skipped, and only that one.
+      ex=$(sed 's/#.*//' /etc/nist-800-171/aging-exempt 2>/dev/null | awk 'NF {print $1}')
+      awk -F: 'NR==FNR { if ($3>=1000 && $3!=65534) user[$1]=1; next }
+               ($1 in user) && $2 ~ /^\$/ && ($5=="" || $5=="99999") {print $1}' /etc/passwd /etc/shadow \
         | while read -r u; do
-            uid=$(id -u "$u" 2>/dev/null || echo 0)
-            [ "$uid" -ge 1000 ] && echo "$u"
+            printf '%s\n' $ex | grep -qx -- "$u" || echo "$u"
           done
     expect_empty: true
     # The loop can end on a test that is false for a compliant account.
     ok_rc: [0, 1]
+
+  - id: ia-12-exempt-rotated
+    description: An account exempt from expiry has had its password changed within the ODP maximum age
+    # The automation account has no maximum age, so expiry cannot cut off the
+    # run that hardens the host (ODP-REVIEW I2); its password is rotated by
+    # hand instead (RUNBOOK). This keeps that commitment visible: a password
+    # older than password_max_age is a deviation, not a lockout.
+    command: |
+      ex=$(sed 's/#.*//' /etc/nist-800-171/aging-exempt 2>/dev/null | awk 'NF {print $1}')
+      today=$(( $(date +%s) / 86400 ))
+      for u in $ex; do
+        awk -F: -v u="$u" '$1==u {f=1} END {exit !f}' /etc/passwd || continue
+        awk -F: -v u="$u" -v t="$today" -v m={odp.password_max_age} \
+          '$1==u { if ($3 == "") print u ": no last-change date"; else if (t - $3 > m) print u ": password " t - $3 " days old" }' /etc/shadow
+      done
+    expect_empty: true
 
   - id: ia-12-shadow-perms
     description: The authenticator store is unreadable by non-root users
@@ -1334,9 +1387,11 @@ checks:
     expect_int: ">= 2"
 
   - id: ma-05-ssh-idle-terminate
-    description: Maintenance sessions terminate when complete or idle
+    description: sshd drops a maintenance session whose peer stops answering
+    # Dead-peer detection, not idle termination (that is ChannelTimeout and
+    # logind). Equality: "<=" passed 0, which turns ClientAlive off (issue #9).
     command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
-    expect_int: "<= {odp.ssh_client_alive_interval}"
+    expect_int: "== {odp.ssh_client_alive_interval}"
 
   - id: ma-05-no-telnet-rsh
     description: No unauthenticated remote maintenance path exists
@@ -1422,17 +1477,46 @@ checks:
     # update changes PCR 7, the binding is still listed but the TPM refuses
     # it. `clevis luks pass` asks the TPM for the key (to /dev/null) - the
     # effective state, not the header.
+    # Every LUKS device is examined, a logical volume, a partition or a whole
+    # disk: the loop visited only lvm devices, so LUKS on a partition was
+    # never looked at, and a host with no LUKS at all passed (issue #4). The
+    # binding must seal to PCR 7 in the sha256 bank - the role's binding, and
+    # the one mp-09-secure-boot gives meaning to.
     command: |
-      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+      n=0
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm" || $2=="part" || $2=="disk" {print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
-        slot=$(clevis luks list -d "$d" 2>/dev/null | awk -F: '/tpm2/ {print $1; exit}')
-        if [ -z "$slot" ]; then
+        n=$((n + 1))
+        cfg=$(clevis luks list -d "$d" 2>/dev/null | awk -F: '/tpm2/ {print; exit}')
+        slot=${cfg%%:*}
+        if [ -z "$cfg" ]; then
           echo "not TPM-bound: $d"
+        elif ! printf '%s' "$cfg" | grep -qE '"pcr_ids"[[:space:]]*:[[:space:]]*"([0-9]+,)*7(,[0-9]+)*"'; then
+          echo "not sealed to PCR 7, the Secure Boot state: $d ($cfg)"
+        elif ! printf '%s' "$cfg" | grep -qE '"pcr_bank"[[:space:]]*:[[:space:]]*"sha256"'; then
+          echo "not sealed in the sha256 bank: $d ($cfg)"
         elif ! clevis luks pass -d "$d" -s "$slot" >/dev/null 2>&1; then
           echo "stale binding - the TPM will not release the key: $d (slot $slot)"
         fi
       done
+      [ "$n" -gt 0 ] || echo "no LUKS device found"
     expect_empty: true
+
+  - id: mp-09-secure-boot
+    description: Secure Boot is enforced, so a PCR 7 seal on the CUI volumes means something
+    # The volumes are sealed to PCR 7, which measures the Secure Boot policy
+    # and the authorities that verified the boot chain. With Secure Boot off
+    # that measurement is the same for any medium the machine boots, so the
+    # TPM would release the keys to whoever holds the machine (issue #4). The
+    # role neither binds nor reseals while it is off, and carries on with the
+    # key on disk as on a host with no TPM (ODP-REVIEW I1). This reads the
+    # EFI variable's data byte - the effective state; a host with no such
+    # variable (BIOS boot) has nowhere to enforce it.
+    command: |
+      f=$(ls /sys/firmware/efi/efivars/SecureBoot-* 2>/dev/null | head -1)
+      [ -n "$f" ] || { echo "no SecureBoot EFI variable (BIOS boot, or EFI variables unavailable)"; exit 0; }
+      od -An -t u1 "$f" | awk '{v=$NF} END {print (v == 1) ? "enabled" : "disabled"}'
+    expect_output: "enabled"
 
   - id: mp-09-luks-no-key-on-disk
     description: No key file for the encrypted volumes rests on the disk
@@ -1842,9 +1926,11 @@ checks:
     expect_output: "linked"
 
   - id: sc-09-clientalive-interval
-    description: Idle network sessions are disconnected
+    description: sshd probes for dead peers at the ODP interval
+    # Dead-peer detection, not idle termination (that is ChannelTimeout and
+    # logind). Equality: "<=" passed 0, which turns ClientAlive off (issue #9).
     command: "sshd -T 2>/dev/null | awk '/^clientaliveinterval/ {print $2}'"
-    expect_int: "<= {odp.ssh_client_alive_interval}"
+    expect_int: "== {odp.ssh_client_alive_interval}"
 
   - id: sc-09-clientalive-countmax
     description: Unresponsive peers are dropped rather than probed indefinitely
@@ -1859,7 +1945,11 @@ checks:
 
   - id: sc-09-tmout
     description: The shell owning the connection exits when idle
-    command: "grep -rhoP '(?<=^TMOUT=)\\d+' /etc/profile /etc/profile.d/ 2>/dev/null | sort -n | head -1"
+    # Effective state: TMOUT as a login shell has it, not the smallest value
+    # in any file - that read 0 as compliant (issue #9). 0 or unset turns
+    # the timeout off, so it prints nothing and fails as absent.
+    command: |
+      t=$(env -i HOME=/var/empty bash --login -c 'echo "$TMOUT"' 2>/dev/null); [ "${t:-0}" -gt 0 ] 2>/dev/null && echo "$t"
     expect_int: "<= {odp.session_timeout_seconds}"
 
   - id: sc-10-crypto-policy

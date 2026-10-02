@@ -369,12 +369,18 @@
     cmd: |
       set -o pipefail
       changed=0 rc=0
+      exempt=({{ nist_aging_exempt_accounts | map('quote') | join(' ') }})
       for u in {{ nist_interactive_accounts.stdout_lines | map('quote') | join(' ') }}; do
-        read -r mn mx wn <<<"$(awk -F: -v u="$u" '$1==u {print $4, $5, $6}' /etc/shadow)"
+        # The automation account keeps the minimum age and the warning but
+        # has no maximum (ODP-REVIEW I2): field 5 empty, `chage --maxdays -1`.
+        want_mx={{ odp.password_max_age }}
+        for e in "${exempt[@]}"; do [ "$e" = "$u" ] && want_mx=""; done
+        read -r mn mx wn <<<"$(awk -F: -v u="$u" '$1==u {print ($4==""?"-":$4), ($5==""?"-":$5), ($6==""?"-":$6)}' /etc/shadow)"
+        [ "$mx" = "-" ] && mx=""
         if [ "$mn" != "{{ odp.password_min_age }}" ] || \
-           [ "$mx" != "{{ odp.password_max_age }}" ] || \
+           [ "$mx" != "$want_mx" ] || \
            [ "$wn" != "{{ odp.password_warn_age }}" ]; then
-          if chage --maxdays {{ odp.password_max_age }} \
+          if chage --maxdays "${want_mx:--1}" \
                    --mindays {{ odp.password_min_age }} \
                    --warndays {{ odp.password_warn_age }} "$u"; then
             changed=1

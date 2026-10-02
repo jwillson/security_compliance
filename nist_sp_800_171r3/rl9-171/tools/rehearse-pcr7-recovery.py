@@ -14,18 +14,26 @@ RUNBOOK's recovery ("When you are locked out"):
   2. Boot stops at the passphrase prompt for each CUI volume (it must not
      unlock by itself); the console answers with $NIST_LUKS_PASSPHRASE.
   3. The host reaches its login prompt, with Secure Boot now off.
-  4. verify.sh reports the stale binding (mp-09-luks-tpm-bound FAIL).
-  5. apply.sh --tags 03.08.09 reseals the volumes to the new PCR 7.
-  6. verify.sh passes 03.08.09 again.
-  7. A reboot unlocks both volumes from the TPM alone, no prompt.
+  4. verify.sh reports the stale binding and that Secure Boot is off
+     (mp-09-luks-tpm-bound, mp-09-secure-boot FAIL).
+  5. apply.sh --tags 03.08.09 completes but does NOT reseal: a seal made with
+     Secure Boot off opens for any boot medium (ODP-REVIEW I1). The binding
+     stays stale and the key goes back on disk so the host boots unattended.
+  6. Secure Boot is enforced again - only the variable store is restored,
+     disk and TPM untouched - and the host boots by itself.
+  7. apply.sh --tags 03.08.09 finds the original seal valid again, sets
+     crypttab back to the TPM and removes the key; verify.sh passes 03.08.09.
+  8. A reboot unlocks both volumes from the TPM alone, no prompt.
 
-Then the guest is reverted to its `hardened` snapshot (Secure Boot on, TPM
-state as before). Exit 0 only if every step passes. Needs the lab's env.sh
+It refuses, before it touches anything, a guest that is not a lab guest or
+has no `hardened` snapshot. At the end the guest is reverted to that snapshot
+(Secure Boot on, TPM state as before). Exit 0 only if every step passes. Needs the lab's env.sh
 sourced, with NIST_LUKS_PASSPHRASE set; the passphrase is typed at the
 console and never logged (the transcript records only what the guest sends).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -39,6 +47,7 @@ import pexpect  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIRSH = ["virsh", "-c", "qemu:///system"]
 NO_KEYS_VARS = "/usr/share/OVMF/OVMF_VARS_4M.fd"     # no PK/KEK/db: Secure Boot off
+IMAGES = "/var/lib/libvirt/images"                   # vm/byo-snapshot.sh keeps snapshots here
 PASSPHRASE_PROMPT = r"[Pp]assphrase for (disk )?[^\r\n]*(cui_data|cui_backup|lv_cui|lv_backup)"
 # The prompt is shown on every boot - systemd displays the request while
 # clevis-luks-askpass answers it from the TPM - so a prompt proves nothing.
@@ -115,7 +124,31 @@ def main(argv):
         results.append(ok)
         print(f"{'PASS' if ok else 'FAIL'}  {step}{'  - ' + detail if detail else ''}", flush=True)
 
-    nvram = re.search(r"<nvram[^>]*>([^<]+)<", sh(*VIRSH, "dumpxml", host).stdout).group(1)
+    # Refuse before touching the variable store: the end of the rehearsal
+    # depends on the hardened snapshot (issue #6).
+    xml = sh(*VIRSH, "dumpxml", host).stdout
+    if "52:54:00:17:ab:" not in xml:
+        print(f"error: {host} is not a lab guest (no 52:54:00:17:ab: MAC on nist-lab)", file=sys.stderr); return 2
+    snaps = sh("./vm/byo-snapshot.sh", "list", host).stdout
+    if not (re.search(rf"^{re.escape(host)}\s+hardened\s+qcow2", snaps, re.M)
+            and re.search(rf"^{re.escape(host)}\s+hardened\s+nvram", snaps, re.M)):
+        print(f"error: {host} has no 'hardened' snapshot (vm/byo-snapshot.sh save {host} hardened)",
+              file=sys.stderr); return 2
+    nvram = re.search(r"<nvram[^>]*>([^<]+)<", xml).group(1)
+    hardened_nvram = os.path.join(IMAGES, f"{host}.hardened.nvram")
+
+    def recap_of(out):
+        line = next((l for l in out.splitlines() if re.match(rf"^{re.escape(host)}\s+:", l)), "")
+        return re.sub(r"\s+", " ", line)
+
+    def check_status(cid):
+        """A check's status from the newest report for host, or None."""
+        reports = sorted((f for f in os.listdir(os.path.join(ROOT, "reports"))
+                          if f.startswith(host + "-") and f.endswith(".json")), reverse=True)
+        if not reports: return None
+        d = json.load(open(os.path.join(ROOT, "reports", reports[0])))
+        return next((c["status"] for r in d["requirements"] for c in r.get("checks", [])
+                     if c["id"] == cid), None)
     run_dir = os.path.join(ROOT, "reports", "runs", f"pcr7-{host}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}")
     os.makedirs(run_dir, exist_ok=True)
     print(f"==> evidence in {run_dir}", flush=True)
@@ -146,46 +179,65 @@ def main(argv):
                 "od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-* | awk '{print $NF}'").stdout
         print(f"    Secure Boot byte now: {sb.strip().splitlines()[-1] if sb.strip() else '?'} (1 = on)", flush=True)
 
-        # 4. verify must see the stale binding.
+        # 4. verify must see the stale binding and Secure Boot off.
         out = sh("./verify.sh", "--host", host, "--requirement", "03.08.09").stdout
         stale = "stale binding" in out
-        record("4. verify.sh reports the stale binding", stale,
-               "" if stale else "mp-09-luks-tpm-bound did not report it")
+        sb_off = check_status("mp-09-secure-boot") == "FAIL"
+        record("4. verify.sh reports the stale binding and Secure Boot off", stale and sb_off,
+               "" if stale and sb_off else f"stale binding reported: {stale}; mp-09-secure-boot FAIL: {sb_off}")
 
-        # 5. The role reseals.
+        # 5. The role must not reseal to a Secure-Boot-off PCR 7 - and must
+        #    not stop either: the key goes back on disk and the run completes.
         out = sh("./apply.sh", "--limit", host, "--tags", "03.08.09").stdout
-        recap = next((l for l in out.splitlines() if re.match(rf"^{re.escape(host)}\s+:", l)), "")
-        ok5 = "failed=0" in recap and "unreachable=0" in recap
-        record("5. apply.sh --tags 03.08.09 reseals to the new PCR 7", ok5, re.sub(r"\s+", " ", recap))
+        recap = recap_of(out)
+        ran = "failed=0" in recap and "unreachable=0" in recap
+        warned = "not bound or resealed" in out
+        sh("./verify.sh", "--host", host, "--requirement", "03.08.09")
+        still_stale = check_status("mp-09-luks-tpm-bound") == "FAIL"
+        key = sh("ansible", host, "-b", "-m", "ansible.builtin.shell", "-a",
+                 "test -s /root/.luks-key && grep -c '/root/.luks-key' /etc/crypttab").stdout
+        key_back = bool(re.search(r"^2\s*$", key, re.M))
+        record("5. apply.sh completes without resealing; the key is back on disk for boot",
+               ran and warned and still_stale and key_back,
+               f"{recap}; warned: {warned}; still stale: {still_stale}; key named in crypttab: {key_back}")
 
-        # 6. verify passes again.
+        # 6. Enforce Secure Boot again: the hardened variable store, nothing else.
+        print(f"==> {host}: restoring the hardened variable store (Secure Boot on)", flush=True)
+        sh(*VIRSH, "shutdown", host)
+        for _ in range(60):
+            if domstate(host) == "shut off": break
+            time.sleep(2)
+        else:
+            sh(*VIRSH, "destroy", host)
+        sh("sudo", "cp", "-f", hardened_nvram, nvram, check=True)
+        sh(*VIRSH, "start", host, check=True)
+        con = Console(host, timeout=600)
+        how = unlock_at_boot(con, pw)
+        con.close(); con = None
+        evidence(host, run_dir, "boot-B-secure-boot-restored")
+        record("6. with Secure Boot enforced again the host boots by itself", how == "tpm",
+               "" if how == "tpm" else "the passphrase had to be typed")
+
+        # 7. The role finds the original seal valid, removes the key; verify passes.
+        out = sh("./apply.sh", "--limit", host, "--tags", "03.08.09").stdout
+        recap = recap_of(out)
+        key = sh("ansible", host, "-b", "-m", "ansible.builtin.shell", "-a",
+                 "test -e /root/.luks-key && echo present || echo absent; grep -c ' none luks' /etc/crypttab").stdout
         out = sh("./verify.sh", "--host", host, "--requirement", "03.08.09").stdout
-        ok6 = re.search(r"(PASS|PART)\s+03\.08\.09", out) is not None and "0 failed" in out
-        record("6. verify.sh passes 03.08.09 again", ok6)
+        ok7 = ("failed=0" in recap and "absent" in key and re.search(r"^2\s*$", key, re.M) is not None
+               and re.search(r"(PASS|PART)\s+03\.08\.09", out) is not None and "0 failed" in out)
+        record("7. apply.sh relies on the TPM again and removes the key; verify.sh passes 03.08.09", ok7,
+               "" if ok7 else f"{recap}; key/crypttab: {' '.join(key.split())}")
 
-        # 7. Reboot: the TPM alone must unlock, with no prompt. If it prompts,
-        #    answer (so the host stays usable), reseal once more and try again:
-        #    that tells a first-boot artefact from a recovery that never holds.
-        def reboot_expect_unlock(label):
-            nonlocal con
-            con = Console(host, timeout=600)
-            sh("ansible", host, "-b", "-m", "ansible.builtin.shell", "-a", "sleep 2; systemctl reboot",
-               "-B", "60", "-P", "0")
-            how = unlock_at_boot(con, pw)
-            con.close(); con = None
-            evidence(host, run_dir, label)
-            return how != "tpm"
-
-        prompted = reboot_expect_unlock("boot-B-after-reseal")
-        record("7. the next boot unlocks from the TPM alone", prompted == 0,
-               "" if prompted == 0 else f"no login within {UNATTENDED_GRACE}s until the passphrase was typed")
-        if prompted:
-            out = sh("./apply.sh", "--limit", host, "--tags", "03.08.09").stdout
-            recap = next((l for l in out.splitlines() if re.match(rf"^{re.escape(host)}\s+:", l)), "")
-            print(f"    resealed again: {re.sub(r'\s+', ' ', recap)}", flush=True)
-            again = reboot_expect_unlock("boot-C-after-second-reseal")
-            record("7b. after a second reseal, the next boot unlocks alone", again == 0,
-                   "" if again == 0 else "still prompting")
+        # 8. Reboot: the TPM alone must unlock, with no prompt.
+        con = Console(host, timeout=600)
+        sh("ansible", host, "-b", "-m", "ansible.builtin.shell", "-a", "sleep 2; systemctl reboot",
+           "-B", "60", "-P", "0")
+        how = unlock_at_boot(con, pw)
+        con.close(); con = None
+        evidence(host, run_dir, "boot-C-after-reapply")
+        record("8. the next boot unlocks from the TPM alone", how == "tpm",
+               "" if how == "tpm" else f"no login within {UNATTENDED_GRACE}s until the passphrase was typed")
         mounts = sh("ansible", host, "-b", "-m", "ansible.builtin.shell", "-a",
                     # One path per findmnt: given two, it reads them as a
                     # source and a target and matches nothing.

@@ -91,9 +91,51 @@
   when: nist_can_encrypt and not nist_tpm_dev.stat.exists
   tags: ["03.08.09", "03.13.08", "03.13.10"]
 
+- name: "03.08.09 | Read the Secure Boot state"
+  # The volumes are sealed to PCR 7, which measures the Secure Boot policy.
+  # With Secure Boot off that measurement is the same for any boot medium,
+  # so a seal made then opens for whoever holds the machine (issue #4). The
+  # EFI variable's last byte is the state; four bytes of attributes precede it.
+  ansible.builtin.shell:
+    cmd: |
+      f=$(ls /sys/firmware/efi/efivars/SecureBoot-* 2>/dev/null | head -1)
+      [ -n "$f" ] || { echo "absent"; exit 0; }
+      od -An -t u1 "$f" | awk '{v=$NF} END {print (v == 1) ? "enabled" : "disabled"}'
+    executable: /bin/bash
+  register: nist_secure_boot_state
+  changed_when: false
+  check_mode: false
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+- name: "03.08.09 | Seal to the TPM only while Secure Boot is enforced"
+  # The owner's decision (ODP-REVIEW I1): with Secure Boot off, no binding is
+  # made and no stale one resealed, and the host is treated as one without a
+  # TPM - the key stays on disk so it boots unattended, the checks report
+  # it, and the rest of the role carries on. Turning Secure Boot back on and
+  # re-applying binds (or finds the earlier seal valid again) and removes it.
+  ansible.builtin.set_fact:
+    nist_luks_seal_allowed: >-
+      {{ nist_tpm_dev.stat.exists and
+         (nist_secure_boot_state.stdout | default('') | trim) == 'enabled' }}
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+- name: "03.08.09 | Warn that the volumes are not sealed while Secure Boot is off"
+  ansible.builtin.debug:
+    msg: >-
+      This host has a TPM but Secure Boot is
+      {{ nist_secure_boot_state.stdout | default('unknown') | trim }}. A PCR 7
+      seal made now would open for any boot medium, so the CUI and backup
+      volumes are not bound or resealed: the key file stays in
+      /root/.luks-key so the host still boots unattended, and
+      mp-09-secure-boot, mp-09-luks-tpm-bound and mp-09-luks-no-key-on-disk
+      report it. Enforce Secure Boot in the firmware, boot, and re-apply.
+  when: nist_can_encrypt and nist_tpm_dev.stat.exists and not nist_luks_seal_allowed
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
 # The key that opens the CUI volumes must not rest beside them (DEFECTS 6b.5).
 # It is staged only while a volume still needs it - to be formatted, opened
-# for the first time or bound - then each volume is bound to the TPM (clevis
+# for the first time or bound - or while the TPM is not to be relied on (no
+# TPM, or Secure Boot off). Then each volume is bound to the TPM (clevis
 # tpm2, PCR 7: sealed to the Secure Boot state), crypttab opens them with
 # "none" (the boot-time password request is answered by
 # clevis-luks-askpass from the TPM), and the staged key is deleted. The
@@ -150,7 +192,9 @@
         group: root
         mode: "0400"
       no_log: true
-      when: not nist_luks_all_bound
+      # Also whenever the TPM will not be relied on (Secure Boot off): crypttab
+      # then names this file, which must exist for the host to boot.
+      when: not nist_luks_all_bound or not nist_luks_seal_allowed
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Format the volumes as LUKS2 with an approved cipher"
@@ -224,39 +268,51 @@
       # role's old order (-d DEV tpm2 CFG -k KEY -y) left -k and -y unread, so
       # clevis prompted for the passphrase, failed without a terminal, and
       # failed_when: false hid it on every host (DEFECTS 6b.5). A failed bind
-      # now fails the task.
+      # fails the task: `set -e` ends the script at the failing command, so
+      # its last line - the word the tasks below read - is never printed.
+      # Without it a failed bind still printed "bound", crypttab was set to
+      # none and the key deleted, and the next boot stopped at the console
+      # (issue #3; tools/probes/bind-script-experiment.sh shows both). The
+      # TPM is then asked for the key, so a seal it will not release fails
+      # too, before anything relies on it.
       # A stale binding (the TPM refuses it since PCR 7 changed) is resealed
       # to the current state with `clevis luks regen`, the passphrase on
       # stdin - so after a firmware update, recovery is the passphrase at the
       # console once, then this task (RUNBOOK, "When you are locked out").
       ansible.builtin.shell:
         cmd: |
-          set -o pipefail
+          set -euo pipefail
           dev=/dev/{{ nist_vg_name }}/{{ item }}
           slot=$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '/tpm2/ {print $1; exit}')
           if [ -n "$slot" ] && clevis luks pass -d "$dev" -s "$slot" >/dev/null 2>&1; then
             echo "already-bound"
+            exit 0
           elif [ -n "$slot" ]; then
             clevis luks regen -q -d "$dev" -s "$slot" < /root/.luks-key > /dev/null
-            echo "resealed"
+            result=resealed
           else
             clevis luks bind -y -k /root/.luks-key \
               -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' < /dev/null
-            echo "bound"
+            result=bound
           fi
+          slot=$(clevis luks list -d "$dev" | awk -F: '/tpm2/ {print $1; exit}')
+          [ -n "$slot" ] || { echo "no tpm2 binding on $dev after $result" >&2; exit 1; }
+          clevis luks pass -d "$dev" -s "$slot" > /dev/null \
+            || { echo "the TPM does not release the key for $dev (slot $slot) after $result" >&2; exit 1; }
+          echo "$result"
         executable: /bin/bash
       loop: [lv_cui, lv_backup]
       register: nist_clevis
       changed_when: "'already-bound' not in nist_clevis.stdout"
-      when: nist_tpm_dev.stat.exists
-      tags: ["03.08.09", "03.13.10"]
+      when: nist_luks_seal_allowed
+      tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Note whether the TPM now holds the keys"
       # In check mode the bind does not run; a host bound on an earlier run
       # still counts as bound, so --check reports no drift there.
       ansible.builtin.set_fact:
         nist_luks_tpm_ok: >-
-          {{ nist_tpm_dev.stat.exists and (nist_luks_all_bound or
+          {{ nist_luks_seal_allowed and (nist_luks_all_bound or
              (nist_clevis.results | default([]) | selectattr('stdout', 'defined')
               | map(attribute='stdout') | select('search', '(bound|resealed)$')
               | list | length == 2)) }}

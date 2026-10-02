@@ -192,5 +192,100 @@ class SupportedPlatform(unittest.TestCase):
         self.assertIn("refusing to assess", p.stderr)
 
 
+
+class RealChecks(unittest.TestCase):
+    """The shipped check definitions, against the value a defective host shows.
+
+    Only the part of a command that reads the host is replaced - the check's
+    own logic and assertion run as written - so each test fails on a check
+    that would pass the defect (issue #9: ClientAliveInterval 0 and TMOUT 0
+    passed, because "<= ODP" admits 0).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.checks = {c["id"]: c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]}
+        cls.odp = yaml.safe_load((ROOT / "catalog/overlay-rocky9.yml").read_text())["odp"]
+
+    def status(self, cid, reads, value):
+        check = dict(self.checks[cid])
+        self.assertIn(reads, check["command"], f"{cid} no longer reads the host with {reads!r}")
+        check["command"] = check["command"].replace(reads, f"echo {value}")
+        return na.Runner(self.odp).run(check)["status"]
+
+    SSHD = "sshd -T 2>/dev/null"
+    LOGIN = "env -i HOME=/var/empty bash --login -c 'echo \"$TMOUT\"' 2>/dev/null"
+
+    def test_clientalive_interval_zero_fails(self):
+        for cid in ("ac-11-ssh-clientalive-interval", "ma-05-ssh-idle-terminate", "sc-09-clientalive-interval"):
+            with self.subTest(cid):
+                self.assertEqual(self.status(cid, self.SSHD, "clientaliveinterval 0"), "FAIL")
+                self.assertEqual(self.status(cid, self.SSHD,
+                                 f"clientaliveinterval {self.odp['ssh_client_alive_interval']}"), "PASS")
+
+    def test_tmout_zero_or_unset_fails(self):
+        for cid in ("ac-10-tmout-set", "ac-11-tmout-set", "sc-09-tmout"):
+            with self.subTest(cid):
+                self.assertEqual(self.status(cid, self.LOGIN, "0"), "FAIL")
+                self.assertEqual(self.status(cid, self.LOGIN, "''"), "FAIL")
+                self.assertEqual(self.status(cid, self.LOGIN, "900"), "PASS")
+                self.assertEqual(self.status(cid, self.LOGIN, "3600"), "FAIL")
+
+
+class AgingChecks(unittest.TestCase):
+    """The account-aging checks against a fake /etc/passwd and /etc/shadow.
+
+    Issue #12: the inactivity check accepted 99999 (any non-empty value), and
+    the automation account - exempted by the owner (ODP-REVIEW I2) - must be
+    skipped only when the role has declared it in aging-exempt.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.checks = {c["id"]: c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]}
+        cls.odp = yaml.safe_load((ROOT / "catalog/overlay-rocky9.yml").read_text())["odp"]
+
+    def status(self, cid, shadow_fields, exempt=""):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "passwd").write_text("alice:x:1000:1000::/home/alice:/bin/bash\n")
+            Path(d, "shadow").write_text("alice:$6$x:" + shadow_fields + "\n")
+            Path(d, "exempt").write_text(exempt)
+            check = dict(self.checks[cid])
+            cmd = check["command"]
+            for real in ("/etc/passwd", "/etc/shadow", "/etc/nist-800-171/aging-exempt"):
+                self.assertIn(real, cmd, f"{cid} no longer reads {real}")
+            check["command"] = (cmd.replace("/etc/passwd", f"{d}/passwd")
+                                   .replace("/etc/shadow", f"{d}/shadow")
+                                   .replace("/etc/nist-800-171/aging-exempt", f"{d}/exempt"))
+            return na.Runner(self.odp).run(check)["status"]
+
+    def test_inactivity_must_be_the_odp(self):
+        ok = f"20000:1:60:7:{self.odp['account_inactivity_days']}::"
+        self.assertEqual(self.status("ac-01-inactive-users", ok), "PASS")
+        self.assertEqual(self.status("ac-01-inactive-users", "20000:1:60:7:99999::"), "FAIL")
+        self.assertEqual(self.status("ac-01-inactive-users", "20000:1:60:7:::"), "FAIL")
+        self.assertEqual(self.status("ac-01-inactive-users", f"::60:7:{self.odp['account_inactivity_days']}::"), "FAIL")
+
+    def test_a_declared_exemption_is_skipped_and_only_that(self):
+        never = "20000:1:99999:7:::"
+        self.assertEqual(self.status("ac-01-inactive-users", never), "FAIL")
+        self.assertEqual(self.status("ac-01-inactive-users", never, "alice  # automation account\n"), "PASS")
+        self.assertEqual(self.status("ac-01-inactive-users", never, "# alice\nbob\n"), "FAIL")
+        self.assertEqual(self.status("ia-12-no-never-expire", never), "FAIL")
+        self.assertEqual(self.status("ia-12-no-never-expire", never, "alice\n"), "PASS")
+
+    def test_an_exempt_password_older_than_the_maximum_age_fails(self):
+        import time
+        today = int(time.time() // 86400)
+        mx = self.odp["password_max_age"]
+        fresh = f"{today - mx + 1}:1::7:::"
+        stale = f"{today - mx - 1}:1::7:::"
+        self.assertEqual(self.status("ia-12-exempt-rotated", fresh, "alice\n"), "PASS")
+        self.assertEqual(self.status("ia-12-exempt-rotated", stale, "alice\n"), "FAIL")
+        self.assertEqual(self.status("ia-12-exempt-rotated", "::::::", "alice\n"), "FAIL")
+        self.assertEqual(self.status("ia-12-exempt-rotated", stale, ""), "PASS")
+
 if __name__ == "__main__":
     unittest.main()

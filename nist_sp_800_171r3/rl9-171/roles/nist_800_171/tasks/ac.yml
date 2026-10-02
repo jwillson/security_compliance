@@ -24,10 +24,50 @@
   register: nist_interactive_accounts
   changed_when: false
   check_mode: false
-  # 03.05.12 too: its lifetime loop reads this list, and without the tag
-  # `--tags 03.05.12` looped over nothing and reported success (the 1b.7
-  # failure, again; DEFECTS 6b.4).
-  tags: ["03.01.01", "03.01.05", "03.05.12"]
+  # Every run needs this list - the 03.01.01 and 03.05.12 loops read it -
+  # and it only reads, so it is `always`: a requirement tag alone left it out
+  # of `--tags 03.05.12` (DEFECTS 6b.4) and `--skip-tags 03.01.01` removed it
+  # from under ia.yml, which then failed on an undefined variable (issue #12).
+  tags: ["always"]
+
+- name: "03.01.01 | Declare the accounts exempt from password aging"
+  # The checks skip exactly the names listed here (ODP-REVIEW I2).
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/aging-exempt"
+    content: |
+      # Written by the nist_800_171 role. Exempt from password maximum age and
+      # the inactivity lock (03.05.12, 03.01.01): the automation account, which
+      # signs in with key and password; its password is rotated by the
+      # RUNBOOK's procedure instead (ODP-REVIEW I2).
+      {% for u in nist_aging_exempt_accounts %}
+      {{ u }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.01.01", "03.05.12"]
+
+- name: "03.01.01 | Lift the inactivity lock from the exempt accounts"
+  # Their maximum age is lifted with the other aging fields (ia.yml, 03.05.12).
+  # Compared first, so a settled host reports no change; a failing chage fails
+  # the task, naming the account.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      changed=0 rc=0
+      for u in {{ nist_aging_exempt_accounts | intersect(nist_interactive_accounts.stdout_lines) | map('quote') | join(' ') }}; do
+        cur=$(awk -F: -v u="$u" '$1==u {print $7}' /etc/shadow)
+        if [ -n "$cur" ]; then
+          if chage --inactive -1 "$u"; then changed=1
+          else echo "chage --inactive failed for $u" >&2; rc=1; fi
+        fi
+      done
+      echo "changed=$changed"
+      exit $rc
+    executable: /bin/bash
+  register: nist_chage_exempt
+  changed_when: "'changed=1' in nist_chage_exempt.stdout"
+  tags: ["03.01.01", "03.05.12"]
 
 - name: "03.01.01 | Apply the inactivity lock to existing interactive accounts"
   # Field 7 of /etc/shadow is compared first so a no-op run reports no change.
@@ -38,7 +78,7 @@
     cmd: |
       set -o pipefail
       changed=0 rc=0
-      for u in {{ nist_interactive_accounts.stdout_lines | map('quote') | join(' ') }}; do
+      for u in {{ nist_interactive_accounts.stdout_lines | difference(nist_aging_exempt_accounts) | map('quote') | join(' ') }}; do
         cur=$(awk -F: -v u="$u" '$1==u {print $7}' /etc/shadow)
         if [ "$cur" != "{{ odp.account_inactivity_days }}" ]; then
           if chage --inactive {{ odp.account_inactivity_days }} "$u"; then
@@ -64,11 +104,16 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      changed=0
+      changed=0 rc=0
       for u in $(awk -F: '($3=="" ) {print $1}' /etc/shadow); do
-        chage -d "$(date +%Y-%m-%d)" "$u" && changed=1
+        # A failing chage fails the task, naming the account: `&& changed=1`
+        # let the loop's status be the last test's, so a failure passed
+        # silently (issue #12).
+        if chage -d "$(date +%Y-%m-%d)" "$u"; then changed=1
+        else echo "chage -d failed for $u" >&2; rc=1; fi
       done
       echo "changed=$changed"
+      exit $rc
     executable: /bin/bash
   register: nist_lastchg
   changed_when: "'changed=1' in nist_lastchg.stdout"
@@ -524,6 +569,34 @@
     group: root
     mode: "0644"
   tags: ["03.01.10", "03.01.11", "03.13.09"]
+
+- name: "03.01.11 | Create logind's drop-in directory"
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: ["03.01.11"]
+
+- name: "03.01.11 | End login sessions with no input for the idle period"
+  # TMOUT acts only at a prompt, and sshd's ChannelTimeout counts output as
+  # activity, so a session left showing `tail -f` or `watch` was never ended
+  # (issue #9). logind judges a terminal session by its last input and stops
+  # it after StopIdleSessionSec (systemd >= 252, the RHEL 9 STIG's control).
+  # A session without a terminal has no input to judge and is left alone.
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/00-nist-800-171.conf
+    content: |
+      # 03.01.11 Session Termination: a login session with no input for
+      # {{ odp.session_timeout_seconds }}s is stopped, whatever it prints.
+      [Login]
+      StopIdleSessionSec={{ odp.session_timeout_seconds }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart logind
+  tags: ["03.01.11"]
 
 # ===========================================================================
 # 03.01.12 Remote Access / 03.01.16 Wireless / 03.01.20 External systems

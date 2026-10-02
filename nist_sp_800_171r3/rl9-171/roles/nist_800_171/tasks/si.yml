@@ -54,6 +54,11 @@
     state: latest
     security: true
     update_cache: true
+  # Polled, not held open: a first apply can spend more than the idle limit
+  # in one silent transaction, and ChannelTimeout and logind end a session
+  # idle that long (03.01.11; issue #9). Each poll is a short new session.
+  async: 3600
+  poll: 15
   register: nist_sec_updates
   tags: ["03.14.01"]
 

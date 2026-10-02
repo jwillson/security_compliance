@@ -23,6 +23,7 @@ has been rehearsed against this baseline on a retrofit guest; where the rehearsa
 - [Adding a log collector](#adding-a-log-collector)
 - [When you are locked out](#when-you-are-locked-out)
 - [Other things that will bite you](#other-things-that-will-bite-you)
+- [Rotating the automation account's password](#rotating-the-automation-accounts-password)
 - [Rotating the lab credentials](#rotating-the-lab-credentials)
 - [Decommissioning](#decommissioning)
 
@@ -496,7 +497,7 @@ was rehearsed and reverted.
 | Account locked by faillock after 3 failures (03.01.08) | The correct password is refused over SSH **and at the console**: the console login runs the same PAM stack. With root locked and one admin account, nobody can log in to run a reset during the lockout. | **Wait.** The lock expires `lockout_duration_seconds` (default 900) after the last failure; then log in and `sudo faillock --user <name> --reset` clears the tally, or simply carry on. For a single-admin host, create a second administrative account before you need it: faillock is per user, so it is not locked when the first one is. |
 | MFA enforced before operators enrolled keys | Key-only logins are refused with "Permission denied". | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`. Rehearsed verbatim: key-only login works immediately, `./verify.sh --requirement 03.05.03` reports `ia-03-sshd-authmethods` as failing, and `./apply.sh --tags 03.05.03` restores enforcement. To keep it off, set `nist_mfa_enforce_pubkey: false` and re-apply. |
 | Your key is ed25519 and FIPS rejects it | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` at preauth. | Add an RSA-3072 key to the admin user's `authorized_keys` from the console. |
-| Boot never reaches a login prompt; the console shows "Please enter passphrase for disk vg_sys-lv_cui (cui_data)" | The TPM would not release the volume keys. They are sealed to PCR 7, the Secure Boot state, so a firmware or Secure Boot database update (a `dbx` revocation from `fwupd`, new keys, Secure Boot toggled) or a cleared TPM changes it, from the next boot on. Remote access is gone until the passphrase is typed. **The prompt alone is not the symptom:** it is shown on every boot while clevis answers it from the TPM a second later — the symptom is that it stays. | Type `NIST_LUKS_PASSPHRASE` at the prompt (systemd tries it on the second volume too, so usually once). Once up, `./verify.sh` reports `mp-09-luks-tpm-bound`: "stale binding - the TPM will not release the key". Reseal from the control workstation: `NIST_LUKS_PASSPHRASE=... ./apply.sh --limit <host> --tags 03.08.09` (the role finds the stale binding and runs `clevis luks regen` with the passphrase), `./verify.sh` passes again, and the next boot unlocks alone. By hand instead: `sudo clevis luks regen -d /dev/vg_sys/lv_cui -s <slot>` per volume. **Rehearsed** with `tools/rehearse-pcr7-recovery.py` (Secure Boot turned off to change PCR 7; every step as written here). |
+| Boot never reaches a login prompt; the console shows "Please enter passphrase for disk vg_sys-lv_cui (cui_data)" | The TPM would not release the volume keys. They are sealed to PCR 7, the Secure Boot state, so a firmware or Secure Boot database update (a `dbx` revocation from `fwupd`, new keys, Secure Boot toggled) or a cleared TPM changes it, from the next boot on. Remote access is gone until the passphrase is typed. **The prompt alone is not the symptom:** it is shown on every boot while clevis answers it from the TPM a second later — the symptom is that it stays. | Type `NIST_LUKS_PASSPHRASE` at the prompt (systemd tries it on the second volume too, so usually once). Once up, `./verify.sh` reports `mp-09-luks-tpm-bound`: "stale binding - the TPM will not release the key". **First check Secure Boot** — `mp-09-secure-boot`. If it is off, turn it back on in the firmware before anything else: a seal made with Secure Boot off would open for any boot medium, so the role will not reseal then (ODP-REVIEW I1). It puts the key back on disk so the host boots unattended meanwhile, and reports it. With Secure Boot on again the original seal is often valid once more: re-apply and the role finds it so, removes the key and returns crypttab to the TPM. If the binding is still stale with Secure Boot on (a `dbx` update or new keys changed PCR 7), reseal from the control workstation: `NIST_LUKS_PASSPHRASE=... ./apply.sh --limit <host> --tags 03.08.09` (the role runs `clevis luks regen` with the passphrase), `./verify.sh` passes again, and the next boot unlocks alone. By hand instead: `sudo clevis luks regen -d /dev/vg_sys/lv_cui -s <slot>` per volume, only with Secure Boot enforced. **Rehearsed** with `tools/rehearse-pcr7-recovery.py` (Secure Boot turned off to change PCR 7: the boot waits for the passphrase, the role declines to reseal and keeps the host bootable, Secure Boot restored, the original seal holds, and the next boot unlocks from the TPM alone). |
 | Firewall locked out your source network | New SSH connections time out; an existing session may survive. | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` gets you back in immediately (rehearsed verbatim). It exempts that address from the firewall entirely, so do not leave it: once you are in, restore the authorized services with `./apply.sh --tags 03.13`, which also removes any trusted-zone exemption, and `sc-06-no-trusted-bypass` reports one that remains. Do **not** make it `--permanent` unless you accept the bypass until the next apply. |
 
 A reverted control is a deviation. `./verify.sh` reports each of the above
@@ -536,6 +537,38 @@ are generated, and your edit will be reverted on the next run while breaking
 reads the drop-in directory in sorted order. A `99-local.conf` setting
 `PermitRootLogin yes` has no effect, and the assessor will correctly report
 the host as still compliant. Verify with `sshd -T`, not by reading files.
+
+---
+
+## Rotating the automation account's password
+
+The account `apply.sh` connects as (the inventory's `ansible_user`) signs in
+with its key **and** its password (03.05.03). Password expiry would end its
+sign-in on day 60 and the inactivity lock disable it 35 days later, cutting
+off the run that hardens the host, so it is exempt from both (ODP-REVIEW
+I2): the role lists it in `/etc/nist-800-171/aging-exempt`, and the checks
+skip exactly that name. It is rotated by hand instead, every 60 days
+(`auth_refresh`), and `ia-12-exempt-rotated` reports a password older than
+that as a deviation.
+
+**Every connection that still offers the old password after the change is a
+failed authentication, and three in a row lock the account (03.01.08).**
+So change it, then update the stored copy, then run anything else:
+
+1. Choose a password the policy accepts (03.05.07: length, classes, not
+   reused). The minimum age is one day, so it cannot be changed twice the
+   same day.
+2. Change it on the host, over one interactive session:
+   `ssh <user>@<host>` (key, then the current password) and `passwd`.
+3. At once, update where the workstation keeps it: `NIST_BECOME_PASSWORD`
+   and whatever your `SSH_ASKPASS` reads (BYO lab: `$NIST_BYO_LAB/byoadmin_password`;
+   kickstart lab: `.secrets/admin_password`). One password for several
+   hosts means changing it on each before updating the copy - or give each
+   host its own.
+4. `./verify.sh --host <host> --requirement 03.05.12`: the connection
+   works with the new factor and `ia-12-exempt-rotated` passes.
+
+If the account is locked anyway: *When you are locked out*, faillock.
 
 ---
 

@@ -58,6 +58,11 @@
     executable: /bin/bash
   when: not nist_aide_db.stat.exists
   changed_when: true
+  # Polled, not held open: hashing a large filesystem can take longer than
+  # the idle limit, and an SSH session silent that long is ended (03.01.11;
+  # issue #9). Each poll is a short new session.
+  async: 3600
+  poll: 15
   tags: ["03.04.01"]
 
 - name: "03.04.01 | Record the baseline for a host this toolkit did not build"

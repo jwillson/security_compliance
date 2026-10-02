@@ -1064,3 +1064,102 @@ collector or for the retrofit reference.*
       the kickstart lab (`make vm`, `make vm-log`), each in its own inventory
       (docs/LAB.md, *Two labs on one workstation*). Every 6b defect was
       reproduced and its fix proven here, and 6.2a's syslog-ng receiver runs here.
+
+---
+
+## Phase 7 — the review after 1.0.0 (release 1.0.1)
+
+*A cloud review on 2026-09-26 filed GitHub issues #3-#15 and pushed fixes for
+#3-#7 to a branch. Verified against `main` on 2026-10-01 (TASKS.md, *Release
+1.0.1*): most findings hold. Each item below cites its issue; the branch was a
+source, and nothing from it is taken without its own proof here.*
+
+- [x] **7.1 A failed TPM bind reported success, then the key was deleted
+      (#3).** The bind script had `set -o pipefail` and no `set -e`: a failed
+      `clevis luks bind` fell through to `echo "bound"`, the task succeeded,
+      `nist_luks_tpm_ok` went true, the staged key was removed and crypttab
+      set to `none`, and the next boot waited at the console with no SSH. The
+      6b.5 comment above it — "a failed bind now fails the task" — was not
+      true. *Shown on a host first:* `tools/probes/bind-script-experiment.sh`
+      on `byo-rl9-02`, a loop device bound with the wrong key: main's script
+      exits 0 and prints `bound`; with `set -euo pipefail` and the TPM asked
+      for the key before the result is trusted (the branch's version), it
+      exits 1. The same probe shows the fix binds a volume never bound
+      (`clevis luks list` exits 0 there, so `set -e` does not break first
+      binds) and re-runs as `already-bound`.
+
+- [x] **7.2 The volumes could be sealed with Secure Boot off (#4).** PCR 7
+      measures the Secure Boot policy; with it off the measurement is the
+      same for any boot medium, so a seal made then opens for a live image on
+      the same machine. The RUNBOOK's recovery resealed in exactly that
+      state, and the PCR 7 rehearsal called it a pass. *Owner decision*
+      (ODP-REVIEW I1): refuse, and keep going. *Check first:*
+      `mp-09-luks-tpm-bound` now examines LUKS on partitions and disks as
+      well as logical volumes, requires PCR 7 in the sha256 bank, and fails
+      a host with no LUKS device — on `byo-rl9-01` it went from a vacuous
+      PASS to "no LUKS device found", while `byo-rl9-02` still passes; new
+      `mp-09-secure-boot` reads the SecureBoot EFI variable (03.08.09,
+      03.13.08). *Fix:* the role reads the Secure Boot state; with it off a
+      TPM host is treated as one without a TPM — nothing bound or resealed,
+      the key on disk so it boots, a warning, the play carries on (the
+      branch's version stopped the play). *Proven* by
+      `tools/rehearse-pcr7-recovery.py byo-rl9-02`, all eight steps: the
+      boot with Secure Boot off waits for the passphrase; verify reports the
+      stale binding and Secure Boot off; apply completes without resealing
+      and puts the key back; with the hardened variable store restored the
+      host boots by itself; the re-apply finds the original seal valid and
+      removes the key; the next boot unlocks from the TPM alone. The TPM
+      event logs show why the original seal holds: with Secure Boot back on,
+      PCR 7 returns to the value it was sealed to (identical across the last
+      two boots).
+
+- [x] **7.3 03.01.11 passed on settings that end nothing (#9).** Three
+      checks asserted `ClientAliveInterval <= ODP`, which 0 — ClientAlive
+      off — passes; three read `TMOUT` as the smallest value in any profile
+      file, so a stray `TMOUT=0` passed, and none read the effective value;
+      and a terminal session printing output with nobody typing was never
+      ended, while the overlay said sshd ended a session "whatever runs in
+      it" — ChannelTimeout counts output as activity. *Check first:*
+      `tests/test_assessor.py` (`RealChecks`) runs the shipped checks with
+      only the host read replaced: all six failed on the defect values
+      before the change. The interval checks now assert equality, the
+      `TMOUT` checks read a login shell (`env -i bash --login`), 0 or unset
+      failing as absent, and `ac-10-tmout-readonly` reads `readonly -p`. New
+      `ac-11-logind-idle-session` reads logind's `StopIdleSessionUSec` over
+      D-Bus; it failed on `byo-rl9-01` ("infinity"). *Fix:* the role sets
+      `StopIdleSessionSec` to the ODP (the RHEL 9 STIG's control); logind
+      judges a terminal session by its last input. The two tasks that can
+      run longer than the limit in one silent session — the security
+      updates and the first `aide --init` — are polled (`async`), since
+      either timeout would end them (#9's second point). *Proven by
+      behaviour* with `tools/ssh-idle-test.sh byo-rl9-01`: a terminal
+      session printing every 10 s with no input was ended by logind at
+      **901 s**, and a silent session by sshd at **900 s**. The async
+      security-update task ran, polled, and settled at `changed=0` on
+      `byo-rl9-02`.
+
+- [x] **7.4 Aging would lock the automation account out (#12).** Every
+      interactive account got a 60-day maximum and a 35-day inactivity lock,
+      the automation account included — and it signs in with key **and**
+      password (03.05.03), so on day 60 the run that hardens the host could
+      no longer sign in. *Owner decision* (ODP-REVIEW I2): exempt it, rotate
+      by hand. Also: `ac-01-inactive-users` accepted any non-empty
+      inactivity period, 99999 included; `ia-12-no-never-expire` resolved
+      users with `id -u`, whose failure read as uid 0, so an account it
+      could not resolve was never reported; the last-change loop swallowed a
+      failing `chage`; and `--skip-tags 03.01.01` removed the account list
+      from under `ia.yml`. *Check first:* `AgingChecks` in
+      `tests/test_assessor.py`, against a fake passwd and shadow, failed on
+      99999 and on an undeclared exemption before the change. *Fix:* the
+      role declares the exempt accounts (default `ansible_user`) in
+      `/etc/nist-800-171/aging-exempt`, lifts their maximum age and
+      inactivity lock and keeps their minimum age and warning; the checks
+      skip exactly the declared names; new `ia-12-exempt-rotated` reports an
+      exempt password older than `password_max_age`, so the rotation is
+      still evidenced (RUNBOOK, *Rotating the automation account's
+      password*; `auth_refresh` records it). The account list is `always`
+      tagged; the loop fails on a failed `chage`. *Proven* on `byo-rl9-02`
+      (two accounts): `byoadmin` lost maximum age and inactivity and kept
+      minimum and warning, `cuiuser1` kept 60/35, the second apply reported
+      `changed=0`, `--skip-tags 03.01.01 --check` completed, and 03.01.01
+      and 03.05.12 verify with nothing failed.

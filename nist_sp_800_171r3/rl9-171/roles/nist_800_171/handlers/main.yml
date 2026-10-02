@@ -8,6 +8,13 @@
     name: sshd
     state: restarted
 
+- name: restart logind
+  # systemd 252 supports restarting logind under live sessions; the apply's
+  # own SSH session carried on through it on byo-rl9-01 (issue #9).
+  ansible.builtin.systemd:
+    name: systemd-logind
+    state: restarted
+
 - name: restart rsyslog
   ansible.builtin.systemd:
     name: rsyslog
