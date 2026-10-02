@@ -36,7 +36,8 @@ Both labs, from a clean state, by `tools/release-run.sh` at commit `8c332c5`:
 the kickstart VMs reinstalled, the BYO guests rebuilt from the stock Rocky 9.8
 GenericCloud image (`--rebuild`). Each host: dry run on the never-applied
 host, apply, the reboot it reported it owed, apply again, dry run at
-`changed=0`, verify. Every host passed. The tag is on a later commit that
+`changed=0`, verify. Every host passed the release gate: it settled at
+`changed=0`, and no check failed beyond the documented limits shown below. The tag is on a later commit that
 changes documentation only (`git diff --stat 8c332c5 v1.0.0`).
 
 | Host | What it is | Satisfied / partial / not / org. | Checks run, failed |

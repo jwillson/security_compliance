@@ -647,8 +647,9 @@ and by the first release runs (6b.11-6b.14), which the release run at
       the password passed on stdin and never on disk; an existing hash is kept
       only if it verifies (PBKDF2-SHA512 from its own salt, which works under
       FIPS), so a changed `NIST_GRUB_PASSWORD` takes effect; the staged file
-      is removed. The `10_linux` edit, the `/etc/default/grub` edits (which
-      had never run) and the `update grub config` handler are gone: the
+      is removed. The `/etc/default/grub` edits (which had never run), the
+      separate `10_linux` task (which had run, and is not reverted on a
+      host applied before) and the `update grub config` handler are gone: the
       probe shows all four BLS entries already `--unrestricted` and `grub.cfg`
       already sourcing `user.cfg`. *Proven on `byo-rl9-02`:* apply
       `changed=2` then `changed=0`; both checks PASS; a reboot counted down
@@ -1413,3 +1414,24 @@ source, and nothing from it is taken without its own proof here.*
       Python 3.9.21; `assessor-parity.sh v1.0.0 HEAD --host byo-rl9-01`
       lists the ten assertions this release changed while their status held.
       *Not changed:* the v1.0.0 tag is annotated but not signed.
+
+- [x] **7.16 The public documents had gaps a newcomer would hit (#15).**
+      SECURITY.md named one reporting channel, GitHub's private vulnerability
+      reporting, which is not available while the repository is private and
+      may not be offered to every reporter; LAB.md relied on six files in
+      the lab directory - `tools.sh`, `env.sh`, `askpass.sh`, `wrongpass.sh`,
+      `grub_password`, `luks_passphrase` - that no script created; the
+      CHANGELOG's "every host passed" sat beside rows with failed checks; a
+      DEFECTS 6b.2 sentence read as if the old `10_linux` task had never run
+      (it had). The kickstart comment and the RUNBOOK's silence on the GRUB
+      user are 7.6. *Fix:* SECURITY.md has a fallback - a public issue that
+      asks for a private channel and says nothing else; new
+      `vm/byo-lab-init.sh` creates the whole lab directory, only what is
+      missing; the CHANGELOG says what "passed" means; the 6b.2 sentence is
+      exact. *Proven:* `vm/byo-lab-init.sh` with `NIST_BYO_LAB` set to an
+      empty directory built a working lab directory - secrets 0600,
+      ansible-core 2.21.4 with `ansible.posix` 2.2.2 and
+      `community.general` 13.4.0, the four scripts - and a second run
+      created nothing; the live lab was not touched.
+      *Not changed:* "the laptop" in several documents - it names the
+      owner's workstation the labs ran on, which is accurate.

@@ -11,6 +11,11 @@ Use GitHub's **private vulnerability reporting**: the repository's *Security*
 tab → *Report a vulnerability*. Please do not open a public issue or pull
 request for anything in scope below until a fix is released.
 
+If that option is not offered to you, open a public issue titled *"Security
+report: contact requested"* that says only that you have a report - no
+details, no affected component - and a private channel will be arranged with
+you there.
+
 Include what you can of:
 
 - the commit or release you ran, and the Rocky Linux minor version of the host;

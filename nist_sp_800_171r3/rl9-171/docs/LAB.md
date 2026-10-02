@@ -102,8 +102,8 @@ rebooted, settled).
 ### The lab directory
 
 Operator-side state lives outside the repository, in
-`$NIST_BYO_LAB` (default `~/.local/share/nist-byo-lab`), mode 0700. None of
-it is ever committed.
+`$NIST_BYO_LAB` (default `~/.local/share/nist-byo-lab`), mode 0700, created by
+`vm/byo-lab-init.sh`. None of it is ever committed.
 
 | Path | What |
 | --- | --- |
@@ -116,8 +116,11 @@ it is ever committed.
 | `askpass.sh`, `wrongpass.sh` | The SSH askpass; a deliberately wrong one for lockout rehearsals. (The scripted serial console used to live here too; it is `tools/console.py` now.) |
 | `venv/`, `collections/` | ansible-core and the collections in `requirements.yml`. |
 
-The venv: `uv venv venv && uv pip install --python venv/bin/python ansible-core`,
-then `venv/bin/ansible-galaxy collection install -p collections -r <repo>/nist_sp_800_171r3/rl9-171/requirements.yml`.
+`vm/byo-lab-init.sh` creates all of it on a new workstation - random
+secrets, the venv at the ansible-core version CI pins, the collections, and
+the four scripts - and only what is missing, so it is safe on a lab in use
+(DEFECTS 7.16). Before it existed these files were made by hand, and nothing
+could rebuild them.
 
 ### Host problems the scripts handle
 
@@ -193,6 +196,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | Script | Use |
 | --- | --- |
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
+| `vm/byo-lab-init.sh` | Create the BYO lab directory on a new workstation: random secrets, the pinned venv and collections, `tools.sh`, `env.sh`, the askpass scripts; only what is missing (DEFECTS 7.16). |
 | `tools/release-run.sh byo\|kickstart` | The release gate (TASKS R3), one lab at a time, at a committed worktree: every guest to a clean state (BYO: revert to `fresh`, or rebuild with `byo-guest.sh` if it has none; kickstart: reinstall with `build-vm.sh`), `harden-cycle.sh` on the collector and then each CUI host, a final verify of every host, and `summary.md` in `reports/runs/release-LAB-COMMIT-UTC/`. A host passes with `changed=0` and no failure beyond its documented retrofit limits. Destroys and rebuilds lab guests. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind DEFECTS 6b.2–6b.6; run it before and after a fix and diff. The `*-experiment` probes are self-cleaning tests of one behaviour (clevis binding and resealing; the role's bind script under `set -e`, against a bind that fails; rsyslog's peer-name check). |
