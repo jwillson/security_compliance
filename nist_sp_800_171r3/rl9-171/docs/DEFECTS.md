@@ -1289,7 +1289,15 @@ source, and nothing from it is taken without its own proof here.*
       `tools/rehearse-log-rotation.sh byo-rl9-01` failed four ways before the
       fix and passes after it - no configuration error, the service
       succeeding, btmp, wtmp and messages recreated 0600 after a forced
-      rotation, 03.14.08 verifying with nothing failed.
+      rotation, 03.14.08 verifying with nothing failed. *Corrected after:*
+      the 1.0.1 release run failed `si-08-logrotate-clean` on all five
+      freshly built hosts - not the configuration, but `--debug` reporting
+      the state file that logrotate creates on its first nightly run as
+      missing; `byo-rl9-01` had passed only because it had run for days.
+      The check now passes `--state /dev/null`; on a fresh host the real
+      configuration shows no error and one with a duplicate entry still
+      shows two. The hosts were re-assessed at the corrected commit with
+      `release-run.sh --reverify`, since nothing that hardens a host changed.
 
 - [x] **7.10 Six checks could not fail (#13, part).** `ac-12-sshd-crypto-policy`
       asserted `>= 0`; `ir-02-journald-retention` counted the stock commented

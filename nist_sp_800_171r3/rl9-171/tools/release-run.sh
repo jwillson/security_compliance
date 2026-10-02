@@ -4,6 +4,7 @@
 # cycled at one commit, and a summary the CHANGELOG quotes.
 #
 #   tools/release-run.sh byo [--rebuild]   after: source $NIST_BYO_LAB/env.sh
+#   tools/release-run.sh LAB --reverify RUN_DIR
 #   tools/release-run.sh kickstart    in a fresh shell: source $NIST_BYO_LAB/tools.sh;
 #                                     export NIST_INVENTORY=inventory/kickstart.yml
 #
@@ -30,6 +31,13 @@
 # commit. Everything lands in reports/runs/release-LAB-COMMIT-UTC/ (gitignored);
 # summary.md there is what the CHANGELOG's "Proven at this release" quotes.
 #
+# --reverify RUN_DIR repeats only the final assessment, at the current commit,
+# on the hosts RUN_DIR cycled, reusing its cycle results: for a commit after
+# RUN_DIR's that changes no role, playbook, overlay or lab script - a check
+# corrected, say - so the hosts it hardened are still what the role would
+# make. It refuses if any of those changed since RUN_DIR's commit, and the
+# summary names both commits. Read-only on the hosts.
+#
 # This destroys and rebuilds lab guests. Never point it at an inventory of
 # hosts you did not build for the lab.
 #
@@ -37,9 +45,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT"
-lab=${1:-}; rebuild=0
+lab=${1:-}; rebuild=0; reverify=""
 [[ "${2:-}" == --rebuild && "$lab" == byo ]] && rebuild=1
-[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 ]] || { sed -n '3,34p' "$0"; exit 2; }
+[[ "${2:-}" == --reverify && -d "${3:-}" ]] && reverify=$(cd "$3" && pwd)
+[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 || -n "$reverify" ]] || { sed -n '3,42p' "$0"; exit 2; }
 . lib/ssh-env.sh || exit 2
 case "$lab" in
   byo)       [[ "$NIST_INVENTORY_KIND" == byo ]] || { echo "error: $NIST_INVENTORY is not a BYO inventory" >&2; exit 2; } ;;
@@ -73,7 +82,16 @@ if [[ -n "$(git status --porcelain)" ]]; then
   git status --short >&2; exit 2
 fi
 commit=$(git rev-parse --short HEAD)
-OUT="$ROOT/reports/runs/release-$lab-$commit-$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ -n "$reverify" ]]; then
+  cycled=$(basename "$reverify" | sed -E "s/^release-$lab-([0-9a-f]+)-.*/\1/")
+  [[ "$cycled" =~ ^[0-9a-f]+$ ]] || { echo "error: $reverify is not a release-$lab run" >&2; exit 2; }
+  # What makes a host what it is: the role, the playbooks and what they read,
+  # the overlay (ODP values), and the scripts that build and connect to it.
+  other=$(git diff --relative --name-only "$cycled" HEAD -- . \
+            | grep -E '^(roles/|catalog/|vm/|lib/|inventory/|site\.yml|guard-target\.yml|rotate-luks-passphrase\.yml|requirements\.yml|ansible\.cfg|apply\.sh)' || true)
+  [[ -z "$other" ]] || { echo "error: what hardens a host changed since $cycled; run the full release instead:" >&2; echo "$other" >&2; exit 2; }
+fi
+OUT="$ROOT/reports/runs/release-$lab-$commit-$(date -u +%Y%m%dT%H%M%SZ)$([[ -n "$reverify" ]] && echo -reverify)"
 mkdir -p "$OUT"
 LOG="$OUT/run.log"
 say() { echo "==> $*" | tee -a "$LOG"; }
@@ -81,7 +99,10 @@ die() { say "STOPPED: $*"; exit 1; }
 say "release run, $lab lab, at $commit ($(git log -1 --format=%cI HEAD)); in $OUT"
 
 # ---- clean state -------------------------------------------------------------
-if [[ "$lab" == byo ]]; then
+if [[ -n "$reverify" ]]; then
+  say "re-verifying the hosts cycled at $cycled ($reverify)"
+  cp "$reverify"/cycle-*.out "$reverify"/cycle-*.rc "$OUT"/
+elif [[ "$lab" == byo ]]; then
   for h in "${hosts[@]}"; do
     if (( ! rebuild )) && ./vm/byo-snapshot.sh list "$h" 2>/dev/null | grep -qE "^$h +fresh +qcow2"; then
       say "$h: revert to fresh"
@@ -105,6 +126,7 @@ nist_seed_known_hosts >> "$LOG" 2>&1
 
 # ---- one cycle per host --------------------------------------------------------
 for h in "${hosts[@]}"; do
+  [[ -n "$reverify" ]] && continue
   say "$h: harden-cycle"
   ./tools/harden-cycle.sh "$h" > "$OUT/cycle-$h.out" 2>&1
   echo $? > "$OUT/cycle-$h.rc"
@@ -117,6 +139,7 @@ fails=0
   echo "# Release run: $lab lab at $commit"
   echo
   echo "Commit \`$(git rev-parse HEAD)\`, run $(date -u +%Y-%m-%dT%H:%MZ). Clean state:"
+  [[ -n "$reverify" ]] && echo "Hardened and cycled at \`$cycled\` ($(basename "$reverify")); only the final assessment is from this commit, which changes no role, playbook or lab script since."
   [[ "$lab" == byo ]] && echo "BYO guests $( (( rebuild )) && echo "rebuilt from" || echo "reverted to or rebuilt as") stock GenericCloud." \
                       || echo "kickstart VMs reinstalled."
   echo

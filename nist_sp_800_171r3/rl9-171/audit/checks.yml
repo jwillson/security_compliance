@@ -2352,7 +2352,10 @@ checks:
     # service failed daily and the system logs were never rotated - found
     # on 2026-10-02, after the first monthly rotation. `--debug` parses and
     # reports without rotating anything: the configuration, not the timer.
-    command: "logrotate --debug /etc/logrotate.conf 2>&1 | grep -c '^error:' || true"
+    # `--state /dev/null`: a host logrotate has never run on has no state
+    # file yet, which --debug reports as an error, so every freshly built
+    # host failed this until its first midnight (the 1.0.1 release run).
+    command: "logrotate --debug --state /dev/null /etc/logrotate.conf 2>&1 | grep -c '^error:' || true"
     expect_int: "== 0"
 
   - id: si-08-log-perms
