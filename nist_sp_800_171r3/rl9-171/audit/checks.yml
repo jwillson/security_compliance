@@ -1542,22 +1542,30 @@ checks:
     description: No key file for the encrypted volumes rests on the disk
     # crypttab names the key each volume is opened with at boot: "none" (the
     # TPM, via clevis-luks-askpass) is the only acceptable value; a path is a
-    # readable key beside the data. ls exits 2 when the staged key is gone -
-    # the clean result.
+    # readable key beside the data. With "none", systemd-cryptsetup still
+    # loads /etc/cryptsetup-keys.d/<volume>.key if one is there, which this
+    # did not look at (issue #11). ls exits 2 when nothing is found - the
+    # clean result.
     command: |
       awk '!/^[[:space:]]*#/ && NF >= 3 && $3 != "none" && $3 != "-" {print "crypttab " $1 " key=" $3}' /etc/crypttab 2>/dev/null
-      ls /root/.luks-key 2>/dev/null
+      ls -d /root/.luks-key /etc/cryptsetup-keys.d/*.key 2>/dev/null
     expect_empty: true
     ok_rc: [0, 2]
 
   - id: mp-09-luks-cipher
     description: Encrypted volumes use an approved cipher
+    # Every LUKS device, on a logical volume, a partition or a whole disk, is
+    # judged on its own, and a host with none fails: the loop visited lvm
+    # only and a host with no LUKS passed (issue #11).
     command: |
-      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+      n=0
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm" || $2=="part" || $2=="disk" {print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
-        cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
-      done | sort -u | head -1
-    expect_match: "aes-xts"
+        n=$((n + 1))
+        cryptsetup luksDump "$d" 2>/dev/null | awk -v d="$d" '/cipher:/ && tolower($2) !~ /aes-xts/ {print d ": cipher " $2}'
+      done
+      [ "$n" -gt 0 ] || echo "no LUKS device found"
+    expect_empty: true
 
   - id: mp-09-backup-path-perms
     description: The backup staging path restricts access
@@ -1939,11 +1947,17 @@ checks:
 
   - id: sc-08-luks-cipher
     description: Encrypted volumes use an approved cipher and key size
+    # Every LUKS device, on a logical volume, a partition or a whole disk, is
+    # judged on its own, and a host with none fails: the loop visited lvm
+    # only and a host with no LUKS passed (issue #11).
     command: |
-      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+      n=0
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm" || $2=="part" || $2=="disk" {print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
-        cryptsetup luksDump "$d" 2>/dev/null | awk '/cipher:/ {print $2}'
-      done | sort -u | awk '!/aes-xts/'
+        n=$((n + 1))
+        cryptsetup luksDump "$d" 2>/dev/null | awk -v d="$d" '/cipher:/ && tolower($2) !~ /aes-xts/ {print d ": cipher " $2}'
+      done
+      [ "$n" -gt 0 ] || echo "no LUKS device found"
     expect_empty: true
 
   - id: sc-08-forward-encrypted
@@ -2034,11 +2048,15 @@ checks:
 
   - id: sc-10-luks-kdf
     description: LUKS key slots use a FIPS-approved KDF
+    # Every LUKS device, on a logical volume, a partition or a whole disk, is
+    # judged on its own: the loop visited lvm only (issue #11). A host with no
+    # LUKS has no key slot to fault - unlike the cipher checks, where no LUKS
+    # is itself the deviation, 03.13.10 does not require a LUKS volume.
     command: |
-      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm"{print $1}'); do
+      for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm" || $2=="part" || $2=="disk" {print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
-        cryptsetup luksDump "$d" 2>/dev/null | awk '/PBKDF:/ {print $2}'
-      done | sort -u | awk 'tolower($0) !~ /pbkdf2/'
+        cryptsetup luksDump "$d" 2>/dev/null | awk -v d="$d" '/PBKDF:/ && tolower($2) !~ /pbkdf2/ {print d ": kdf " $2}'
+      done
     expect_empty: true
 
   - id: sc-10-no-dsa-keys

@@ -391,5 +391,42 @@ class GrubChecks(unittest.TestCase):
         self.assertEqual(self.status("pe-07-boot-entries-unrestricted", self.STOCK, entries=[ok, bad]), "FAIL")
         self.assertEqual(self.status("pe-07-boot-entries-unrestricted", self.STOCK, entries=[]), "FAIL")
 
+
+class KeyOnDisk(unittest.TestCase):
+    """mp-09-luks-no-key-on-disk against fake /etc and /root (issue #11).
+
+    systemd-cryptsetup also loads /etc/cryptsetup-keys.d/<volume>.key when
+    crypttab says "none", which the check never looked at.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.check = next(c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]
+                         if c["id"] == "mp-09-luks-no-key-on-disk")
+
+    def status(self, crypttab, files=()):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "etc").mkdir(); Path(d, "root").mkdir()
+            Path(d, "etc/crypttab").write_text(crypttab)
+            for f in files:
+                Path(d, f).parent.mkdir(parents=True, exist_ok=True)
+                Path(d, f).write_text("key")
+            check = dict(self.check)
+            check["command"] = check["command"].replace("/etc/", f"{d}/etc/").replace("/root/", f"{d}/root/")
+            return na.Runner({}).run(check)["status"]
+
+    TPM = "cui_data /dev/vg_sys/lv_cui none luks,discard\n"
+
+    def test_tpm_unlock_and_no_key_passes(self):
+        self.assertEqual(self.status(self.TPM), "PASS")
+
+    def test_a_key_named_in_crypttab_fails(self):
+        self.assertEqual(self.status("cui_data /dev/vg_sys/lv_cui /root/.luks-key luks\n",
+                                     ["root/.luks-key"]), "FAIL")
+
+    def test_a_key_systemd_would_load_from_cryptsetup_keys_d_fails(self):
+        self.assertEqual(self.status(self.TPM, ["etc/cryptsetup-keys.d/cui_data.key"]), "FAIL")
+
 if __name__ == "__main__":
     unittest.main()

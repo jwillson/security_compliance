@@ -119,6 +119,17 @@
          (nist_secure_boot_state.stdout | default('') | trim) == 'enabled' }}
   tags: ["03.08.09", "03.13.08", "03.13.10"]
 
+- name: "03.08.09 | Choose where the LUKS key is staged"
+  # In RAM (/run is tmpfs) when the TPM will hold the keys: the key is needed
+  # only to format, open and bind, and never reaches a disk. On disk only
+  # when crypttab must name it at boot - no TPM, or Secure Boot off - which
+  # the checks report. It used to be /root/.luks-key in every case, written
+  # by `copy` through the remote user's ~/.ansible/tmp, and only unlinked
+  # afterwards (issue #11).
+  ansible.builtin.set_fact:
+    nist_luks_keyfile: "{{ '/run/nist-luks-key' if nist_luks_seal_allowed else '/root/.luks-key' }}"
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
 - name: "03.08.09 | Warn that the volumes are not sealed while Secure Boot is off"
   ansible.builtin.debug:
     msg: >-
@@ -185,12 +196,24 @@
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Stage the LUKS key while a volume still needs it"
-      ansible.builtin.copy:
-        content: "{{ nist_luks_passphrase }}"
-        dest: /root/.luks-key
-        owner: root
-        group: root
-        mode: "0400"
+      # From stdin, which pipelining carries in memory: `copy` wrote the
+      # content to a temporary file in the remote user's home first.
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          umask 077
+          f={{ nist_luks_keyfile }}
+          cat > "$f.new"
+          if [ -f "$f" ] && cmp -s "$f.new" "$f"; then
+            rm -f "$f.new"; echo unchanged
+          else
+            mv -f "$f.new" "$f"; echo staged
+          fi
+        executable: /bin/bash
+        stdin: "{{ nist_luks_passphrase }}"
+        stdin_add_newline: false
+      register: nist_luks_stage
+      changed_when: nist_luks_stage.stdout == 'staged'
       no_log: true
       # Also whenever the TPM will not be relied on (Secure Boot off): crypttab
       # then names this file, which must exist for the host to boot.
@@ -216,7 +239,7 @@
             --pbkdf pbkdf2 \
             --pbkdf-force-iterations 100000 \
             --batch-mode \
-            "$dev" /root/.luks-key
+            "$dev" {{ nist_luks_keyfile }}
           echo "formatted"
         executable: /bin/bash
       loop: [lv_cui, lv_backup]
@@ -233,8 +256,8 @@
           dev=/dev/{{ nist_vg_name }}/{{ item.lv }}
           if [ -e /dev/mapper/{{ item.name }} ]; then
             echo "already-open"
-          elif [ -f /root/.luks-key ]; then
-            cryptsetup luksOpen --key-file /root/.luks-key "$dev" {{ item.name }} && echo "opened"
+          elif [ -f {{ nist_luks_keyfile }} ]; then
+            cryptsetup luksOpen --key-file {{ nist_luks_keyfile }} "$dev" {{ item.name }} && echo "opened"
           else
             clevis luks unlock -d "$dev" -n {{ item.name }} && echo "opened"
           fi
@@ -288,10 +311,10 @@
             echo "already-bound"
             exit 0
           elif [ -n "$slot" ]; then
-            clevis luks regen -q -d "$dev" -s "$slot" < /root/.luks-key > /dev/null
+            clevis luks regen -q -d "$dev" -s "$slot" < {{ nist_luks_keyfile }} > /dev/null
             result=resealed
           else
-            clevis luks bind -y -k /root/.luks-key \
+            clevis luks bind -y -k {{ nist_luks_keyfile }} \
               -d "$dev" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}' < /dev/null
             result=bound
           fi
@@ -344,9 +367,19 @@
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Remove the staged key once the TPM holds it"
-      ansible.builtin.file:
-        path: /root/.luks-key
-        state: absent
+      # The RAM copy is simply removed. A copy on disk - every earlier
+      # version staged it there - is overwritten before it is unlinked; on a
+      # copy-on-write or SSD-backed store that is best effort, which is why
+      # the key no longer goes to disk when the TPM is to hold it (issue #11).
+      ansible.builtin.shell:
+        cmd: |
+          gone=0
+          if [ -e /run/nist-luks-key ]; then rm -f /run/nist-luks-key; gone=1; fi
+          if [ -e /root/.luks-key ]; then shred -u -z /root/.luks-key; gone=1; fi
+          echo "removed=$gone"
+        executable: /bin/bash
+      register: nist_luks_unstage
+      changed_when: "'removed=1' in nist_luks_unstage.stdout"
       when: nist_luks_tpm_ok
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
@@ -374,7 +407,10 @@
   ansible.builtin.group:
     name: "{{ nist_cui_group }}"
     state: present
-  tags: ["03.08.02", "03.04.11"]
+  # 03.08.09 too: the path task below runs under that tag and needs the
+  # group, so `--tags 03.08.09` on a fresh host failed on "failed to look up
+  # group" (the 1b.7 failure, found by tools/rehearse-luks-staging.sh).
+  tags: ["03.08.02", "03.04.11", "03.08.09"]
 
 - name: "03.08.02 | Restrict the CUI and backup paths to authorized roles"
   ansible.builtin.file:

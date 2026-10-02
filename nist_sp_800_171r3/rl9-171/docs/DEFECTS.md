@@ -1215,3 +1215,32 @@ source, and nothing from it is taken without its own proof here.*
       lacking the flag and the password moved aside, the role declined and
       said why, `user.cfg` stayed empty, the check failed, and after the
       restore 03.10.07 verifies with nothing failed.
+
+- [x] **7.7 The LUKS key went to disk, and three checks passed on hosts with
+      no LUKS (#11).** The role staged the passphrase with `copy` - through a
+      temporary file in the remote user's home - at `/root/.luks-key`, and
+      afterwards only unlinked it, so it could survive in freed blocks.
+      `mp-09-luks-no-key-on-disk` never looked at
+      `/etc/cryptsetup-keys.d/<volume>.key`, which systemd-cryptsetup loads
+      when crypttab says `none`. `mp-09-luks-cipher` and `sc-08-luks-cipher`
+      visited logical volumes only, and `mp-09-luks-cipher` judged only the
+      lexically first cipher (`aes-xts` beside `serpent` passed). *Check
+      first:* `KeyOnDisk` in `tests/test_assessor.py` failed on a key in
+      `cryptsetup-keys.d`. *Fix:* the key is written from stdin (carried in
+      memory by pipelining), to RAM (`/run/nist-luks-key`) whenever the TPM
+      will hold the keys, and to disk only when crypttab must name it at boot
+      (no TPM, or Secure Boot off), which the checks report; a disk copy left
+      by an earlier version is `shred`-ed before it is removed (best effort on
+      copy-on-write or SSD storage - the reason it no longer goes there). The
+      key-on-disk check reads `cryptsetup-keys.d`; the cipher checks judge
+      every LUKS device on a volume, partition or disk and fail a host with
+      none; `sc-10-luks-kdf` is widened the same way but stays vacuously true
+      without LUKS, since 03.13.10 does not require a volume. *Proven:*
+      `tools/rehearse-luks-staging.sh byo-rl9-02` - from the stock image, an
+      apply of 03.08.09 formatted, bound and mounted both volumes with the key
+      seen only in `/run`, `/root/.luks-key` never present, nothing left
+      after, and 03.08.09 verifying with nothing failed. *Found on the way:*
+      `--tags 03.08.09` failed on a fresh host because the CUI group was
+      created only under 03.08.02 (the 1b.7 failure); the group task now
+      carries 03.08.09. *Still open* (TASKS P2): passphrase rotation, and the
+      recorded decision on boot behaviour when the TPM refuses (`nofail`).

@@ -88,7 +88,7 @@ TASKS.md says the repository went public, which it has not.
       hostname; `au-05-collector-receiving` matches a forged line.
 - [x] #8 no pre-flight keeps the boot entries `--unrestricted` before the
       GRUB password goes on.
-- [ ] #11 the LUKS passphrase written to unencrypted disk and only unlinked;
+- [x] #11 the LUKS passphrase written to unencrypted disk and only unlinked;
       the key-on-disk check ignores `/etc/cryptsetup-keys.d`.
 - [ ] #6 lab tools act on any libvirt domain (`destroy` deletes its disks).
 
@@ -104,6 +104,10 @@ TASKS.md says the repository went public, which it has not.
       03.01.01` breaks `ia.yml`.
 - [ ] #7 a workstation guard on both plays; the documents say Rocky (I3).
 
+- [ ] #11, the rest: LUKS passphrase rotation (`luksChangeKey`, a RUNBOOK
+      procedure, per-host passphrases), and a recorded owner decision on
+      boot behaviour when the TPM refuses (`nofail` or not).
+
 **P3 — CI, tooling, documents**
 - [ ] #14 CI's syntax check runs on an empty inventory (the example does
       not parse — R6 claimed more than it did); unpinned installs; code that
@@ -113,7 +117,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8).
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed
