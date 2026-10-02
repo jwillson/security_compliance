@@ -105,8 +105,9 @@ TASKS.md says the repository went public, which it has not.
 - [ ] #7 a workstation guard on both plays; the documents say Rocky (I3).
 
 - [ ] #11, the rest: LUKS passphrase rotation (`luksChangeKey`, a RUNBOOK
-      procedure, per-host passphrases), and a recorded owner decision on
-      boot behaviour when the TPM refuses (`nofail` or not).
+      procedure, per-host passphrases). Boot behaviour when the TPM refuses
+      is decided: the boot waits for the passphrase, no `nofail`
+      (ODP-REVIEW I4).
 
 **P3 — CI, tooling, documents**
 - [ ] #14 CI's syntax check runs on an empty inventory (the example does

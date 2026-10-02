@@ -280,6 +280,16 @@ Decision (2026-10-01): **Rocky Linux 9 only for now.** `site.yml` stays
 Rocky-only, the documents say Rocky Linux 9, and RHEL support is a task that
 needs a RHEL host to prove it.
 
+**I4. Boot behaviour when the TPM will not release the CUI volume keys (issue
+#11).** After a firmware or Secure Boot change, the TPM refuses the PCR 7 seal.
+Either the boot waits at the console for the LUKS passphrase (the CUI mounts
+are required, so nothing comes up half-working), or crypttab marks the
+volumes `nofail` and the host boots without them, keeping SSH, with the
+volumes unlocked remotely - at the risk of services writing into the empty
+mount points.
+Decision (2026-10-02): **keep it as is** - the boot waits for the passphrase;
+no `nofail`. The RUNBOOK's *When you are locked out* row is the procedure.
+
 ## H. Values accepted as they are
 
 Everything not listed above keeps its current value, and the acceptance is
