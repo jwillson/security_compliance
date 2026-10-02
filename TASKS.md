@@ -52,6 +52,74 @@ owner's authoring (6.3, 6.4).
 
 ---
 
+## Release 1.0.1 — the review after 1.0.0
+
+**Going public waits for this.** A cloud review on 2026-09-26 filed issues
+#3-#15 and pushed fixes for #3-#7 to `claude/dazzling-archimedes-kus9kd`
+(two commits, no PR). Verified against `main` on 2026-10-01, every claim read
+in the code and the worst proven on a lab host: most hold, and 1.0.0 carries
+false PASSes on technical requirements and two lockout paths — R1 was not
+met after all. The owner's decisions are `docs/ODP-REVIEW.md` I1-I3.
+
+*The branch is a source, not a merge.* Taken, each re-proven here: the bind
+fix (#3 — `tools/probes/bind-script-experiment.sh` on `byo-rl9-02`: main's
+script prints `bound` and exits 0 after a failed bind, the branch's exits 1;
+first bind and re-run work), the POA&M hardening and its tests (#5), the
+`byo-*` lab-guest guards (#6). Not taken as they stand: the Secure Boot
+refusal stops the play (I1 says keep going); the authored-plans guard refuses
+every host (`ls` fails on a clean host and ansible's minimal callback prints
+"non-zero return code", so the result is never empty); `harden-cycle
+--snapshot` would refuse kickstart guests; `site.yml` admits RHEL the role
+does not support (I3); the workstation guard covers only the first play; its
+TASKS.md says the repository went public, which it has not.
+
+**P1 — lockout, data loss, or a false PASS on a `technical` requirement**
+- [ ] #3 a failed TPM bind reported success, then the key was deleted.
+- [ ] #4 sealing with Secure Boot off (I1: refuse, keep going, report);
+      `mp-09-luks-tpm-bound` widened to partitions and disks, PCR 7 in the
+      sha256 bank, no pass on a host with no LUKS device.
+- [ ] #9 03.01.11: `ClientAliveInterval 0` passes three checks; `TMOUT=0`
+      can pass (a file grep, not effective state); an idle session that
+      produces output is never ended, and the overlay says it is.
+- [ ] #12 aging cuts the automation account off on day 60 (I2: exempt, and
+      a rotation runbook); the inactivity check passes 99999.
+- [ ] #10 a full disk from the unbounded forwarding queue drops the host to
+      single-user (`SINGLE`); the collector files by the sender-claimed
+      hostname; `au-05-collector-receiving` matches a forged line.
+- [ ] #8 no pre-flight keeps the boot entries `--unrestricted` before the
+      GRUB password goes on.
+- [ ] #11 the LUKS passphrase written to unencrypted disk and only unlinked;
+      the key-on-disk check ignores `/etc/cryptsetup-keys.d`.
+- [ ] #6 lab tools act on any libvirt domain (`destroy` deletes its disks).
+
+**P2 — checks that cannot fail, and correctness**
+- [ ] #13 a refused assessment looks like a successful service run; the SSP
+      skips ERROR; six checks cannot fail (`ac-12-sshd-crypto-policy`,
+      `ir-02-journald-retention`, `mp-02-umask-profile`,
+      `pe-07-single-user-auth`, the MAC deny lists, the repository prefix
+      match).
+- [ ] #5 the POA&M register: an Excel re-save erases every ID; a scoped
+      assessment merged by hand closes what it never examined.
+- [ ] #12 the last-change loop swallows `chage` failures; `--skip-tags
+      03.01.01` breaks `ia.yml`.
+- [ ] #7 a workstation guard on both plays; the documents say Rocky (I3).
+
+**P3 — CI, tooling, documents**
+- [ ] #14 CI's syntax check runs on an empty inventory (the example does
+      not parse — R6 claimed more than it did); unpinned installs; code that
+      parses only on Python 3.12. ("apply.sh exits silently" is wrong; the
+      misleading message is `verify.sh`'s.)
+- [ ] #15 SECURITY.md's only channel does not exist while private — add a
+      fallback; LAB.md's six hand-made lab files get a script or a template;
+      the CHANGELOG's "every host passed" means the release gate.
+
+*Done when:* each fix is check-first where a check is involved (the check
+fails on the defect first), the release run passes on both labs at the fixed
+commit, and `docs/DEFECTS.md` records each issue with its proof — then 1.0.1
+is tagged and the repository can go public.
+
+---
+
 ## Release 1.0 — what a public release needs
 
 Goal set 2026-09-25: a public release. The repository stays private until

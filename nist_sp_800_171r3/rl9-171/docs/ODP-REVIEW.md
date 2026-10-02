@@ -250,6 +250,36 @@ Decision: accepted 2026-09-18.
 - `patch_window_days` removed: dead machine ODP (DEFECTS.md 4.1c).
 - ClamAV off, fapolicyd enforcing (DEFECTS.md 4.2, 4.3).
 
+## I. Decisions from the review after 1.0.0 (2026-10-01)
+
+Asked of the owner after the cloud review's issues #3-#15 were verified
+against `main` (TASKS.md, *Release 1.0.1*).
+
+**I1. Sealing the LUKS keys to the TPM while Secure Boot is off (issue #4).**
+The keys are sealed to PCR 7, which measures the Secure Boot policy; with
+Secure Boot off that measurement is the same for any boot medium, so a live
+image on the same machine could unseal them.
+Decision (2026-10-01): **refuse, and keep going.** No binding is made and no
+stale one resealed while Secure Boot is not enforced; the passphrase stays the
+unlock, `mp-09-secure-boot` reports the state as a deviation, and the rest of
+the host is hardened as usual — as for every control the role cannot apply.
+(The cloud branch stopped the play instead; that is not taken.)
+
+**I2. Password aging on the automation account (issue #12).** The account
+authenticates with key and password (03.05.03), so the 60-day maximum age
+would cut its SSH off on day 60 and the 35-day inactivity rule disable it
+after.
+Decision (2026-10-01): **exempt the named automation account** from maximum
+age and inactivity, recorded as an organizational parameter with the reason,
+and give the RUNBOOK a procedure for rotating its password on a schedule.
+
+**I3. RHEL 9 (issue #7).** The role and checks are Rocky-specific (the GPG
+key, `/etc/rocky-release`, the repository IDs, the EFI path) and nothing has
+run on RHEL.
+Decision (2026-10-01): **Rocky Linux 9 only for now.** `site.yml` stays
+Rocky-only, the documents say Rocky Linux 9, and RHEL support is a task that
+needs a RHEL host to prove it.
+
 ## H. Values accepted as they are
 
 Everything not listed above keeps its current value, and the acceptance is
