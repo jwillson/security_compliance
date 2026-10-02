@@ -1330,3 +1330,25 @@ source, and nothing from it is taken without its own proof here.*
       refusal exits 2.
       *Not changed:* `tools/assessor-parity.sh` still compares statuses only
       (P3).
+
+- [x] **7.12 The POA&M register did not survive a spreadsheet, and closed what
+      it had not looked at (#5).** A register re-saved as "CSV UTF-8" gained
+      a byte-order mark, the first column read as "﻿POAM ID", and every
+      ID was written back empty; a column the owner added was dropped; a file
+      with another delimiter lost every column; an unknown Status or two
+      active items for one requirement were silently mishandled. And an
+      active item outside the assessment's scope was closed as passing, and
+      a residual the generator had closed was never reopened. *Narrower than
+      filed:* only `nist-assessment.service` writes `assessment-latest.json`,
+      always unscoped, so a scoped close needed a merge by hand. *Taken from
+      the cloud branch*, reviewed: `nist_poam.py` refuses a scoped or
+      unsupported assessment (its keys checked against `nist-assess`:
+      `scope` is "all requirements" on a full run), closes only what was
+      examined, marks its own closures `auto:` and reopens only those, reads
+      `utf-8-sig`, keeps extra columns, refuses an unknown status or a
+      duplicate active item, and writes under a lock with `poam.csv.bak`.
+      Its 14 new tests: 13 fail on the old module (the branch said all 14).
+      *Proven:* `tools/rehearse-poam-spreadsheet.sh byo-rl9-01` - the real
+      41-item register re-saved with a byte-order mark merged with every ID
+      kept and a backup written, and an assessment scoped to one requirement
+      refused; the scheduled service still succeeds.

@@ -21,17 +21,31 @@ never carried into the next one, and a resolved item simply vanished
 
 Merging, by requirement and kind, never by rewriting:
 
-  * the owner's columns are carried forward on every run;
+  * the owner's columns are carried forward on every run, and so is any
+    column the owner added to the file;
   * an active item (Open, or Risk Accepted by the owner) is updated in place;
-  * a deviation that no longer fails is Closed with the date and reason -
-    kept, not deleted; if it fails again later it is a new item;
+  * a deviation is Closed with the date and reason - kept, not deleted - only
+    when the assessment looked at its requirement and it no longer fails; if
+    it fails again later it is a new item;
   * a residual is closed by the owner (Closed or Risk Accepted), since the
-    host can never evidence it; the generator reopens nothing the owner closed,
-    and closes a residual itself only if the requirement stops being partial.
+    host can never evidence it; the generator reopens nothing the owner
+    closed, and closes a residual itself only if the requirement stops being
+    partial. A closure the generator made is marked "auto:" in the Closure
+    column so that it, and only it, is reopened if the finding returns.
 
-The register is written atomically at mode 0600, and a dated snapshot of it
-is kept for the record. An assessment older than --max-age-hours is refused:
-merging stale results would close items that are still open.
+Only a complete, supported assessment is merged: one scoped to a family or a
+requirement says nothing about the items outside it, and an assessment the
+assessor marked unsupported describes the wrong system. Both are refused, as
+is an assessment older than --max-age-hours: merging stale results would
+close items that are still open.
+
+The register is read as the owner may have saved it (a UTF-8 byte-order mark
+from a spreadsheet is tolerated); a file whose header lacks any of the
+generator's columns is refused rather than rewritten, since the rewrite would
+lose the owner's rows. Unknown Status values and duplicate active items are
+refused for the same reason. The register is written atomically at mode
+0600 under a lock, the previous copy kept beside it as poam.csv.bak, and a
+dated snapshot of it is kept for the record.
 
 Stdlib only; tests in tests/test_poam.py.
 """
@@ -39,9 +53,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import json
 import os
+import shutil
 import sys
+import tempfile
 from datetime import date, datetime, timezone
 
 FIELDS = [
@@ -54,7 +71,14 @@ OWNER_FIELDS = ["Scheduled Completion", "Responsible Party", "Resources Required
                 "Milestones", "Owner Notes"]
 OPEN, CLOSED, ACCEPTED = "Open", "Closed", "Risk Accepted"
 ACTIVE = (OPEN, ACCEPTED)
+STATUSES = (OPEN, ACCEPTED, CLOSED)
 DEVIATION, RESIDUAL = "deviation", "residual"
+AUTO = "auto: "                      # prefix of a closure the generator made
+FULL_SCOPE = "all requirements"      # what nist-assess records for a full run
+
+
+class RegisterError(Exception):
+    """The register or the assessment cannot be merged safely."""
 
 
 def findings(assessment: dict) -> dict:
@@ -74,6 +98,26 @@ def findings(assessment: dict) -> dict:
     return found
 
 
+def assessed(assessment: dict) -> set:
+    """The requirements the assessment looked at, whatever it found."""
+    return {r.get("id", "") for r in assessment.get("requirements", [])}
+
+
+def check_assessment(assessment: dict) -> None:
+    """Refuse an assessment that cannot close items honestly."""
+    meta = assessment.get("assessment", {})
+    scope = meta.get("scope", FULL_SCOPE)
+    if scope != FULL_SCOPE:
+        raise RegisterError(
+            f"the assessment covers only {scope!r}: an item outside it would be "
+            "closed as passing when it was not looked at - run nist-assess with no "
+            "--family or --requirement")
+    if meta.get("unsupported"):
+        raise RegisterError(
+            "the assessment is marked unsupported (" + "; ".join(meta["unsupported"])
+            + "): it describes the wrong system")
+
+
 def _new_id(rid: str, kind: str, today: str, taken: set) -> str:
     base = f"{rid}-{'D' if kind == DEVIATION else 'R'}-{today.replace('-', '')}"
     pid, n = base, 2
@@ -82,13 +126,39 @@ def _new_id(rid: str, kind: str, today: str, taken: set) -> str:
     return pid
 
 
-def merge(rows: list[dict], found: dict, today: str) -> list[dict]:
-    """The register after this assessment. Never drops a row."""
-    rows = [{f: row.get(f, "") for f in FIELDS} for row in rows]
+def check_rows(rows: list[dict]) -> None:
+    """Refuse a register the merge rules cannot apply to."""
+    bad = sorted({row.get("Status", "") for row in rows} - set(STATUSES))
+    if bad:
+        raise RegisterError(
+            f"unknown Status value(s) {bad}: the register accepts {list(STATUSES)} "
+            "exactly - an item with another status would be neither updated nor closed")
+    seen = set()
+    for row in rows:
+        key = (row.get("Requirement", ""), row.get("Kind", ""))
+        if row.get("Status") in ACTIVE:
+            if key in seen:
+                raise RegisterError(
+                    f"two active items for {key[0]} ({key[1]}): close or merge one of them")
+            seen.add(key)
+
+
+def merge(rows: list[dict], found: dict, today: str, looked_at: set | None = None) -> list[dict]:
+    """The register after this assessment. Never drops a row or a column.
+
+    looked_at: the requirements the assessment examined. An active item whose
+    requirement is not among them is left as it is; None means every
+    requirement (the caller vouched for a full assessment)."""
+    rows = [dict(row) for row in rows]
+    for row in rows:
+        for f in FIELDS:
+            row.setdefault(f, "")
+    check_rows(rows)
     taken = {row["POAM ID"] for row in rows}
     active = {(row["Requirement"], row["Kind"]): row for row in rows if row["Status"] in ACTIVE}
     owner_closed_residuals = {row["Requirement"] for row in rows
-                              if row["Kind"] == RESIDUAL and row["Status"] == CLOSED}
+                              if row["Kind"] == RESIDUAL and row["Status"] == CLOSED
+                              and not row["Closure"].startswith(AUTO)}
 
     for key, f in found.items():
         rid, kind = key
@@ -108,35 +178,77 @@ def merge(rows: list[dict], found: dict, today: str) -> list[dict]:
     for key, row in active.items():
         if key in found:
             continue
+        if looked_at is not None and key[0] not in looked_at:
+            continue                                   # not examined: nothing is known
         row["Status"], row["Closed On"] = CLOSED, today
-        row["Closure"] = ("resolved: the requirement passes the assessment"
-                          if row["Kind"] == DEVIATION else
-                          "the requirement is no longer classed partial")
+        row["Closure"] = AUTO + ("resolved: the requirement passes the assessment"
+                                 if row["Kind"] == DEVIATION else
+                                 "the requirement is no longer classed partial")
 
     order = {OPEN: 0, ACCEPTED: 1, CLOSED: 2}
     rows.sort(key=lambda r: (order.get(r["Status"], 3), r["Requirement"], r["Kind"], r["POAM ID"]))
     return rows
 
 
+def columns(rows: list[dict]) -> list[str]:
+    """The generator's columns, then any the owner added, in first-seen order."""
+    extra = []
+    for row in rows:
+        for k in row:
+            if k not in FIELDS and k not in extra and k is not None:
+                extra.append(k)
+    return FIELDS + extra
+
+
 def load(path: str) -> list[dict]:
     if not os.path.exists(path):
         return []
-    with open(path, newline="") as fh:
-        return list(csv.DictReader(fh))
+    # utf-8-sig: a spreadsheet that saved "CSV UTF-8" put a byte-order mark
+    # before the first column name, which then read as "﻿POAM ID" and
+    # every ID was rewritten empty.
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        header = reader.fieldnames or []
+        missing = [f for f in FIELDS if f not in header]
+        if missing:
+            raise RegisterError(
+                f"{path} lacks the column(s) {missing}: it is not a register this "
+                "generator wrote, or it was saved with another delimiter; refusing to "
+                "rewrite it (restore it from the last snapshot or poam.csv.bak)")
+        rows = list(reader)
+    for row in rows:
+        row.pop(None, None)          # cells beyond the header, which DictReader keys None
+    return rows
 
 
-def save(rows: list[dict], path: str) -> None:
-    tmp = f"{path}.tmp"
-    old = os.umask(0o077)
-    try:
-        with open(tmp, "w", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=FIELDS, extrasaction="ignore")
-            w.writeheader()
-            w.writerows(rows)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    finally:
-        os.umask(old)
+def save(rows: list[dict], path: str, backup: bool = False) -> None:
+    """Write atomically at 0600, durably, under a lock shared with other runs."""
+    d = os.path.dirname(os.path.abspath(path))
+    with open(os.path.join(d, ".poam.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if backup and os.path.exists(path):
+            shutil.copy2(path, path + ".bak")
+        fd, tmp = tempfile.mkstemp(prefix=".poam-", suffix=".tmp", dir=d)
+        try:
+            with os.fdopen(fd, "w", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=columns(rows), extrasaction="raise")
+                w.writeheader()
+                w.writerows(rows)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        dfd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
 
 def assessment_age_hours(assessment: dict, now: datetime) -> float:
@@ -172,8 +284,16 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 1
 
-    rows = merge(load(args.register), findings(assessment), args.today)
-    save(rows, args.register)
+    try:
+        check_assessment(assessment)
+        rows = merge(load(args.register), findings(assessment), args.today, assessed(assessment))
+        save(rows, args.register, backup=True)
+    except RegisterError as e:
+        print(f"refusing: {e}", file=sys.stderr)
+        return 2
+    except (OSError, csv.Error) as e:
+        print(f"cannot read or write the register: {e}", file=sys.stderr)
+        return 2
     if args.snapshot_dir:
         save(rows, os.path.join(args.snapshot_dir, f"poam-{args.today.replace('-', '')}.csv"))
 
