@@ -51,6 +51,20 @@ SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=5
 die()  { echo "error: $*" >&2; exit 1; }
 say()  { echo "==> $*"; }
 
+# Only a guest this script built may be destroyed: one whose lab directory
+# exists, or whose nist-lab interface carries the lab's MAC prefix. Without
+# this, `destroy` took any libvirt domain name - a typo, or a personal VM -
+# and removed its disks and NVRAM as root (issue #6). The name is also
+# confined to what build accepts, so it cannot carry a path.
+lab_guest() {
+  local name=$1 mac
+  [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$name' is not a guest name (letters, digits, hyphens)"
+  [[ -d "$LAB/$name" ]] && return 0
+  mac=$("${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk '/nist-lab/ {print $5}' || true)
+  [[ "$mac" == 52:54:00:17:ab:* ]] && return 0
+  die "'$name' is not a guest this script built (no $LAB/$name, no nist-lab interface at 52:54:00:17:ab:*); refusing to touch it"
+}
+
 usage() { sed -n '3,33p' "$0"; exit "${1:-0}"; }
 
 # virt-install imports gi from the system Python. A PATH that puts another
@@ -307,6 +321,7 @@ for l in sys.stdin:
 
 cmd_destroy() {
   local name=${1:?name} ip="" mac
+  lab_guest "$name"
   ip=$(cat "$LAB/$name/ip" 2>/dev/null || true)
   # The domain may already be gone (a half-built or half-destroyed guest);
   # destroy still removes whatever files, pin and entries are left.

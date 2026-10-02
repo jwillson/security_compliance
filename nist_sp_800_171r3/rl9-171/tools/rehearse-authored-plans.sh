@@ -30,6 +30,17 @@ bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
 remote() { ansible "$host" -b -m ansible.builtin.shell -a "$1" </dev/null 2>/dev/null | sed 1d; }
 apply_plans() { ./apply.sh --limit "$host" --tags 03.15.02,03.12.01,03.12.02 </dev/null >/dev/null 2>&1; }
 
+# Step 1 overwrites and step 6 deletes the three authored sections, so a host
+# that already carries any of them is refused: rehearse on a lab guest, not
+# on a host whose owner has written its plan (issue #6). `|| true`, so the
+# ad-hoc command succeeds on a clean host - a failed one echoes its own
+# command line, which names the files and would read as a match.
+authored=$(remote "ls /etc/nist-800-171/ssp.d/0{2,3,7}-*.md 2>/dev/null || true" | tr '\n' ' ')
+if [[ -n "${authored// /}" ]]; then
+  echo "error: $host already carries authored SSP sections ($authored); this rehearsal would overwrite and delete them" >&2
+  exit 2
+fi
+
 SSP_SRC=$(mktemp -d); trap 'rm -rf "$SSP_SRC"' EXIT
 printf '%s\n' "Information types: $MARK - lab system, no CUI." > "$SSP_SRC/02-information-types.md"
 printf '%s\n' "Threats of concern: $MARK." > "$SSP_SRC/03-threats.md"

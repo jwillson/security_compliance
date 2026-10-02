@@ -73,6 +73,15 @@ esac
 DISK_PATH="$IMAGE_DIR/${VM_NAME}.qcow2"
 
 if [[ $DESTROY -eq 1 ]]; then
+  # Only a lab guest: a domain attached to nist-lab, or one already gone (its
+  # disk and inventory entry are still cleaned up). `--name` took any libvirt
+  # domain - a typo, a personal VM - and removed it with all its storage
+  # (issue #6).
+  [[ "$VM_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$VM_NAME' is not a guest name (letters, digits, hyphens)"
+  if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1 &&
+     ! sudo virsh -c "$LIBVIRT_URI" domiflist "$VM_NAME" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}'; then
+    die "'$VM_NAME' is not attached to nist-lab, so it is not a lab guest; refusing to destroy it"
+  fi
   log "destroying $VM_NAME"
   sudo virsh -c "$LIBVIRT_URI" destroy "$VM_NAME" 2>/dev/null || true
   sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --remove-all-storage 2>/dev/null || true

@@ -1244,3 +1244,26 @@ source, and nothing from it is taken without its own proof here.*
       created only under 03.08.02 (the 1b.7 failure); the group task now
       carries 03.08.09. *Still open* (TASKS P2): passphrase rotation, and the
       recorded decision on boot behaviour when the TPM refuses (`nofail`).
+
+- [x] **7.8 The lab tools would act on any libvirt domain (#6).**
+      `byo-guest.sh destroy NAME` undefined any domain and removed its disks,
+      NVRAM and TPM state as root; `byo-snapshot.sh save` shut any domain
+      down; `build-vm.sh --name NAME --destroy` removed any domain with all
+      its storage; `rehearse-authored-plans.sh` overwrote and then deleted
+      the authored SSP sections of whatever host it was given. *Fix:* each
+      refuses a name that is not a lab guest - `byo-guest.sh` a guest it
+      built (lab directory, or the lab MAC prefix: the branch's guard),
+      `byo-snapshot.sh` and `build-vm.sh` any domain attached to `nist-lab`
+      (so kickstart guests still pass, which the branch's MAC test would have
+      refused for `harden-cycle.sh --snapshot`); snapshot labels are plain
+      words; the authored-plans rehearsal refuses a host that already has a
+      section - with `|| true`, without which the branch's guard refused
+      every host (a failed ad-hoc command echoes its own command line).
+      `rehearse-pcr7-recovery.py` checks the lab MAC and a `hardened`
+      snapshot before it touches NVRAM (7.2). *Narrower than filed:*
+      `revert` needed an existing snapshot already, and a `../` name reached
+      only suffix-matched files. *Proven* by `tools/test-lab-guards.sh`: a
+      decoy domain on no network is refused by all four destructive entry
+      points and left intact, a BYO and a kickstart guest pass the guards,
+      and the authored-plans rehearsal refuses a host with a stand-in
+      section and leaves it; the full rehearsal then passes on `byo-rl9-01`.

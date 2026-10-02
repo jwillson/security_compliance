@@ -27,6 +27,19 @@ VIRSH=(virsh -c qemu:///system)
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
 
+# Only a lab guest: one with a BYO lab directory, or any domain attached to
+# the nist-lab network (BYO and kickstart guests alike). `revert` overwrites
+# every disk of the named domain and `save` shuts it down, so any other name
+# - a typo, a personal VM - is refused, not acted on (issue #6).
+lab_guest() {
+  local name=$1
+  [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$name' is not a guest name (letters, digits, hyphens)"
+  [[ -d "$LAB/$name" ]] && return 0
+  "${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}' && return 0
+  die "'$name' is not a lab guest (no $LAB/$name, not attached to nist-lab); refusing to touch it"
+}
+label_ok() { [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "'$1' is not a label (letters, digits, hyphens)"; }
+
 disks() {   # file-backed disks, not cdroms
   "${VIRSH[@]}" domblklist "$1" --details | awk '$1=="file" && $2=="disk" {print $4}'
 }
@@ -65,6 +78,7 @@ wait_ssh() {
 
 cmd_save() {
   local name=${1:?name} label=${2:?label} d t nv
+  lab_guest "$name"; label_ok "$label"
   stop "$name"
   for d in $(disks "$name"); do sudo cp --sparse=always -f "$d" "$(snap_of "$d" "$label")"; done
   nv=$(nvram "$name"); [[ -n "$nv" ]] && sudo cp -f "$nv" "$IMAGES/$name.$label.nvram"
@@ -79,6 +93,7 @@ cmd_save() {
 
 cmd_revert() {
   local name=${1:?name} label=${2:?label} d s t nv
+  lab_guest "$name"; label_ok "$label"
   for d in $(disks "$name"); do
     s=$(snap_of "$d" "$label"); sudo test -f "$s" || die "no snapshot $s"
   done
