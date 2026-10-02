@@ -333,5 +333,63 @@ class CollectorReceiving(unittest.TestCase):
     def test_an_unattributed_sender_does_not(self):
         self.assertEqual(self.status([("unknown-10.0.0.9/audispd.log", 0)]), "FAIL")
 
+
+class GrubChecks(unittest.TestCase):
+    """The 03.10.07 checks against a fake /boot (issue #8)."""
+
+    STUB = "search --no-floppy --fs-uuid --set=dev x\nset prefix=($dev)/grub2\nconfigfile $prefix/grub.cfg\n"
+    STOCK = "### BEGIN /etc/grub.d/01_users ###\nif [ -f ${prefix}/user.cfg ]; then\n  source ${prefix}/user.cfg\n  if [ -n \"${GRUB2_PASSWORD}\" ]; then\n    set superusers=\"root\"\n    export superusers\n    password_pbkdf2 root ${GRUB2_PASSWORD}\n  fi\nfi\n"
+    HASH = "grub.pbkdf2.sha512.10000." + "AB" * 32 + "." + "CD" * 64
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.checks = {c["id"]: c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]}
+
+    def status(self, cid, grub_cfg, user_cfg=None, efi_cfg=None, entries=()):
+        with tempfile.TemporaryDirectory() as d:
+            b = Path(d, "boot")
+            (b / "grub2").mkdir(parents=True)
+            (b / "grub2/grub.cfg").write_text(grub_cfg)
+            if user_cfg is not None:
+                (b / "grub2/user.cfg").write_text(user_cfg)
+            if efi_cfg is not None:
+                (b / "efi/EFI/rocky").mkdir(parents=True)
+                (b / "efi/EFI/rocky/grub.cfg").write_text(efi_cfg)
+            (b / "loader/entries").mkdir(parents=True)
+            for i, e in enumerate(entries):
+                (b / f"loader/entries/e{i}.conf").write_text(e)
+            check = dict(self.checks[cid])
+            self.assertIn("/boot/", check["command"])
+            check["command"] = check["command"].replace("/boot/", f"{b}/")
+            return na.Runner({}).run(check)["status"]
+
+    def test_stock_user_cfg_password_passes(self):
+        self.assertEqual(self.status("pe-07-grub-password", self.STOCK, f"GRUB2_PASSWORD={self.HASH}\n",
+                                     self.STUB), "PASS")
+
+    def test_a_commented_inline_hash_does_not(self):
+        cfg = f"# password_pbkdf2 root {self.HASH}\n"
+        self.assertEqual(self.status("pe-07-grub-password", cfg, None, self.STUB), "FAIL")
+
+    def test_an_inline_hash_without_superusers_does_not(self):
+        cfg = f"password_pbkdf2 root {self.HASH}\n"
+        self.assertEqual(self.status("pe-07-grub-password", cfg, None, self.STUB), "FAIL")
+        cfg = f"set superusers=\"root\"\npassword_pbkdf2 root {self.HASH}\n"
+        self.assertEqual(self.status("pe-07-grub-password", cfg, None, self.STUB), "PASS")
+
+    def test_a_full_efi_config_is_what_grub_reads(self):
+        # The EFI grub.cfg is a full configuration with no password: GRUB never
+        # reads /boot/grub2/grub.cfg, whatever that file says.
+        self.assertEqual(self.status("pe-07-grub-password", self.STOCK, f"GRUB2_PASSWORD={self.HASH}\n",
+                                     "menuentry 'x' { linux /vmlinuz }\n"), "FAIL")
+
+    def test_every_boot_entry_must_be_unrestricted(self):
+        ok = "title x\nlinux /vmlinuz\ngrub_arg --unrestricted\n"
+        bad = "title y\nlinux /vmlinuz\n"
+        self.assertEqual(self.status("pe-07-boot-entries-unrestricted", self.STOCK, entries=[ok, ok]), "PASS")
+        self.assertEqual(self.status("pe-07-boot-entries-unrestricted", self.STOCK, entries=[ok, bad]), "FAIL")
+        self.assertEqual(self.status("pe-07-boot-entries-unrestricted", self.STOCK, entries=[]), "FAIL")
+
 if __name__ == "__main__":
     unittest.main()

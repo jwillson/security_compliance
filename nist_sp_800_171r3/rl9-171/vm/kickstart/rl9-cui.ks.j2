@@ -70,8 +70,10 @@ logvol swap           --vgname=vg_sys --name=lv_swap   --fstype=swap --size=2048
 # The GRUB superuser password (03.10.07) is deliberately NOT set here. Anaconda
 # writes password-protected menu entries without the --unrestricted flag, which
 # would make every boot interactive and break unattended operation. The role
-# sets the password and marks normal boot entries unrestricted, so console
-# editing is protected while automatic boot still works.
+# sets the password in /boot/grub2/user.cfg (GRUB user "root"); the BLS boot
+# entries already carry `grub_arg --unrestricted`, which the role confirms
+# before it sets anything (DEFECTS 7.6), so console editing is protected
+# while automatic boot still works.
 bootloader --append="fips=1 audit=1 audit_backlog_limit=8192 slub_debug=P page_poison=1 vsyscall=none init_on_alloc=1 init_on_free=1"
 
 # --- Packages ----------------------------------------------------------------

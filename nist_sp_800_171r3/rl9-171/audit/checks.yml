@@ -1580,6 +1580,25 @@ checks:
 # ===========================================================================
 # 03.10 PHYSICAL PROTECTION
 # ===========================================================================
+  - id: pe-07-boot-entries-unrestricted
+    description: Every boot entry boots without the GRUB password, so the host still starts unattended
+    # With a superuser set, GRUB asks for the password to boot any entry not
+    # marked --unrestricted. RHEL 9's BLS entries carry `grub_arg
+    # --unrestricted`; one that does not would stop an unattended boot at a
+    # password prompt (issue #8). The role checks the same before it sets a
+    # password, and leaves the boot path alone if this fails.
+    command: |
+      n=0; bad=""
+      for e in /boot/loader/entries/*.conf; do
+        [ -f "$e" ] || continue
+        n=$((n + 1))
+        grep -qE '^grub_arg[[:space:]].*--unrestricted' "$e" || bad="$bad $(basename "$e")"
+      done
+      if [ "$n" -eq 0 ]; then echo "no boot entries in /boot/loader/entries"
+      elif [ -n "$bad" ]; then echo "not --unrestricted:$bad"
+      else echo unrestricted; fi
+    expect_output: unrestricted
+
   - id: pe-07-grub-password
     description: Boot parameters cannot be edited without authentication
     command: |
@@ -1591,16 +1610,30 @@ checks:
       # "password_pbkdf2 root ${GRUB2_PASSWORD}", which counting
       # "password_pbkdf2" mistook for a password (DEFECTS 6b.2); only a
       # grub.pbkdf2.* hash is one.
+      # A configuration protects the boot path when it defines a superuser
+      # and a real hash reaches it - inline on an uncommented line, or through
+      # the stock user.cfg block. The inline test matched a commented line and
+      # never asked for superusers (issue #8).
+      protected() {
+        grep -qE '^[[:space:]]*set superusers=' "$1" || return 1
+        grep -qE '^[[:space:]]*password_pbkdf2 [^ ]+ grub\.pbkdf2\.' "$1" && return 0
+        grep -qF 'source ${prefix}/user.cfg' "$1" &&
+          grep -qE '^GRUB2_PASSWORD=grub\.pbkdf2\.sha512\.[0-9]+\.[0-9A-Fa-f]+\.[0-9A-Fa-f]+$' \
+            /boot/grub2/user.cfg 2>/dev/null
+      }
+      # Each EFI grub.cfg is what firmware's GRUB reads first. The stock one
+      # is a stub that hands off (configfile) to /boot/grub2/grub.cfg; one
+      # that does not is the configuration itself, and is judged as such -
+      # the check used to read /boot/grub2/grub.cfg whatever the EFI file said.
+      bad=""
+      for f in /boot/efi/EFI/*/grub.cfg; do
+        [ -f "$f" ] || continue
+        grep -q 'configfile' "$f" && continue
+        protected "$f" || bad="$bad $f"
+      done
       cfg=/boot/grub2/grub.cfg
-      if grep -qE 'password_pbkdf2 [^ ]+ grub\.pbkdf2\.' "$cfg"; then
-        echo protected
-      elif grep -qF 'source ${prefix}/user.cfg' "$cfg" &&
-           grep -qE '^GRUB2_PASSWORD=grub\.pbkdf2\.sha512\.[0-9]+\.[0-9A-Fa-f]+\.[0-9A-Fa-f]+$' \
-             /boot/grub2/user.cfg 2>/dev/null; then
-        echo protected
-      else
-        echo "no PBKDF2 hash reaches $cfg"
-      fi
+      protected "$cfg" || bad="$bad $cfg"
+      [ -z "$bad" ] && echo protected || echo "no superuser and PBKDF2 hash in:$bad"
     expect_output: protected
 
   - id: pe-07-grub-no-staged-secret

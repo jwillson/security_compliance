@@ -86,7 +86,7 @@ TASKS.md says the repository went public, which it has not.
 - [x] #10 a full disk from the unbounded forwarding queue drops the host to
       single-user (`SINGLE`); the collector files by the sender-claimed
       hostname; `au-05-collector-receiving` matches a forged line.
-- [ ] #8 no pre-flight keeps the boot entries `--unrestricted` before the
+- [x] #8 no pre-flight keeps the boot entries `--unrestricted` before the
       GRUB password goes on.
 - [ ] #11 the LUKS passphrase written to unencrypted disk and only unlinked;
       the key-on-disk check ignores `/etc/cryptsetup-keys.d`.
@@ -113,7 +113,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10).
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed

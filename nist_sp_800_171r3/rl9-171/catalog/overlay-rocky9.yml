@@ -1322,7 +1322,7 @@ requirements:
     residual: >
       Entry/exit enforcement, visitor escorting, key control, and output device
       control are facility controls.
-    checks: [pe-07-grub-password, pe-07-grub-no-staged-secret, pe-07-grub-cfg-perms, pe-07-single-user-auth,
+    checks: [pe-07-grub-password, pe-07-boot-entries-unrestricted, pe-07-grub-no-staged-secret, pe-07-grub-cfg-perms, pe-07-single-user-auth,
              pe-07-emergency-auth, pe-07-ctrlaltdel-disabled]
 
   - id: "03.10.08"

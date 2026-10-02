@@ -1192,3 +1192,26 @@ source, and nothing from it is taken without its own proof here.*
       *Not changed:* `vm/siem-container.sh` still files by the claimed host
       (`keep-hostname(yes)`); it is a lab stand-in that 6.2a's proof counts
       by name.
+
+- [x] **7.6 GRUB: no pre-flight before the password, and a check that read
+      the wrong file (#8).** The role wrote the superuser password without
+      confirming the boot entries were `--unrestricted`: an entry without it
+      would stop the next unattended boot at a password prompt.
+      `pe-07-grub-password`'s inline-hash test matched a commented line and
+      never asked for a superuser, and it read `/boot/grub2/grub.cfg` even
+      when the EFI `grub.cfg` - what firmware's GRUB reads first - was a full
+      configuration rather than the stock stub. *Check first:* `GrubChecks`
+      in `tests/test_assessor.py` (a fake `/boot`) failed on a commented
+      hash, a hash without superusers, an unprotected full EFI
+      configuration, and an entry without `--unrestricted` before the change.
+      *Fix:* `pe-07-grub-password` judges every EFI `grub.cfg` that is not a
+      `configfile` stub as well as `/boot/grub2/grub.cfg`, requiring `set
+      superusers=` and an uncommented hash; new
+      `pe-07-boot-entries-unrestricted`; the role lists any entry without
+      `--unrestricted` and then sets nothing, with a warning naming it.
+      *Narrower than filed:* the full-EFI-config case needs a hand edit -
+      the stock EFI files on the lab are three-line stubs. *Proven:*
+      `tools/rehearse-grub-preflight.sh byo-rl9-01` - with a test entry
+      lacking the flag and the password moved aside, the role declined and
+      said why, `user.cfg` stayed empty, the check failed, and after the
+      restore 03.10.07 verifies with nothing failed.

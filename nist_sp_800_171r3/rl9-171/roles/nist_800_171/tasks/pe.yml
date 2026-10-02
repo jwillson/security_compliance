@@ -21,6 +21,38 @@
     state: absent
   tags: ["03.10.07"]
 
+- name: "03.10.07 | Find boot entries that would ask for the GRUB password"
+  # With a superuser set, GRUB asks for the password to boot any entry not
+  # marked --unrestricted. RHEL 9's BLS entries carry `grub_arg
+  # --unrestricted`; if one does not, setting the password would stop the
+  # next unattended boot at a prompt (issue #8). Read-only.
+  ansible.builtin.shell:
+    cmd: |
+      for e in /boot/loader/entries/*.conf; do
+        [ -f "$e" ] || continue
+        grep -qE '^grub_arg[[:space:]].*--unrestricted' "$e" || echo "$e"
+      done
+      ls /boot/loader/entries/*.conf >/dev/null 2>&1 || echo "no boot entries in /boot/loader/entries"
+    executable: /bin/bash
+  register: nist_grub_restricted_entries
+  changed_when: false
+  check_mode: false
+  tags: ["03.10.07"]
+
+- name: "03.10.07 | Leave the boot path alone while an entry would ask for the password"
+  ansible.builtin.debug:
+    msg: >-
+      Not setting the GRUB superuser password: these boot entries are not
+      marked --unrestricted, so the host would stop at a password prompt on
+      its next unattended boot:
+      {{ nist_grub_restricted_entries.stdout_lines | join(', ') }}.
+      Add a line `grub_arg --unrestricted` to each and re-apply.
+      pe-07-boot-entries-unrestricted and pe-07-grub-password report it.
+  when:
+    - nist_set_grub_password and nist_grub_password | length > 0
+    - nist_grub_restricted_entries.stdout_lines | length > 0
+  tags: ["03.10.07"]
+
 - name: "03.10.07 | Set the GRUB superuser password"
   # 03.10.07a  Console presence alone must not grant control of the system.
   # Written as grub2-setpassword writes it: GRUB2_PASSWORD=<PBKDF2 hash> in
@@ -69,7 +101,9 @@
       print("changed")
     stdin: "{{ nist_grub_password | trim }}"
   no_log: true
-  when: nist_set_grub_password and nist_grub_password | length > 0
+  when:
+    - nist_set_grub_password and nist_grub_password | length > 0
+    - nist_grub_restricted_entries.stdout_lines | default([]) | length == 0
   register: nist_grub_pw
   changed_when: nist_grub_pw.stdout == "changed"
   tags: ["03.10.07"]

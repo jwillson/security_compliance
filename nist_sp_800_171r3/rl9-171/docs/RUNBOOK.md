@@ -85,6 +85,14 @@ export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
 export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
 ```
 
+The GRUB superuser is `root` with `NIST_GRUB_PASSWORD`: GRUB asks for both to
+edit a boot entry or reach its shell, never to boot one - every BLS entry is
+`--unrestricted`, and the role checks that before it sets a password and
+leaves the boot path alone if one is not (`pe-07-boot-entries-unrestricted`).
+To recover a host whose GRUB password is lost, boot normally, then re-apply
+with a new `NIST_GRUB_PASSWORD` (`--tags 03.10.07`); to remove it, empty
+`/boot/grub2/user.cfg`.
+
 With a TPM, the passphrase is not what opens the CUI volumes day to day: the
 role binds each volume to the TPM and deletes the staged key, so nothing on
 the disk can open them. The passphrase keyslot stays as the **recovery
