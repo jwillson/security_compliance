@@ -1762,7 +1762,7 @@ checks:
     # it is a deviation the plan does not track.
     command: |
       python3 - <<'PY'
-      import csv, json, os, sys
+      import csv, json, os, sys, time
       a = "/var/log/nist-800-171/assessment-latest.json"
       r = "/etc/nist-800-171/poam.csv"
       # The register follows the scheduled assessment; before its first run
@@ -1771,10 +1771,20 @@ checks:
           print("no scheduled assessment has run yet"); sys.exit(1)
       if not os.path.exists(r):
           sys.exit(print("no POA&M register at " + r) or 0)
-      failing = {q["id"] for q in json.load(open(a)).get("requirements", [])
-                 if q.get("status") in ("FAIL", "ERROR")}
-      tracked = {row["Requirement"] for row in csv.DictReader(open(r))
-                 if row.get("Kind") == "deviation" and row.get("Status") in ("Open", "Risk Accepted")}
+      # The timer runs daily: an assessment older than two days means it has
+      # stopped, and the register follows a state the host may have left.
+      # A file this cannot read is a deviation too - it used to crash, exit
+      # non-zero, and so read as MANUAL (issue #13).
+      age_h = (time.time() - os.path.getmtime(a)) / 3600
+      if age_h > 48:
+          print("the latest assessment is %d hours old; the scheduled assessment has stopped" % age_h)
+      try:
+          failing = {q["id"] for q in json.load(open(a)).get("requirements", [])
+                     if q.get("status") in ("FAIL", "ERROR")}
+          tracked = {row["Requirement"] for row in csv.DictReader(open(r, encoding="utf-8-sig"))
+                     if row.get("Kind") == "deviation" and row.get("Status") in ("Open", "Risk Accepted")}
+      except Exception as e:
+          sys.exit(print("cannot read the assessment or the register: %s: %s" % (type(e).__name__, e)) or 0)
       for req in sorted(failing - tracked):
           print("untracked deviation: " + req)
       PY

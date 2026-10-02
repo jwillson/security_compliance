@@ -188,7 +188,9 @@ class SupportedPlatform(unittest.TestCase):
             self.skipTest("this machine is a supported target")
         p = subprocess.run([sys.executable, str(ASSESSOR), "--requirement", "03.01.01"],
                            capture_output=True, text=True)
-        self.assertNotEqual(p.returncode, 0)
+        # 2, not 1: 1 means "deviations found", which the assessment service
+        # accepts as success - a refusal must not look like a result (#13).
+        self.assertEqual(p.returncode, 2)
         self.assertIn("refusing to assess", p.stderr)
 
 
@@ -454,6 +456,54 @@ class KeyOnDisk(unittest.TestCase):
 
     def test_a_key_systemd_would_load_from_cryptsetup_keys_d_fails(self):
         self.assertEqual(self.status(self.TPM, ["etc/cryptsetup-keys.d/cui_data.key"]), "FAIL")
+
+
+class PoamRegisterCheck(unittest.TestCase):
+    """ca-02-poam-register against a fake assessment and register (#13).
+
+    A crash in the check's own Python was reported MANUAL, and an assessment
+    of any age was trusted.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.check = next(c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]
+                         if c["id"] == "ca-02-poam-register")
+
+    def status(self, assessment, register, age_hours=1):
+        import json, os, time
+        with tempfile.TemporaryDirectory() as d:
+            a, r = Path(d, "a.json"), Path(d, "poam.csv")
+            if assessment is not None:
+                a.write_text(assessment if isinstance(assessment, str) else json.dumps(assessment))
+                t = time.time() - age_hours * 3600
+                os.utime(a, (t, t))
+            if register is not None:
+                r.write_text(register)
+            check = dict(self.check)
+            check["command"] = (check["command"]
+                                .replace("/var/log/nist-800-171/assessment-latest.json", str(a))
+                                .replace("/etc/nist-800-171/poam.csv", str(r)))
+            return na.Runner({}).run(check)["status"]
+
+    FAILING = {"requirements": [{"id": "03.04.06", "status": "FAIL"}]}
+    HEAD = "POAM ID,Requirement,Kind,Status\n"
+
+    def test_a_tracked_deviation_passes(self):
+        self.assertEqual(self.status(self.FAILING, self.HEAD + "P1,03.04.06,deviation,Open\n"), "PASS")
+
+    def test_an_untracked_deviation_fails(self):
+        self.assertEqual(self.status(self.FAILING, self.HEAD), "FAIL")
+
+    def test_no_assessment_yet_is_manual(self):
+        self.assertEqual(self.status(None, self.HEAD), "MANUAL")
+
+    def test_an_unreadable_assessment_fails_not_manual(self):
+        self.assertEqual(self.status("{ not json", self.HEAD), "FAIL")
+
+    def test_a_stale_assessment_fails(self):
+        self.assertEqual(self.status(self.FAILING, self.HEAD + "P1,03.04.06,deviation,Open\n", age_hours=72), "FAIL")
 
 if __name__ == "__main__":
     unittest.main()

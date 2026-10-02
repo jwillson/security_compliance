@@ -1305,3 +1305,28 @@ source, and nothing from it is taken without its own proof here.*
       `systemctl show rescue.service`, `firewall-cmd --info-zone` - and the
       deny list and allow-list are exact. *Proven:* all pass on the hardened
       `byo-rl9-01` on the values they now read.
+
+- [x] **7.11 A refused assessment looked like a successful one (#13, the
+      rest).** The assessor's refusals - unsupported host, no PyYAML, no
+      requirement selected - used `sys.exit("message")`, which exits 1, the
+      status for "deviations found" that the assessment service accepts
+      (`SuccessExitStatus=1`): the POA&M and the SSP were then regenerated
+      from the last good assessment as if it were new. The two generators
+      were separate `ExecStartPost` lines, so a failed POA&M merge skipped
+      the SSP. `ca-02-poam-register` read a crash in its own Python as
+      MANUAL and trusted an assessment of any age. The SSP listed FAIL but
+      not ERROR, and its temporary file existed at 0644 before the chmod.
+      And the documents disagreed on whether `NIST_SSP_DIR` overwrites the
+      host's sections. *Check first:* the refusal test (exit status) and
+      `PoamRegisterCheck` (an unreadable assessment, a 72-hour-old one)
+      failed before the change. *Fix:* refusals exit 2; one `ExecStartPost`
+      runs both generators and fails if either does; the check reports an
+      unreadable file or an assessment over 48 hours old as a deviation,
+      and reads the register as `utf-8-sig`; the SSP lists ERROR, marked,
+      under `umask 077`; the RUNBOOK and the SSP placeholder say an apply
+      with `NIST_SSP_DIR` replaces the host's copies. *Proven* on
+      `byo-rl9-01`: the service, started, ran to `Result=success` with exit
+      status 1 (deviations), regenerating both plans 0600 in the run; a
+      refusal exits 2.
+      *Not changed:* `tools/assessor-parity.sh` still compares statuses only
+      (P3).

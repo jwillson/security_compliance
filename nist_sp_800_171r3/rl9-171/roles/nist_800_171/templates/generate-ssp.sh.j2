@@ -9,6 +9,9 @@
 # into it was lost at the next apply or assessment (DEFECTS 6.6). It runs on
 # every apply and after every scheduled assessment.
 set -uo pipefail
+# The plan is written to $OUT.new first; without this it existed at 0644 until
+# the chmod below (issue #13).
+umask 077
 OUT="{{ nist_conf_dir }}/system-security-plan.md"
 INV="{{ nist_conf_dir }}/component-inventory.json"
 SSPD="{{ nist_conf_dir }}/ssp.d"
@@ -24,8 +27,8 @@ status() {
 placeholder() {
   cat <<EOF
 > **AUTHOR:** $2 Write it in \`$SSPD/$1\` (Markdown); it is spliced in here on
-> every regeneration and never overwritten. 03.15.02 stays partially satisfied
-> until it is.
+> every regeneration, which never changes it (an apply with \`NIST_SSP_DIR\` set
+> replaces it with your copy). 03.15.02 stays partially satisfied until it is.
 EOF
 }
 
@@ -119,12 +122,15 @@ try:
         if k in s:
             print(f"| {k.replace('_',' ').title()} | {s[k]} |")
     print()
-    fails = [r for r in d.get("requirements", []) if r.get("status") == "FAIL"]
+    # ERROR too: a requirement whose check could not run is not satisfied,
+    # and the POA&M register tracks it (issue #13).
+    fails = [r for r in d.get("requirements", []) if r.get("status") in ("FAIL", "ERROR")]
     if fails:
         print("Requirements not currently satisfied (each is a POA&M item, "
               "`{{ nist_conf_dir }}/poam.csv`):\n")
         for r in fails:
-            print(f"- **{r['id']}** {r.get('title','')}")
+            note = " (could not be assessed)" if r.get("status") == "ERROR" else ""
+            print(f"- **{r['id']}** {r.get('title','')}{note}")
 except Exception as e:
     print(f"(assessment results unreadable: {e})")
 PY

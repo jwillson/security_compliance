@@ -47,13 +47,17 @@
         Type=oneshot
         ExecStart={{ nist_bin_dir }}/nist-assess --json {{ nist_report_dir }}/assessment-latest.json --quiet
         # nist-assess exits 1 when the host has deviations - a result, not a
-        # failure of the service - and the plans below must follow it.
+        # failure of the service - and the plans below must follow it. A
+        # refusal (unsupported host, missing tool) exits 2 and fails the
+        # service, so the plans are not regenerated from the last good
+        # assessment as if it were new (issue #13).
         SuccessExitStatus=1
         # 03.12.02 / 03.15.02: the POA&M register and the SSP follow every
         # assessment, so neither describes an older state of the host. Both
-        # keep what the owner authored (DEFECTS 6.6).
-        ExecStartPost={{ nist_bin_dir }}/nist-generate-poam
-        ExecStartPost={{ nist_bin_dir }}/nist-generate-ssp
+        # keep what the owner authored (DEFECTS 6.6). One line, so a failing
+        # POA&M merge does not stop the SSP: systemd skips the ExecStartPost
+        # lines after one that fails. Either failing still fails the service.
+        ExecStartPost=/bin/sh -c '{{ nist_bin_dir }}/nist-generate-poam; p=$$?; {{ nist_bin_dir }}/nist-generate-ssp; s=$$?; [ $$p -eq 0 ] && [ $$s -eq 0 ]'
     - name: nist-assessment.timer
       content: |
         [Unit]

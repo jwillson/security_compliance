@@ -273,7 +273,7 @@ On the host:
 | Path | What |
 |---|---|
 | `/etc/nist-800-171/system-security-plan.md` | SSP, regenerated on every apply and assessment; your sections spliced in (03.15.02) |
-| `/etc/nist-800-171/ssp.d/` | The SSP sections you write — never overwritten (see *Writing the SSP and working the POA&M*) |
+| `/etc/nist-800-171/ssp.d/` | The SSP sections you write — never touched by the generators; an apply with `NIST_SSP_DIR` set replaces the host's copies with yours (see *Writing the SSP and working the POA&M*) |
 | `/etc/nist-800-171/poam.csv` | The POA&M register, merged after every assessment; your columns carried forward (03.12.02) |
 | `/etc/nist-800-171/organizational-requirements.md` | Everything the host cannot enforce, with the ODP values committed to |
 | `/etc/nist-800-171/component-inventory.json` | Component inventory (03.04.10) |

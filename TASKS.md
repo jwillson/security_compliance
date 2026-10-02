@@ -93,7 +93,7 @@ TASKS.md says the repository went public, which it has not.
 - [x] #6 lab tools act on any libvirt domain (`destroy` deletes its disks).
 
 **P2 — checks that cannot fail, and correctness**
-- [ ] #13 a refused assessment looks like a successful service run; the SSP
+- [x] #13 a refused assessment looks like a successful service run; the SSP
       skips ERROR; six checks cannot fail (`ac-12-sshd-crypto-policy`,
       `ir-02-journald-retention`, `mp-02-umask-profile`,
       `pe-07-single-user-auth`, the MAC deny lists, the repository prefix
@@ -118,7 +118,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) and 7.10 (#13, the checks that could not fail).
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10), 7.6 (#8), 7.7 (#11), 7.8 (#6). P1 is complete. Then 7.9 (log rotation, found on the way) 7.10 and 7.11 (#13).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed

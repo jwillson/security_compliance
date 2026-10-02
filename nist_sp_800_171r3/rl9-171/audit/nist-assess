@@ -116,11 +116,20 @@ def unsupported_reasons(os_release: Path = Path("/etc/os-release"),
     return reasons
 
 
+# Exit statuses: 0 nothing failed, 1 deviations found, 2 the assessment did
+# not run. sys.exit("message") exits 1, which the assessment service accepts
+# as a result (SuccessExitStatus=1) - a refusal then regenerated the POA&M
+# and the SSP from the last good assessment as if it were new (issue #13).
+def refuse(message: str):
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
 def load_yaml(path: Path):
     try:
         import yaml
     except ImportError:
-        sys.exit("error: PyYAML is required (dnf install python3-pyyaml)")
+        refuse("error: PyYAML is required (dnf install python3-pyyaml)")
     with path.open() as fh:
         return yaml.safe_load(fh)
 
@@ -312,7 +321,7 @@ def assess(overlay, catalog, checks_by_id, args) -> dict:
         selected.append(req)
 
     if not selected:
-        sys.exit("error: no requirements matched the selection")
+        refuse("error: no requirements matched the selection")
 
     results = []
     for req in selected:
@@ -593,8 +602,8 @@ def main() -> int:
     if unsupported and not args.allow_unsupported:
         for reason in unsupported:
             print(f"error: {reason}", file=sys.stderr)
-        sys.exit("refusing to assess; --allow-unsupported runs anyway and "
-                 "marks the report")
+        refuse("refusing to assess; --allow-unsupported runs anyway and "
+               "marks the report")
 
     overlay_p = args.overlay or find("overlay-rocky9.yml")
     catalog_p = args.catalog or find("requirements.json")
@@ -603,7 +612,7 @@ def main() -> int:
                     ("requirements.json", catalog_p),
                     ("checks.yml", checks_p)):
         if p is None:
-            sys.exit(f"error: could not locate {name} in {[str(d) for d in SEARCH_DIRS]}")
+            refuse(f"error: could not locate {name} in {[str(d) for d in SEARCH_DIRS]}")
 
     overlay = load_yaml(overlay_p)
     catalog = json.loads(catalog_p.read_text())
