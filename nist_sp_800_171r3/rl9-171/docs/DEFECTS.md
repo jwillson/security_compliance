@@ -1267,3 +1267,41 @@ source, and nothing from it is taken without its own proof here.*
       points and left intact, a BYO and a kickstart guest pass the guards,
       and the authored-plans rehearsal refuses a host with a stand-in
       section and leaves it; the full rehearsal then passes on `byo-rl9-01`.
+
+- [x] **7.9 Log rotation failed every day on every hardened host (found
+      2026-10-02, not in the review).** The role's `/etc/logrotate.d/nist-syslog`
+      named `/var/log/messages` and `/var/log/secure` a second time;
+      logrotate answers a duplicate entry by skipping the whole stock
+      `rsyslog` stanza and exiting 1, so from the first run `logrotate.service`
+      failed daily and the system logs were never rotated - left long enough,
+      the same full disk 7.5 guards against. And the stock `btmp` and `wtmp`
+      stanzas recreate those files 0660 and 0664 at the monthly rotation,
+      undoing the role's tmpfiles mode until the next boot: the first
+      rotation, on 2026-10-01, made `ir-02-logs-perms` and `si-08-log-perms`
+      fail on `byo-rl9-01`. No check had looked at rotation itself. *Check
+      first:* new `si-08-logrotate-clean` (`logrotate --debug`, error count)
+      failed with 5 on `byo-rl9-01`. *Fix:* the role writes the retention
+      policy into `/etc/logrotate.d/rsyslog` itself (a package update's
+      version lands as `.rpmnew`, which logrotate ignores) and removes
+      `nist-syslog`; `btmp` and `wtmp` are recreated 0600;
+      `si-08-logrotate-retention` reads the `rsyslog` stanza. *Proven:*
+      `tools/rehearse-log-rotation.sh byo-rl9-01` failed four ways before the
+      fix and passes after it - no configuration error, the service
+      succeeding, btmp, wtmp and messages recreated 0600 after a forced
+      rotation, 03.14.08 verifying with nothing failed.
+
+- [x] **7.10 Six checks could not fail (#13, part).** `ac-12-sshd-crypto-policy`
+      asserted `>= 0`; `ir-02-journald-retention` counted the stock commented
+      line; `mp-02-umask-profile` took the lexically highest value in any
+      file; `pe-07-single-user-auth` read the vendor unit, not drop-ins; the
+      SSH MAC deny lists missed `hmac-sha1-etm` (and one `umac-64@`); the
+      repository allow-list was anchored only at the start. Also
+      `sc-01-zone-target` and `sc-06-zone-target-drop` read the permanent
+      firewall configuration, not the running one. *Check first:* `RealChecks`
+      tests for the MACs, the repositories and the journal retention failed
+      on the old checks. *Fix:* each reads effective state - no uncommented
+      `CRYPTO_POLICY=`, `systemd-analyze cat-config` at the
+      `audit_retention_days` ODP, an ordinary user's login-shell umask,
+      `systemctl show rescue.service`, `firewall-cmd --info-zone` - and the
+      deny list and allow-list are exact. *Proven:* all pass on the hardened
+      `byo-rl9-01` on the values they now read.

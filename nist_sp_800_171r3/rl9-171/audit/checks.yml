@@ -440,8 +440,11 @@ checks:
 
   - id: ac-12-sshd-crypto-policy
     description: sshd inherits the system-wide crypto policy
-    command: "grep -rc 'CRYPTO_POLICY' /etc/sysconfig/sshd 2>/dev/null | head -1"
-    expect_int: ">= 0"
+    # An uncommented CRYPTO_POLICY= in /etc/sysconfig/sshd overrides the
+    # system policy for sshd. The check counted any mention and asserted
+    # ">= 0", which nothing can fail (issue #13).
+    command: "grep -E '^[[:space:]]*CRYPTO_POLICY=' /etc/sysconfig/sshd 2>/dev/null || true"
+    expect_empty: true
 
   - id: ac-16-bluetooth-module
     description: The Bluetooth module cannot be loaded
@@ -1136,7 +1139,10 @@ checks:
   - id: ia-04-sshd-macs
     description: Only strong MAC algorithms are offered
     command: "sshd -T 2>/dev/null | awk '/^macs/ {print $2}'"
-    expect_no_match: "md5|ripemd|umac-64[^-]|hmac-sha1$|hmac-sha1,"
+    # Any MD5, RIPEMD, 64-bit UMAC or SHA-1 MAC, in either the plain or the
+    # encrypt-then-MAC form: the lists missed hmac-sha1-etm and one missed
+    # umac-64@ (issue #13).
+    expect_no_match: "md5|ripemd|umac-64|hmac-sha1(-etm@openssh\\.com)?(,|$)"
 
   - id: ia-04-crypto-policy-set
     description: The system-wide crypto policy matches the ODP
@@ -1364,8 +1370,11 @@ checks:
 
   - id: ir-02-journald-retention
     description: The journal has a defined retention period
-    command: "grep -rh 'MaxRetentionSec' /etc/systemd/journald.conf.d/ /etc/systemd/journald.conf 2>/dev/null | grep -c . || true"
-    expect_int: ">= 1"
+    # The value journald uses - the last uncommented setting across its
+    # drop-ins - at the ODP. Counting lines matched the stock commented
+    # "#MaxRetentionSec=" (issue #13).
+    command: "systemd-analyze cat-config systemd/journald.conf 2>/dev/null | grep -E '^MaxRetentionSec=' | tail -1"
+    expect_match: "^MaxRetentionSec={odp.audit_retention_days}day$"
 
   - id: ir-02-rsyslog-enabled
     description: Log collection is running for incident telemetry
@@ -1439,8 +1448,10 @@ checks:
 
   - id: mp-02-umask-profile
     description: New files are created without group or other access
-    command: "grep -rhoP '(?<=^umask )\\d+' /etc/profile.d/ /etc/profile 2>/dev/null | sort | tail -1"
-    expect_match: "^0?77$"
+    # The umask an ordinary user's login shell ends up with - effective state.
+    # The highest value in any file, compared as text, was not that (issue #13).
+    command: "runuser -u nobody -- env -i HOME=/var/empty bash --login -c umask 2>/dev/null"
+    expect_match: "^0?0?77$"
 
   - id: mp-02-no-world-readable-home
     description: No home directory is world-readable
@@ -1662,8 +1673,10 @@ checks:
 
   - id: pe-07-single-user-auth
     description: Single-user mode requires the root password
-    command: "grep -c 'sulogin' /usr/lib/systemd/system/rescue.service"
-    expect_int: ">= 1"
+    # What systemd runs, drop-ins included; the vendor file alone ignored a
+    # drop-in that replaced ExecStart (issue #13).
+    command: "systemctl show rescue.service -p ExecStart"
+    expect_match: "sulogin"
 
   - id: pe-07-emergency-auth
     description: Emergency mode requires the root password
@@ -1813,7 +1826,8 @@ checks:
 
   - id: sc-01-zone-target
     description: The default zone denies traffic that is not permitted
-    command: "firewall-cmd --permanent --zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" --get-target 2>/dev/null"
+    # The running zone, not the permanent configuration (issue #13).
+    command: "firewall-cmd --info-zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" 2>/dev/null | awk '$1==\"target:\" {print $2}'"
     expect_match: "^(DROP|%%REJECT%%|REJECT)$"
 
   - id: sc-01-services-minimal
@@ -1882,7 +1896,8 @@ checks:
 
   - id: sc-06-zone-target-drop
     description: The firewall default is deny, not accept
-    command: "firewall-cmd --permanent --zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" --get-target 2>/dev/null"
+    # The running zone, not the permanent configuration (issue #13).
+    command: "firewall-cmd --info-zone=\"$(firewall-cmd --get-default-zone 2>/dev/null)\" 2>/dev/null | awk '$1==\"target:\" {print $2}'"
     expect_match: "^(DROP|%%REJECT%%|REJECT)$"
 
   - id: sc-06-no-unexpected-ports
@@ -2132,7 +2147,10 @@ checks:
   - id: sc-15-ssh-macs
     description: Session integrity uses strong MAC algorithms
     command: "sshd -T 2>/dev/null | awk '/^macs/ {print $2}'"
-    expect_no_match: "md5|ripemd|umac-64-"
+    # Any MD5, RIPEMD, 64-bit UMAC or SHA-1 MAC, in either the plain or the
+    # encrypt-then-MAC form: the lists missed hmac-sha1-etm and one missed
+    # umac-64@ (issue #13).
+    expect_no_match: "md5|ripemd|umac-64|hmac-sha1(-etm@openssh\\.com)?(,|$)"
 
   - id: sc-15-rekey-limit
     description: Sessions rekey before a key is overused
@@ -2311,8 +2329,21 @@ checks:
 
   - id: si-08-logrotate-retention
     description: System logs are retained for the ODP period
-    command: "grep -rhoP '(?<=maxage )\\d+' /etc/logrotate.d/nist-syslog 2>/dev/null | head -1"
+    # The stanza the rsyslog files are rotated by (the role's nist-syslog
+    # duplicated it and broke rotation; DEFECTS 7.9).
+    command: "grep -hoP '(?<=maxage )\\d+' /etc/logrotate.d/rsyslog 2>/dev/null | head -1"
     expect_int: ">= {odp.audit_retention_days}"
+
+  - id: si-08-logrotate-clean
+    description: Log rotation runs without configuration errors, so the system logs are rotated at all
+    # logrotate skips a whole file on an error in it. The role's own stanza
+    # named /var/log/messages and /var/log/secure a second time, so from the
+    # first run on every host the stock rsyslog stanza was skipped, the
+    # service failed daily and the system logs were never rotated - found
+    # on 2026-10-02, after the first monthly rotation. `--debug` parses and
+    # reports without rotating anything: the configuration, not the timer.
+    command: "logrotate --debug /etc/logrotate.conf 2>&1 | grep -c '^error:' || true"
+    expect_int: "== 0"
 
   - id: si-08-log-perms
     description: Retained logs are protected from disclosure
@@ -2359,9 +2390,11 @@ checks:
 
   - id: sa-02-no-unsupported-repos
     description: Only authorized repositories are enabled
+    # Whole repository IDs: the pattern was anchored only at the start, so
+    # "baseos-anything" passed (issue #13).
     command: |
       dnf -q repolist --enabled | tail -n +2 \
-        | awk '$1 !~ /^(baseos|appstream|extras|crb|rocky)/ {print $1}'
+        | awk '$1 !~ /^(baseos|appstream|extras|crb)$/ {print $1}'
     expect_empty: true
 
   - id: sa-02-no-orphan-packages
@@ -2395,7 +2428,9 @@ checks:
 
   - id: sr-03-no-unauthorized-repos
     description: No repository outside the authorized set is configured
+    # Whole repository IDs: the pattern was anchored only at the start, so
+    # "baseos-anything" passed (issue #13).
     command: |
       dnf -q repolist --enabled | tail -n +2 \
-        | awk '$1 !~ /^(baseos|appstream|extras|crb|rocky)/ {print $1}'
+        | awk '$1 !~ /^(baseos|appstream|extras|crb)$/ {print $1}'
     expect_empty: true

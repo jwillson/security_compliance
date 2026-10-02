@@ -273,12 +273,24 @@
   tags: ["03.14.08", "03.06.02"]
 
 - name: "03.14.08 | Retain and protect the general system logs"
+  # The rsyslog package's own stanza, rewritten with the retention policy.
+  # The role used to add a second stanza in nist-syslog naming the same
+  # files; logrotate rejects a duplicate entry by skipping the whole stock
+  # file, so the service failed daily and the system logs were never rotated
+  # (found 2026-10-02). A package update that ships a new version writes it
+  # as rsyslog.rpmnew, which logrotate ignores.
   ansible.builtin.copy:
-    dest: /etc/logrotate.d/nist-syslog
+    dest: /etc/logrotate.d/rsyslog
     content: |
-      # 03.14.08  Retain system logs for {{ odp.audit_retention_days }} days
-      # with restrictive permissions (03.03.08a).
-      /var/log/messages /var/log/secure /var/log/maillog /var/log/cron /var/log/sudo.log {
+      # Managed by the nist_800_171 role (03.14.08): retain the system logs for
+      # {{ odp.audit_retention_days }} days with restrictive permissions (03.03.08a).
+      /var/log/cron
+      /var/log/maillog
+      /var/log/messages
+      /var/log/secure
+      /var/log/spooler
+      /var/log/sudo.log
+      {
           rotate {{ (odp.audit_retention_days | int / 7) | round | int }}
           weekly
           maxage {{ odp.audit_retention_days }}
@@ -289,13 +301,30 @@
           create 0600 root root
           sharedscripts
           postrotate
-              /usr/bin/systemctl kill -s HUP rsyslog.service 2>/dev/null || true
+              /usr/bin/systemctl kill -s HUP rsyslog.service >/dev/null 2>&1 || true
           endscript
       }
     owner: root
     group: root
     mode: "0644"
   tags: ["03.14.08"]
+
+- name: "03.14.08 | Remove the duplicate stanza an earlier version wrote"
+  ansible.builtin.file:
+    path: /etc/logrotate.d/nist-syslog
+    state: absent
+  tags: ["03.14.08"]
+
+- name: "03.14.08 | Recreate the login records private when they rotate"
+  # The stock stanzas recreate btmp 0660 and wtmp 0664 at the monthly
+  # rotation, undoing the tmpfiles entry below until the next boot (found
+  # after the first rotation, 2026-10-01).
+  ansible.builtin.lineinfile:
+    path: "/etc/logrotate.d/{{ item }}"
+    regexp: '^(\s*)create\s'
+    line: '    create 0600 root utmp'
+  loop: [btmp, wtmp]
+  tags: ["03.14.08", "03.03.08"]
 
 - name: "03.14.08 | Set restrictive permissions on new log files"
   ansible.builtin.lineinfile:

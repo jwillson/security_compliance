@@ -224,6 +224,33 @@ class RealChecks(unittest.TestCase):
                 self.assertEqual(self.status(cid, self.SSHD,
                                  f"clientaliveinterval {self.odp['ssh_client_alive_interval']}"), "PASS")
 
+    def test_weak_ssh_macs_fail(self):
+        for cid in ("ia-04-sshd-macs", "sc-15-ssh-macs"):
+            for weak in ("hmac-sha1-etm@openssh.com", "umac-64@openssh.com", "umac-64-etm@openssh.com",
+                         "hmac-sha1", "hmac-md5"):
+                with self.subTest(cid=cid, mac=weak):
+                    self.assertEqual(self.status(cid, self.SSHD,
+                                     f"'macs hmac-sha2-512,{weak},hmac-sha2-256'"), "FAIL")
+            with self.subTest(cid=cid, mac="approved"):
+                self.assertEqual(self.status(cid, self.SSHD,
+                                 "'macs hmac-sha2-256-etm@openssh.com,hmac-sha2-512'"), "PASS")
+
+    REPOS = "dnf -q repolist --enabled"
+
+    def test_only_the_named_repositories_pass(self):
+        for cid in ("sa-02-no-unsupported-repos", "sr-03-no-unauthorized-repos"):
+            with self.subTest(cid):
+                self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nbaseos x\\nappstream x\\nextras x'"), "PASS")
+                self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nbaseos-evil x'"), "FAIL")
+                self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nrocky-mirror x'"), "FAIL")
+
+    def test_journal_retention_must_be_the_odp(self):
+        reads = "systemd-analyze cat-config systemd/journald.conf 2>/dev/null"
+        days = self.odp["audit_retention_days"]
+        self.assertEqual(self.status("ir-02-journald-retention", reads, "'#MaxRetentionSec='"), "FAIL")
+        self.assertEqual(self.status("ir-02-journald-retention", reads,
+                                     f"-e '#MaxRetentionSec=\\nMaxRetentionSec={days}day'"), "PASS")
+
     def test_tmout_zero_or_unset_fails(self):
         for cid in ("ac-10-tmout-set", "ac-11-tmout-set", "sc-09-tmout"):
             with self.subTest(cid):

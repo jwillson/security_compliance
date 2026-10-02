@@ -1617,7 +1617,7 @@ requirements:
     residual: >
       Retention of CUI content itself is governed by records-management policy.
     checks: [si-08-audit-retention, si-08-journald-retention,
-             si-08-logrotate-retention, si-08-log-perms]
+             si-08-logrotate-retention, si-08-log-perms, si-08-logrotate-clean]
 
 # ===========================================================================
 # 03.15 PLANNING
