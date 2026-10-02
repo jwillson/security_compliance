@@ -309,7 +309,8 @@ make vm-log        # or ./vm/build-vm.sh --role log
 The collector is a CUI host too — it stores other systems' audit records — so
 the same overlay hardens it, and `roles/nist_log_collector` adds only the
 receiving half: rsyslog on 6514/tcp under TLS with mutual x509
-authentication (03.13.08), one directory per sending host at mode 0700, and
+authentication (03.13.08), one directory per sending host (named by the address the record came from,
+not the hostname it claims) at mode 0700, and
 rotation at the same `audit_retention_days` the records had at origin.
 `tools/inventory.py` owns `inventory/hosts.yml` and points the forwarders at
 the collector; adding or removing a log host rewires them.

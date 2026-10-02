@@ -315,7 +315,11 @@
     dest: /etc/rsyslog.d/90-nist-forward.conf
     content: |
       # 03.03.05c  Correlate audit records across repositories.
-      # Records are queued on disk so a collector outage does not lose them.
+      # Records are queued on disk so a collector outage does not lose them -
+      # up to {{ nist_fwd_queue_max_mb }} MB. Unbounded, a long outage filled the
+      # filesystem, and where it holds /var/log/audit auditd's admin_space_left
+      # action took the host to single-user (issue #10). Past the cap further
+      # forwarded copies are dropped; /var/log/audit/audit.log still has them.
       {% if nist_fwd_tls_ready %}
       # 03.13.08  In transit under TLS with mutual x509 authentication: the
       # collector must present a certificate for "{{ nist_log_collector_name }}"
@@ -334,12 +338,14 @@
                  StreamDriverAuthMode="x509/name"
                  StreamDriverPermittedPeers="{{ nist_log_collector_name }}"
                  queue.type="LinkedList" queue.filename="nistfwd"
+                 queue.maxDiskSpace="{{ nist_fwd_queue_max_mb }}m"
                  queue.saveOnShutdown="on" action.resumeRetryCount="-1")
       {% else %}
           # Plaintext: nist_log_tls is false. Acceptable only on an isolated
           # network; the assessor reports it under 03.13.08.
           action(type="omfwd" target="{{ nist_fwd_host }}" port="{{ nist_fwd_port }}" protocol="tcp"
                  queue.type="LinkedList" queue.filename="nistfwd"
+                 queue.maxDiskSpace="{{ nist_fwd_queue_max_mb }}m"
                  queue.saveOnShutdown="on" action.resumeRetryCount="-1")
       {% endif %}
       }

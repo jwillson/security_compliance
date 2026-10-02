@@ -677,10 +677,30 @@ checks:
       # arrived (DEFECTS 6b.6). An auditd record reads
       # "type=SYSCALL msg=audit(...)"; the kernel's own "audit: type=1131"
       # lines, printed only while auditd is down, are not the trail.
-      found=$(grep -rlE 'type=[A-Z_]+ msg=audit\(' "$dir" 2>/dev/null \
-                | grep -v "^$dir/$(hostname -s)/" | head -1)
-      [ -n "$found" ] && echo receiving || echo "no audit records from another host in $dir"
+      # Only the audit trail's own file, written within the last day, in the
+      # directory of a known peer: an audit-shaped line in any file of any
+      # age under any name passed before (issue #10). The collector names a
+      # directory after the peer whose address the record came from, and an
+      # address it does not know as `unknown-<ip>`.
+      found=$(find "$dir" -mindepth 2 -maxdepth 2 -name audispd.log -mmin -1440 2>/dev/null \
+                | grep -v -e "^$dir/$(hostname -s)/" -e "^$dir/unknown-" \
+                | while read -r f; do grep -lE 'type=[A-Z_]+ msg=audit\(' "$f"; done | head -1)
+      [ -n "$found" ] && echo receiving || echo "no audit trail from another host in the last day in $dir"
     expect_output: "receiving"
+    manual_if_absent: true
+
+  - id: au-05-forward-queue-bounded
+    description: The forwarding queue cannot fill the disk during a collector outage
+    # rsyslog has no runtime query for a queue's limits, so this reads the
+    # rule rsyslog loaded (`rsyslogd -N1` validates it on apply). Unbounded, a
+    # long outage filled the filesystem and auditd's admin_space_left action
+    # took the host to single-user (issue #10).
+    command: |
+      f=/etc/rsyslog.d/90-nist-forward.conf
+      [ -f "$f" ] || { echo "not forwarding"; exit 1; }
+      n=$(grep -c 'queue.filename=' "$f"); b=$(grep -c 'queue.maxDiskSpace=' "$f")
+      [ "$n" -gt 0 ] && [ "$b" -ge "$n" ] && echo bounded || echo "$((n - b)) of $n disk queues without queue.maxDiskSpace"
+    expect_output: "bounded"
     manual_if_absent: true
 
   - id: au-05-audit-trail-forwarded

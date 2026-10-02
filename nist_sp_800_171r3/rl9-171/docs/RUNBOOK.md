@@ -445,7 +445,8 @@ Removing the collector unwires them. The collector never forwards to itself.
 The collector is hardened by the same overlay — it holds other systems' audit
 records, so it is a CUI host. `roles/nist_log_collector` adds only the
 receiving half: rsyslog on 6514/tcp under TLS with mutual x509
-authentication, one directory per sending host at mode 0700, rotation at the
+authentication, one directory per sending host (by the address it came from, not the
+hostname it claims) at mode 0700, rotation at the
 same `audit_retention_days` the records had at origin.
 
 Both sides need certificates: `ca.crt` and `HOST.crt`/`HOST.key` per host in

@@ -191,3 +191,9 @@ nist_mount_hardening:
 # by widening this list - see roles/nist_log_collector.
 nist_authorized_tcp_ports:
   - 22
+
+# Disk the forwarding queue may use while the collector is unreachable
+# (03.03.05c). Bounded so an outage cannot fill a filesystem shared with
+# /var/log/audit (issue #10); past it, forwarded copies are dropped and the
+# local audit trail keeps every record.
+nist_fwd_queue_max_mb: 512

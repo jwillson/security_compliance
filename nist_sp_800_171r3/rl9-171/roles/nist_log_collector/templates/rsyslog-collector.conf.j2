@@ -23,11 +23,14 @@ module(load="imtcp"
 input(type="imtcp" port="{{ nist_collector_port }}")
 
 # One directory per sending host, so records stay attributable to the system
-# that produced them. %HOSTNAME% is taken from the record itself; the
-# template rejects path separators so a hostile hostname cannot escape the
-# directory.
+# that produced them - named after the peer the connection came from, by its
+# address, never after %HOSTNAME%: that is whatever the sender wrote in the
+# record, so one permitted peer could file records as another (issue #10).
+# Under mutual TLS the address belongs to a peer the CA vouched for. An
+# address the inventory does not know is filed as unknown-<ip>, and counts
+# for nothing in au-05-collector-receiving.
 template(name="NistRemoteFile" type="string"
-         string="{{ nist_remote_log_dir }}/%HOSTNAME:::secpath-replace%/%PROGRAMNAME:::secpath-replace%.log")
+         string="{{ nist_remote_log_dir }}/%$.nistsrc%/%PROGRAMNAME:::secpath-replace%.log")
 
 # 0600 root:root, matching the protection the records had on their origin
 # host (03.03.08a).
@@ -40,6 +43,15 @@ $FileOwner root
 $FileGroup root
 
 if ($fromhost-ip != "127.0.0.1") then {
+    set $.nistsrc = "unknown-" & $fromhost-ip;
+{% for p in nist_col_peers %}
+{%   set addr = hostvars[p].ansible_host | default(p) %}
+{%   if addr is match('^[0-9.]+$') or ':' in addr %}
+    if $fromhost-ip == "{{ addr }}" then { set $.nistsrc = "{{ p }}"; }
+{%   else %}
+    if $fromhost == "{{ addr }}" then { set $.nistsrc = "{{ p }}"; }
+{%   endif %}
+{% endfor %}
     action(type="omfile" dynaFile="NistRemoteFile")
     stop
 }

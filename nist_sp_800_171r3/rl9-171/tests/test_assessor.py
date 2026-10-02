@@ -287,5 +287,51 @@ class AgingChecks(unittest.TestCase):
         self.assertEqual(self.status("ia-12-exempt-rotated", "::::::", "alice\n"), "FAIL")
         self.assertEqual(self.status("ia-12-exempt-rotated", stale, ""), "PASS")
 
+
+class CollectorReceiving(unittest.TestCase):
+    """au-05-collector-receiving against a fake collector tree (issue #10).
+
+    It passed on an audit-shaped line in any file, of any age, under any
+    directory - so a line typed with `logger` into a stale file passed.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.check = next(c for c in yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]
+                         if c["id"] == "au-05-collector-receiving")
+
+    def status(self, files):
+        import os, time
+        with tempfile.TemporaryDirectory() as d:
+            remote = Path(d, "remote")
+            for rel, age_days in files:
+                f = remote / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text("Oct  1 byo-rl9-01 audispd[9]: node=x type=SYSCALL msg=audit(1.2:3): arch=c000003e\n")
+                t = time.time() - age_days * 86400
+                os.utime(f, (t, t))
+            Path(d, "collector.conf").write_text("x")
+            Path(d, "status").write_text(f"directory={remote}\n")
+            check = dict(self.check)
+            cmd = check["command"]
+            for real in ("/etc/rsyslog.d/10-nist-collector.conf", "/etc/nist-800-171/log-collector-status"):
+                self.assertIn(real, cmd)
+            check["command"] = (cmd.replace("/etc/rsyslog.d/10-nist-collector.conf", f"{d}/collector.conf")
+                                   .replace("/etc/nist-800-171/log-collector-status", f"{d}/status"))
+            return na.Runner({}).run(check)["status"]
+
+    def test_a_recent_audit_trail_from_a_peer_passes(self):
+        self.assertEqual(self.status([("byo-rl9-01/audispd.log", 0)]), "PASS")
+
+    def test_an_audit_line_in_another_file_does_not(self):
+        self.assertEqual(self.status([("byo-rl9-01/logger.log", 0)]), "FAIL")
+
+    def test_a_stale_trail_does_not(self):
+        self.assertEqual(self.status([("byo-rl9-01/audispd.log", 3)]), "FAIL")
+
+    def test_an_unattributed_sender_does_not(self):
+        self.assertEqual(self.status([("unknown-10.0.0.9/audispd.log", 0)]), "FAIL")
+
 if __name__ == "__main__":
     unittest.main()

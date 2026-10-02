@@ -819,7 +819,7 @@ requirements:
     checks: [au-05-review-timer, au-05-review-timer-enabled,
              au-05-review-schedule, au-05-aureport-present, au-05-rsyslog-forwarding,
              au-05-forward-established, au-05-collector-receiving,
-             au-05-audit-trail-forwarded]
+             au-05-audit-trail-forwarded, au-05-forward-queue-bounded]
 
   - id: "03.03.06"
     title: Audit Record Reduction and Report Generation

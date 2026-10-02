@@ -1163,3 +1163,32 @@ source, and nothing from it is taken without its own proof here.*
       minimum and warning, `cuiuser1` kept 60/35, the second apply reported
       `changed=0`, `--skip-tags 03.01.01 --check` completed, and 03.01.01
       and 03.05.12 verify with nothing failed.
+
+- [x] **7.5 Forwarding: records filed under the sender's word, and an
+      outage that could take a host to single-user (#10).** The collector
+      named each host's directory from `%HOSTNAME%`, which the sender writes:
+      root on any permitted peer could file records as another host. The
+      forwarding disk queue had no limit, so a long collector outage could
+      fill a filesystem shared with `/var/log/audit` and auditd's
+      `admin_space_left_action = SINGLE` would follow. And
+      `au-05-collector-receiving` passed on an audit-shaped line in any
+      file, of any age, under any directory name. *Check first:*
+      `CollectorReceiving` in `tests/test_assessor.py` (a fake collector
+      tree) failed on a line in another file, a stale trail, and an
+      `unknown-` sender before the change. *Fix:* the collector names the
+      directory after the inventory peer whose address the connection came
+      from (under mutual TLS, an address the CA vouched for), `unknown-<ip>`
+      otherwise; the check counts only a recent `audispd.log` in a known
+      peer's directory; the forwarder's queue is capped at
+      `nist_fwd_queue_max_mb` (512) — past it forwarded copies are dropped,
+      and `audit.log` keeps every record — and new
+      `au-05-forward-queue-bounded` reads that. *Narrower than filed:* a
+      `logger` line tagged `audispd` controls where a line is filed, not
+      whether it reaches the collector — every other line is forwarded
+      anyway. *Proven* on the BYO lab: `tools/prove-collector-attribution.sh
+      byo-rl9-02 byo-rl9-01 byo-log-01` — a record sent with
+      `byo-rl9-02`'s certificate claiming to be `byo-rl9-01` was filed under
+      `byo-rl9-02`; 03.03.05 verifies with nothing failed on all three hosts.
+      *Not changed:* `vm/siem-container.sh` still files by the claimed host
+      (`keep-hostname(yes)`); it is a lab stand-in that 6.2a's proof counts
+      by name.

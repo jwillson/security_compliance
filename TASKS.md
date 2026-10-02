@@ -83,7 +83,7 @@ TASKS.md says the repository went public, which it has not.
       produces output is never ended, and the overlay says it is.
 - [x] #12 aging cuts the automation account off on day 60 (I2: exempt, and
       a rotation runbook); the inactivity check passes 99999.
-- [ ] #10 a full disk from the unbounded forwarding queue drops the host to
+- [x] #10 a full disk from the unbounded forwarding queue drops the host to
       single-user (`SINGLE`); the collector files by the sender-claimed
       hostname; `au-05-collector-receiving` matches a forged line.
 - [ ] #8 no pre-flight keeps the boot entries `--unrestricted` before the
@@ -113,7 +113,7 @@ TASKS.md says the repository went public, which it has not.
       fallback; LAB.md's six hand-made lab files get a script or a template;
       the CHANGELOG's "every host passed" means the release gate.
 
-Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12).
+Done so far (DEFECTS.md, Phase 7): 7.1 (#3), 7.2 (#4), 7.3 (#9), 7.4 (#12), 7.5 (#10).
 
 *Done when:* each fix is check-first where a check is involved (the check
 fails on the defect first), the release run passes on both labs at the fixed
