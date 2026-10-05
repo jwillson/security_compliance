@@ -67,7 +67,7 @@ if [[ ! -x "$LAB/venv/bin/ansible-playbook" ]]; then
     "$UV" venv -q --python 3.12 "$LAB/venv"
     "$UV" pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
   else
-    echo "error: needs Python >= 3.12 with venv (Ubuntu: python3-venv; RHEL 9: dnf install python3.12) or uv" >&2; exit 2
+    echo "error: needs Python >= 3.12 with venv (Ubuntu: python3-venv; RHEL 9: dnf install python3.12 python3.12-pip) or uv" >&2; exit 2
   fi
   made "venv/ (ansible-core $ANSIBLE_CORE, $("$LAB/venv/bin/python" --version))"
 fi

@@ -85,7 +85,7 @@ if [[ -n "$py12" ]]; then ok "$py12 >= 3.12 with venv (for make tools)"
 elif command -v uv >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/uv" || -x "$HOME/.cargo/bin/uv" ]]; then ok "uv (for make tools; no system Python >= 3.12)"
 else
   bad "make tools needs Python >= 3.12 with venv, or uv"
-  case $family in apt) missing_pkgs+=(python3-venv) ;; dnf) missing_pkgs+=(python3.12) ;; pacman) missing_pkgs+=(python) ;; esac
+  case $family in apt) missing_pkgs+=(python3-venv) ;; dnf) missing_pkgs+=(python3.12 python3.12-pip) ;; pacman) missing_pkgs+=(python) ;; esac
 fi
 if command -v ansible-playbook >/dev/null 2>&1; then ok "ansible-playbook"
 else note "ansible-playbook not on PATH yet: make tools builds the pinned one (make all does it for you)"; fi
