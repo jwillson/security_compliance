@@ -1519,3 +1519,36 @@ public when it had not.*
       attaches the serial console, naming the account and password file.
       *Proven:* both labs - `byo-rl9-02` and `rl9-cui-01` - answered a
       command through `lab-ssh.sh` with nothing typed.
+
+- [x] **7.22 An install that cannot reach its mirror had no way to say why.**
+      The owner's host hung; whether DNS, NAT, a firewall or the mirror was
+      to blame could only be guessed. `~/ktistes` had found the
+      systemd-resolved stub (`127.0.0.53`) breaking anything that copies
+      `resolv.conf` into its own network - qemu user-mode networking,
+      containers. The lab's guests use a libvirt NAT network instead, whose
+      `dnsmasq` runs on the host, where the stub works; but `dnsmasq` itself
+      is optional on Arch, and nothing checked it. *Fix:*
+      `tools/diagnose-lab-net.sh` tests each layer on its own - the host's
+      resolver, libvirt's `dnsmasq` for `nist-lab`, a DNS query sent to the
+      guests' server (stdlib, no `dig`), NAT and Docker, the mirror, DNS
+      inside a podman container - and names the failing one; the install
+      watcher points at it; `host-check.sh` requires `dnsmasq` and prints
+      `pacman` commands on Arch. *Proven* on the laptop: all six layers pass,
+      the stub resolver included.
+
+- [x] **7.23 Hardening a host needed a workstation full of tools.** Ansible,
+      its collections, Python packages, poppler, uv - each installed on the
+      host. *Owner decision 2026-10-05:* the control side in a container, on
+      Ubuntu 26.04. *Fix:* `container/Containerfile` (Ubuntu 26.04 pinned by
+      digest, `container/pin-base.sh` renews it; ansible-core 2.21.4 and the
+      pinned collections) and `./nist`, which runs any command inside it as
+      the operator, on the host network, with the repository, `~/.ssh` and
+      the BYO lab directory mounted at their own paths - SELinux labelling
+      off for the container, since relabelling `~/.ssh` would stop the
+      host's sshd reading `authorized_keys`. CI builds the image and runs
+      validate, the tests, catalog-check and the syntax checks inside it.
+      *Proven* by `tools/test-container.sh`: the image builds, carries
+      ansible-core 2.21.4, and passes validate, the 95 tests, catalog-check
+      (poppler 26.01 reproduces the catalog) and both playbooks' syntax
+      checks; CI green. The lab VMs still need the host's virtualisation
+      (the hybrid is the next step, TASKS).

@@ -51,6 +51,21 @@ is created if missing. The lab, getting into a hardened guest, and removing
 everything again (`make teardown`) are [docs/LAB.md](docs/LAB.md), *On any
 host*.
 
+**With nothing installed but podman or docker**, every command that does
+not build VMs runs inside the control-plane container, a pinned Ubuntu 26.04
+image with the Ansible this project pins (`container/Containerfile`):
+
+```bash
+./nist make validate                  # built on first use
+./nist ./apply.sh --check --diff      # and every other command, the same way
+./nist ./verify.sh --failed-only
+```
+
+`./nist` runs as you, on the host network, with the repository, `~/.ssh` and
+the BYO lab directory mounted where they are, so inventories, keys and the
+second-factor helper work unchanged. Building lab VMs still needs the host's
+virtualisation tools (`make host-check`).
+
 Or step by step:
 
 ```bash

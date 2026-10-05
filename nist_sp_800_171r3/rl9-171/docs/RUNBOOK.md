@@ -53,8 +53,14 @@ cd nist_sp_800_171r3/rl9-171
 make validate        # catalog <-> overlay <-> checks agree; no host needed
 ```
 
-Check the host first; it names what is missing and the `apt` or `dnf`
-command to install it, and installs nothing itself:
+To harden and assess hosts you already have, the workstation needs only
+podman or docker: `./nist` runs any command inside the control-plane
+container (`./nist make validate`, `./nist ./apply.sh`, `./nist ./verify.sh`;
+README, *Quick start*). The rest of this section is for running the labs,
+which build VMs on this host.
+
+Check the host first; it names what is missing and the `apt`, `dnf` or
+`pacman` command to install it, and installs nothing itself:
 
 ```bash
 make host-check      # KVM, memory, libvirt, virt-install, swtpm, Secure Boot firmware, uv
