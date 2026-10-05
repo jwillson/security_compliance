@@ -3,7 +3,12 @@
 # Remove both labs and rebuild them from nothing, with the scripts alone - the
 # proof that this runs on a host as it comes (DEFECTS 7.17-7.19).
 #
-#   tools/lab-from-scratch.sh --yes       destroys every lab guest first
+#   tools/lab-from-scratch.sh --yes                destroys every lab guest first
+#   tools/lab-from-scratch.sh --yes --from STEP    resume at STEP (teardown,
+#       kickstart-all, kickstart-collector, byo-init, byo-release), skipping
+#       the steps before it and the teardown - after a failure fixed in place,
+#       so what already passed is not rebuilt; the earlier steps' logs are in
+#       the run that failed
 #
 # 1. make teardown; tools/lab-residue.sh must then find nothing - no guest,
 #    no network, no disk, no log.
@@ -21,12 +26,16 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
-[[ "${1:-}" == --yes ]] || { sed -n '3,19p' "$0"; echo "(pass --yes: it destroys every lab guest)"; exit 2; }
+[[ "${1:-}" == --yes ]] || { sed -n '3,24p' "$0"; echo "(pass --yes: it destroys every lab guest)"; exit 2; }
+from=teardown; [[ "${2:-}" == --from && -n "${3:-}" ]] && from=$3
+started=0
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 OUT="$ROOT/reports/runs/from-scratch-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 say() { echo "==> $(date -u +%H:%M) $*" | tee -a "$OUT/summary.txt"; }
 step() {   # name command... (in a bare environment)
   local name=$1; shift
+  [[ "$name" == "$from" ]] && started=1
+  (( started )) || { say "$name: skipped (--from $from)"; return 0; }
   say "$name"
   if env -i HOME="$HOME" USER="$USER" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
        TERM=dumb NIST_BYO_LAB="$LAB" bash -c "$*" </dev/null > "$OUT/$name.log" 2>&1; then

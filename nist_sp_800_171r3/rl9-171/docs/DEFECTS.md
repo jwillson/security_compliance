@@ -1565,3 +1565,13 @@ public when it had not.*
       recorded once its sshd answers (a guest created moments ago on the
       isolated lab network), and the build stops with the console command if
       SSH never comes up. *Proven* by the from-scratch run that follows.
+
+- [x] **7.25 A BYO rebuild could not start from an empty inventory.** After
+      `make teardown` the inventory holds no host, and `release-run.sh byo`
+      refused it as "not a BYO inventory" - so `release-run.sh byo
+      --rebuild`, the step that fills it, could never run from nothing. The
+      from-scratch run reached it and stopped. *Fix:* an empty inventory is
+      accepted where the run builds the guests (BYO with `--rebuild`,
+      kickstart always). `lab-from-scratch.sh --from STEP` resumes at a step
+      after a fix, so what passed is not rebuilt. *Proven* by resuming the run
+      at `byo-init`.

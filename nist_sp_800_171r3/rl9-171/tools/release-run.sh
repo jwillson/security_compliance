@@ -50,9 +50,15 @@ lab=${1:-}; rebuild=0; reverify=""
 [[ "${2:-}" == --reverify && -d "${3:-}" ]] && reverify=$(cd "$3" && pwd)
 [[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 || -n "$reverify" ]] || { sed -n '3,42p' "$0"; exit 2; }
 . lib/ssh-env.sh || exit 2
+# An empty inventory is right where the run builds the guests itself - BYO
+# with --rebuild, kickstart always: after `make teardown` that is exactly
+# what there is, and refusing it made a rebuild from nothing impossible
+# (DEFECTS 7.25).
 case "$lab" in
-  byo)       [[ "$NIST_INVENTORY_KIND" == byo ]] || { echo "error: $NIST_INVENTORY is not a BYO inventory" >&2; exit 2; } ;;
-  kickstart) [[ "$NIST_INVENTORY_KIND" == lab ]] || { echo "error: $NIST_INVENTORY is not a kickstart inventory" >&2; exit 2; } ;;
+  byo)       [[ "$NIST_INVENTORY_KIND" == byo || ( "$NIST_INVENTORY_KIND" == empty && $rebuild == 1 ) ]] \
+               || { echo "error: $NIST_INVENTORY is not a BYO inventory (empty is accepted with --rebuild)" >&2; exit 2; } ;;
+  kickstart) [[ "$NIST_INVENTORY_KIND" == lab || "$NIST_INVENTORY_KIND" == empty ]] \
+               || { echo "error: $NIST_INVENTORY is not a kickstart inventory" >&2; exit 2; } ;;
 esac
 
 # Hosts, collector first, and how each BYO guest is rebuilt when it has no
