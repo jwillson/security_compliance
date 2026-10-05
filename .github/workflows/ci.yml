@@ -1,5 +1,5 @@
 # Everything that can be proven without a host, on every push and pull
-# request (TASKS.md R6). Host behaviour is proven on the labs
+# request (TASKS.md R6), the toolchain checks inside the control-plane image. Host behaviour is proven on the labs
 # (nist_sp_800_171r3/rl9-171/docs/LAB.md); this proves the tool agrees with
 # itself: the catalog reproduces from the PDF, the overlay, catalog and checks
 # agree, the unit tests pass, the playbook and every script parse, and no
@@ -28,41 +28,33 @@ jobs:
           persist-credentials: false
           fetch-depth: 0          # the secret scan reads every commit
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Install the tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq poppler-utils
-          # Pinned to what the labs run (issue #14): an unpinned install made
-          # each run test whatever was newest that day.
-          pip install --quiet pyyaml==6.0.3 ansible-core==2.21.4
-          ansible-galaxy collection install -r requirements.yml
-          pdftotext -v 2>&1 | head -1
+      # Everything that needs the toolchain runs inside the control-plane
+      # image (container/Containerfile: Ubuntu 26.04, pinned ansible-core and
+      # collections), so CI tests exactly what ./nist gives an operator.
+      - name: Build the control-plane image
+        run: NIST_CONTAINER_RUNTIME=docker ./nist --rebuild true
 
       - name: The catalog, the overlay and the checks agree
-        run: make validate
+        run: NIST_CONTAINER_RUNTIME=docker ./nist make validate
 
       - name: Unit tests (assessor, validator, POA&M register)
-        run: make test
+        run: NIST_CONTAINER_RUNTIME=docker ./nist make test
 
       - name: The catalog reproduces byte for byte from the PDF
-        run: make catalog-check
+        run: NIST_CONTAINER_RUNTIME=docker ./nist make catalog-check
 
       - name: The example inventory parses, and the playbooks with it
         # Ansible's YAML inventory plugin reads only .yml/.yaml/.json names, so
-        # hosts.yml.example fell through to the INI parser, failed, and the
-        # syntax check ran on an empty inventory with a warning (issue #14).
-        # A copy named .yml, and an unparsed inventory is fatal.
-        env:
-          ANSIBLE_INVENTORY_UNPARSED_FAILED: "true"
+        # hosts.yml.example fell through to the INI parser and the syntax check
+        # ran on an empty inventory (issue #14). A copy named .yml, and an
+        # unparsed inventory is fatal.
         run: |
-          cp inventory/hosts.yml.example "$RUNNER_TEMP/hosts.yml"
-          ansible-inventory -i "$RUNNER_TEMP/hosts.yml" --graph | tee /dev/stderr | grep -q '@cui_hosts'
-          ansible-playbook --syntax-check -i "$RUNNER_TEMP/hosts.yml" site.yml
-          ansible-playbook --syntax-check -i "$RUNNER_TEMP/hosts.yml" rotate-luks-passphrase.yml
+          NIST_CONTAINER_RUNTIME=docker ./nist bash -c '
+            cp inventory/hosts.yml.example /tmp/hosts.yml
+            export ANSIBLE_INVENTORY_UNPARSED_FAILED=true
+            ansible-inventory -i /tmp/hosts.yml --graph | grep -q @cui_hosts
+            ansible-playbook --syntax-check -i /tmp/hosts.yml site.yml
+            ansible-playbook --syntax-check -i /tmp/hosts.yml rotate-luks-passphrase.yml'
 
       - name: No secret anywhere in the history
         run: tools/secret-scan.sh
@@ -71,7 +63,7 @@ jobs:
         run: |
           set -e
           for f in $(git ls-files '*.sh' apply.sh verify.sh); do bash -n "$f"; done
-          python -m py_compile $(git ls-files '*.py') audit/nist-assess
+          python3 -m py_compile $(git ls-files '*.py') audit/nist-assess
 
       - name: No shell script has an error shellcheck can see
         # Errors only: warnings are reviewed by hand, not gated here.
@@ -98,5 +90,5 @@ jobs:
       - name: Every Python file parses, and every test passes, on Python 3.9
         run: |
           pip install --quiet pyyaml==6.0.3
-          python -m py_compile $(git ls-files '*.py') audit/nist-assess
+          python3 -m py_compile $(git ls-files '*.py') audit/nist-assess
           python -m unittest discover -s tests
