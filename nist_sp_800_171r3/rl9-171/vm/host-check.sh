@@ -65,7 +65,9 @@ need tar tar tar
 need openssl openssl openssl
 need curl curl curl
 if [[ "$lab" == kickstart || "$lab" == all ]]; then
-  need pdftotext poppler-utils poppler-utils "make catalog"
+  # Only make catalog and catalog-check read the PDF; the build uses the
+  # committed catalog.
+  command -v pdftotext >/dev/null 2>&1 && ok "pdftotext" || note "pdftotext not found: needed only to regenerate the catalog (make catalog, make catalog-check; poppler-utils)"
   command -v podman >/dev/null 2>&1 && ok "podman" || note "podman not found: the kickstart is not syntax-checked before install, and the stand-in SIEM cannot run (optional)"
 fi
 if [[ "$lab" == byo || "$lab" == all ]]; then
