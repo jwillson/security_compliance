@@ -15,7 +15,7 @@ export PATH := $(NIST_BYO_LAB)/venv/bin:$(PATH)
 export ANSIBLE_COLLECTIONS_PATH := $(NIST_BYO_LAB)/collections
 endif
 
-.PHONY: help catalog catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
+.PHONY: help catalog catalog-present catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
@@ -41,7 +41,7 @@ help:
 
 # From a bare host: check it, build the tooling, then the reference VM, harden
 # it and assess it. The lab network is created on the way (vm/lab-network.sh).
-all: host-check tools catalog secrets iso vm apply verify
+all: host-check tools catalog-present secrets iso vm apply verify
 
 host-check:
 	./vm/host-check.sh kickstart
@@ -62,6 +62,14 @@ catalog/requirements.json: $(PDF) extract/extract_requirements.py
 validate:
 	@[ -f catalog/requirements.json ] || { echo "no catalog - run make catalog"; exit 1; }
 	@python3 tools/validate.py
+
+# What the build targets need: the committed catalog, as it is. They used to
+# depend on `catalog`, so on a fresh clone - whose file times are only the
+# order of checkout - make could decide to re-extract it from the PDF with
+# whatever poppler the host has (RHEL 9's 21.x was never proven to reproduce
+# it). `make catalog` regenerates it only when asked.
+catalog-present:
+	@[ -f catalog/requirements.json ] || { echo "no catalog - run make catalog"; exit 1; }
 
 catalog-check:
 	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
@@ -106,18 +114,18 @@ $(ISO):
 	  && grep -A1 "Rocky-9.8-x86_64-boot.iso:" CHECKSUM | grep SHA256 \
 	  | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c -
 
-vm: host-check secrets iso catalog
+vm: host-check secrets iso catalog-present
 	./vm/build-vm.sh
 
 # A single host cannot demonstrate audit-record forwarding: there is nowhere
 # to forward to, so the assessor reports 03.03.05c as MANUAL rather than
 # passing it. This builds the receiving end. Re-run `make apply` afterwards.
-vm-log: host-check secrets iso catalog
+vm-log: host-check secrets iso catalog-present
 	./vm/build-vm.sh --role log
 
 # --reboot: a fresh host owes a reboot after its first apply (the new kernel,
 # FIPS); this reboots it and applies again, so make all ends settled.
-apply: catalog
+apply: catalog-present
 	./apply.sh --reboot
 
 verify:
