@@ -8,8 +8,12 @@ ISO     := iso/Rocky-9.8-x86_64-boot.iso
 # The pinned Ansible tooling (make tools) is on PATH for every target, so a
 # new host needs nothing installed by hand beyond what vm/host-check.sh names.
 NIST_BYO_LAB ?= $(HOME)/.local/share/nist-byo-lab
+# Not inside the control-plane container (./nist): it brings its own, and the
+# host's venv would not run there.
+ifndef NIST_IN_CONTAINER
 export PATH := $(NIST_BYO_LAB)/venv/bin:$(PATH)
 export ANSIBLE_COLLECTIONS_PATH := $(NIST_BYO_LAB)/collections
+endif
 
 .PHONY: help catalog catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
 

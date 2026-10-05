@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Run any command of this toolkit inside its control-plane container, so the
+# workstation needs only podman or docker (DEFECTS 7.23):
+#
+#   ./nist make validate              ./nist ./apply.sh --check --diff
+#   ./nist make test                  ./nist ./verify.sh --failed-only
+#   ./nist bash                       a shell inside it
+#   ./nist --rebuild COMMAND...       rebuild the image first
+#
+# The image (container/Containerfile: Ubuntu 26.04, pinned ansible-core and
+# collections) is built on first use and tagged by a hash of what it is built
+# from, so a change to the Containerfile or requirements.yml builds a new one.
+# The container runs as you, on the host network (it reaches targets as the
+# host does), with these mounted at the same paths so inventories, keys and
+# askpass scripts resolve unchanged: the repository, ~/.ssh, and the BYO lab
+# directory ($NIST_BYO_LAB). NIST_* and SSH_ASKPASS* pass through.
+#
+# SELinux labelling is off for this container rather than :Z on the mounts:
+# relabelling ~/.ssh for a container would stop the host's own sshd from
+# reading authorized_keys on Fedora and RHEL.
+#
+# Building and driving lab VMs still needs the host's virtualisation tools
+# (make host-check); this runs everything else.
+#
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || (cd "$HERE/../.." && pwd))"
+RT=${NIST_CONTAINER_RUNTIME:-$(command -v podman || command -v docker || true)}
+[[ -n "$RT" ]] || { echo "error: needs podman or docker (NIST_CONTAINER_RUNTIME to choose)" >&2; exit 2; }
+LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
+
+rebuild=0
+[[ "${1:-}" == --rebuild ]] && { rebuild=1; shift; }
+(( $# )) || { sed -n '3,25p' "$0"; exit 2; }
+
+tag=$(cat "$HERE/container/Containerfile" "$HERE/requirements.yml" | sha256sum | cut -c1-12)
+image="localhost/nist-control:$tag"
+if (( rebuild )) || ! "$RT" image inspect "$image" >/dev/null 2>&1; then
+  echo "==> building $image (container/Containerfile)" >&2
+  "$RT" build -q -t "$image" -f "$HERE/container/Containerfile" "$HERE" >&2
+fi
+
+mounts=(-v "$REPO:$REPO")
+[[ -d "$HOME/.ssh" ]] && mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
+[[ -d "$LAB" ]] && mounts+=(-v "$LAB:$LAB")
+# Ansible's own state goes to /tmp: inside the container $HOME exists only as
+# the mount point for ~/.ssh, and ~/.ansible could not be created there.
+envs=(-e HOME="$HOME" -e USER="${USER:-$(id -un)}" -e TERM="${TERM:-dumb}"
+      -e ANSIBLE_HOME=/tmp/ansible-home -e ANSIBLE_LOCAL_TEMP=/tmp/ansible-local)
+while IFS='=' read -r k _; do envs+=(-e "$k"); done < <(env | grep -E '^(NIST_|SSH_ASKPASS|ANSIBLE_)' | grep -v '^ANSIBLE_COLLECTIONS_PATH=' || true)
+if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id); else user=(--user "$(id -u):$(id -g)"); fi
+tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
+
+exec "$RT" run --rm "${tty[@]}" --network host --security-opt label=disable "${user[@]}" \
+  "${mounts[@]}" "${envs[@]}" -w "$PWD" "$image" "$@"

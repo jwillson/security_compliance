@@ -1,0 +1,30 @@
+# The control plane, in one pinned image (DEFECTS 7.23): everything this
+# toolkit runs that is not the hypervisor - Ansible and its collections, the
+# assessor runner, the catalog extractor, the validator and tests, the PKI and
+# inventory tools, SSH. A workstation needs only podman or docker to harden
+# and assess hosts: ./nist make validate, ./nist ./apply.sh, ./nist ./verify.sh.
+#
+# Versions are the ones CI pins and the labs were proven with. The base is
+# pinned by digest (container/pin-base.sh renews it). Build: ./nist --rebuild true
+FROM docker.io/library/ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+
+ARG ANSIBLE_CORE=2.21.4
+ARG PYYAML=6.0.3
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3 python3-venv python3-yaml poppler-utils openssh-client git make \
+      curl ca-certificates openssl iproute2 gawk sed coreutils findutils procps \
+ && rm -rf /var/lib/apt/lists/*
+
+# ansible-core in its own venv, at the pinned version; the collections at the
+# exact versions requirements.yml names.
+COPY requirements.yml /tmp/requirements.yml
+RUN python3 -m venv /opt/ansible \
+ && /opt/ansible/bin/pip install --no-cache-dir "ansible-core==${ANSIBLE_CORE}" "pyyaml==${PYYAML}" \
+ && /opt/ansible/bin/ansible-galaxy collection install -p /opt/collections -r /tmp/requirements.yml \
+ && rm /tmp/requirements.yml
+
+ENV PATH=/opt/ansible/bin:$PATH \
+    ANSIBLE_COLLECTIONS_PATH=/opt/collections \
+    NIST_IN_CONTAINER=1
