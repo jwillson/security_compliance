@@ -90,5 +90,6 @@ jobs:
       - name: Every Python file parses, and every test passes, on Python 3.9
         run: |
           pip install --quiet pyyaml==6.0.3
-          python3 -m py_compile $(git ls-files '*.py') audit/nist-assess
+          python --version | grep -q '^Python 3\.9' || { python --version; echo "not 3.9" >&2; exit 1; }
+          python -m py_compile $(git ls-files '*.py') audit/nist-assess
           python -m unittest discover -s tests
