@@ -10,8 +10,8 @@
 #     runs: kickstart 4 GiB each (the CUI host, then the collector), BYO
 #     3 GiB each (two CUI hosts and a collector);
 #   - the tools: libvirt and virt-install, qemu-img, swtpm, and for the
-#     kickstart lab pdftotext, for BYO a cloud-init seed tool; uv, which `make tools`
-#     builds the pinned Ansible with;
+#     kickstart lab pdftotext, for BYO a cloud-init seed tool; Python >= 3.12
+#     with venv (or uv), which `make tools` builds the pinned Ansible with;
 #   - UEFI firmware with Secure Boot and enrolled keys, from the firmware
 #     descriptors libvirt reads (the role seals to PCR 7, the Secure Boot
 #     state);
@@ -74,10 +74,19 @@ if [[ "$lab" == byo || "$lab" == all ]]; then
   if command -v cloud-localds >/dev/null 2>&1 || command -v xorriso >/dev/null 2>&1 || command -v genisoimage >/dev/null 2>&1; then ok "a cloud-init seed tool"
   else bad "no cloud-init seed tool (cloud-localds, xorriso or genisoimage)"; case $family in apt) missing_pkgs+=(cloud-image-utils) ;; dnf) missing_pkgs+=(xorriso) ;; esac; fi
 fi
-# uv's own installer puts it in ~/.local/bin, which a plain shell's PATH may
-# lack (the from-scratch run of 2026-10-05 stopped here); look there too.
-if command -v uv >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/uv" || -x "$HOME/.cargo/bin/uv" ]]; then ok "uv"
-else bad "uv not found (make tools builds the pinned Ansible with it): curl -LsSf https://astral.sh/uv/install.sh | sh, or pip install --user uv"; fi
+# make tools builds the pinned Ansible with a Python >= 3.12 that can make a
+# venv, or with uv where there is no such Python (uv brings its own). uv is
+# no longer required (DEFECTS 7.26).
+py12=""
+for p in python3 python3.14 python3.13 python3.12; do
+  command -v "$p" >/dev/null 2>&1 && "$p" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 12))' 2>/dev/null && { py12=$p; break; }
+done
+if [[ -n "$py12" ]]; then ok "$py12 >= 3.12 with venv (for make tools)"
+elif command -v uv >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/uv" || -x "$HOME/.cargo/bin/uv" ]]; then ok "uv (for make tools; no system Python >= 3.12)"
+else
+  bad "make tools needs Python >= 3.12 with venv, or uv"
+  case $family in apt) missing_pkgs+=(python3-venv) ;; dnf) missing_pkgs+=(python3.12) ;; pacman) missing_pkgs+=(python) ;; esac
+fi
 if command -v ansible-playbook >/dev/null 2>&1; then ok "ansible-playbook"
 else note "ansible-playbook not on PATH yet: make tools builds the pinned one (make all does it for you)"; fi
 python3 -c 'import yaml' 2>/dev/null && ok "python3 yaml" || { bad "python3 yaml module"; case $family in apt) missing_pkgs+=(python3-yaml) ;; dnf) missing_pkgs+=(python3-pyyaml) ;; esac; }

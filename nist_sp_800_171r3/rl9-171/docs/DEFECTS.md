@@ -1575,3 +1575,15 @@ public when it had not.*
       kickstart always). `lab-from-scratch.sh --from STEP` resumes at a step
       after a fix, so what passed is not rebuilt. *Proven* by resuming the run
       at `byo-init`.
+
+- [x] **7.26 `make tools` required uv.** The owner's second machine stopped at
+      it. uv was a faster way to make the Ansible venv, and it brought its
+      own Python - which is what ansible-core 2.21 needs on a control host
+      whose `python3` is older than 3.12 (RHEL 9's is 3.9). *Fix:*
+      `byo-lab-init.sh --tools-only` builds the venv with any Python >= 3.12
+      that has `venv` (`python3`, `python3.14`, `python3.13`, `python3.12`),
+      and with uv only where there is none; the host check asks for one or
+      the other and names the package (`python3-venv`, `python3.12`).
+      *Proven:* into an empty directory, without uv, Python 3.14's venv
+      built ansible-core 2.21.4 with `ansible.posix` 2.2.2 and
+      `community.general` 13.4.0.

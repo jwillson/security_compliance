@@ -50,12 +50,26 @@ fi
 
 say "tooling"
 if [[ ! -x "$LAB/venv/bin/ansible-playbook" ]]; then
-  # On PATH, or where uv's installer (~/.local/bin) or cargo puts it.
+  # ansible-core 2.21 needs Python >= 3.12 on the control side. A system
+  # Python that new builds the venv with its own venv and pip; uv only when
+  # there is none - it brings its own Python, which is how RHEL 9 (python3 is
+  # 3.9) gets one without a package. uv used to be required (DEFECTS 7.26).
+  PY=""
+  for p in python3 python3.14 python3.13 python3.12; do
+    command -v "$p" >/dev/null 2>&1 || continue
+    "$p" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 12))' 2>/dev/null && { PY=$(command -v "$p"); break; }
+  done
   UV=$(command -v uv || ls "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" 2>/dev/null | head -1 || true)
-  [[ -n "$UV" ]] || { echo "error: uv is needed to build the venv (https://docs.astral.sh/uv/)" >&2; exit 2; }
-  "$UV" venv -q "$LAB/venv"
-  "$UV" pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
-  made "venv/ (ansible-core $ANSIBLE_CORE)"
+  if [[ -n "$PY" ]]; then
+    "$PY" -m venv "$LAB/venv"
+    "$LAB/venv/bin/pip" install -q "ansible-core==$ANSIBLE_CORE" pyyaml
+  elif [[ -n "$UV" ]]; then
+    "$UV" venv -q --python 3.12 "$LAB/venv"
+    "$UV" pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
+  else
+    echo "error: needs Python >= 3.12 with venv (Ubuntu: python3-venv; RHEL 9: dnf install python3.12) or uv" >&2; exit 2
+  fi
+  made "venv/ (ansible-core $ANSIBLE_CORE, $("$LAB/venv/bin/python" --version))"
 fi
 if [[ ! -d "$LAB/collections/ansible_collections" ]]; then
   ANSIBLE_COLLECTIONS_PATH="$LAB/collections" \

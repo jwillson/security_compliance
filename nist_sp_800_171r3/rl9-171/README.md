@@ -551,7 +551,7 @@ Control workstation: for a host you bring, `ansible-core` ≥ 2.14 and
 `python3-yaml` (the collections install on the first `./apply.sh`). For the
 labs, `make host-check` checks and names the rest - KVM, libvirt and
 `virt-install`, `qemu-img`, `swtpm`, UEFI firmware with Secure Boot and
-enrolled keys, `uv`, `poppler-utils`, and `cloud-image-utils` for BYO;
+enrolled keys, Python >= 3.12 with venv (or `uv`), `poppler-utils`, and a cloud-init seed tool for BYO;
 `podman` is optional (kickstart validation, the stand-in SIEM) - and `make
 tools` builds the pinned Ansible. Target: reachable over SSH, with sudo.
 

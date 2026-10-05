@@ -63,7 +63,7 @@ Check the host first; it names what is missing and the `apt`, `dnf` or
 `pacman` command to install it, and installs nothing itself:
 
 ```bash
-make host-check      # KVM, memory, libvirt, virt-install, swtpm, Secure Boot firmware, uv
+make host-check      # KVM, memory, libvirt, virt-install, swtpm, Secure Boot firmware, Python >= 3.12
 make tools           # the pinned ansible-core and collections (make all does it)
 ```
 
