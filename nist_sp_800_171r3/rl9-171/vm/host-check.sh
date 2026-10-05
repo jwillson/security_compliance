@@ -65,7 +65,10 @@ fi
 if [[ "$lab" == byo || "$lab" == all ]]; then
   need cloud-localds cloud-image-utils cloud-utils "BYO cloud-init seed"
 fi
-need uv uv uv "make tools builds the pinned Ansible with it - or: pip install --user uv"
+# uv's own installer puts it in ~/.local/bin, which a plain shell's PATH may
+# lack (the from-scratch run of 2026-10-05 stopped here); look there too.
+if command -v uv >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/uv" || -x "$HOME/.cargo/bin/uv" ]]; then ok "uv"
+else bad "uv not found (make tools builds the pinned Ansible with it): curl -LsSf https://astral.sh/uv/install.sh | sh, or pip install --user uv"; fi
 if command -v ansible-playbook >/dev/null 2>&1; then ok "ansible-playbook"
 else note "ansible-playbook not on PATH yet: make tools builds the pinned one (make all does it for you)"; fi
 python3 -c 'import yaml' 2>/dev/null && ok "python3 yaml" || { bad "python3 yaml module"; case $family in apt) missing_pkgs+=(python3-yaml) ;; dnf) missing_pkgs+=(python3-pyyaml) ;; esac; }

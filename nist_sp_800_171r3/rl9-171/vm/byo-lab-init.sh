@@ -50,9 +50,11 @@ fi
 
 say "tooling"
 if [[ ! -x "$LAB/venv/bin/ansible-playbook" ]]; then
-  command -v uv >/dev/null || { echo "error: uv is needed to build the venv (https://docs.astral.sh/uv/)" >&2; exit 2; }
-  uv venv -q "$LAB/venv"
-  uv pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
+  # On PATH, or where uv's installer (~/.local/bin) or cargo puts it.
+  UV=$(command -v uv || ls "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" 2>/dev/null | head -1 || true)
+  [[ -n "$UV" ]] || { echo "error: uv is needed to build the venv (https://docs.astral.sh/uv/)" >&2; exit 2; }
+  "$UV" venv -q "$LAB/venv"
+  "$UV" pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
   made "venv/ (ansible-core $ANSIBLE_CORE)"
 fi
 if [[ ! -d "$LAB/collections/ansible_collections" ]]; then
