@@ -203,6 +203,10 @@ if command -v podman >/dev/null 2>&1; then
 fi
 
 # --- build -------------------------------------------------------------------
+# rocky9 where the host's libosinfo knows it, else the RHEL 9 entry it is
+# built from: an older osinfo-db does not list Rocky (DEFECTS 7.21).
+OSINFO=rhel9.0
+sudo virt-install --osinfo list 2>/dev/null | grep -qw rocky9 && OSINFO=rocky9
 log "creating $VM_NAME: ${VM_VCPUS} vCPU, ${VM_RAM_MB} MB RAM, ${VM_DISK_GB} GB disk"
 log "installing from $MIRROR (unattended, expect 15-25 min)"
 
@@ -229,7 +233,7 @@ sudo virt-install \
   --graphics none \
   --serial "pty,log.file=$SERIAL_LOG" \
   --console pty,target_type=serial \
-  --os-variant rocky9 \
+  --os-variant "$OSINFO" \
   --location "$ISO" \
   --initrd-inject "$KS_OUT" \
   --extra-args "inst.ks=file:/$(basename "$KS_OUT") inst.repo=$MIRROR/BaseOS/x86_64/os/ inst.text ip=dhcp console=ttyS0,115200n8" \

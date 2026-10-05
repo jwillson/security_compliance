@@ -60,10 +60,12 @@ EOF
       --subnet 192.168.171.0/24 --gateway 192.168.171.1 "$NET" >/dev/null
   }
   sudo podman rm -f "$NAME" >/dev/null 2>&1 || true
+  # :Z relabels the mounts for the container: on an SELinux host (RHEL,
+  # Fedora) it could not read files under $HOME otherwise (DEFECTS 7.21).
   sudo podman run -d --name "$NAME" --network "$NET" --ip "$IP" \
-    -v "$DIR/syslog-ng.conf:/etc/syslog-ng/syslog-ng.conf:ro" \
-    -v "$DIR/tls:/etc/syslog-ng/tls:ro" \
-    -v "$DIR/log:/var/log/remote" \
+    -v "$DIR/syslog-ng.conf:/etc/syslog-ng/syslog-ng.conf:ro,Z" \
+    -v "$DIR/tls:/etc/syslog-ng/tls:ro,Z" \
+    -v "$DIR/log:/var/log/remote:Z" \
     "$IMAGE" -F >/dev/null
   local i; for i in $(seq 1 30); do
     sudo podman logs "$NAME" 2>&1 | grep -q 'syslog-ng starting up' && { say "$NAME listening at $IP:$PORT as $PEER"; return 0; }

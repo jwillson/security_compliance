@@ -63,7 +63,7 @@ ensure() {
   # forever at a console prompt nobody sees.
   [[ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" == 1 ]] \
     || warn "net.ipv4.ip_forward is 0: the guests cannot reach the internet (libvirt normally sets it; something reset it)"
-  if command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; then
+  if { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; } && command -v iptables >/dev/null 2>&1; then
     if sudo iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP'; then
       warn "Docker is installed and the FORWARD policy is DROP: traffic from $BRIDGE to the internet may be dropped. \
 If an install stalls fetching from the mirror, allow it: sudo iptables -I DOCKER-USER -i $BRIDGE -j ACCEPT; \

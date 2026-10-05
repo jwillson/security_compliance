@@ -23,7 +23,7 @@ NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$HERE/../vm/nist-lab-network.xml"
 orphans=0; only_orphans=0
 [[ "${1:-}" == --orphans ]] && only_orphans=1
 
-lab_name() { [[ "$1" =~ ^(rl9|byo)- ]]; }
+lab_name() { [[ "$1" =~ ^(rl9|byo|ptest)- ]]; }
 domains=$("${V[@]}" list --all --name 2>/dev/null | awk 'NF' | sort)
 lab_domains=$(for d in $domains; do
   if lab_name "$d" || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
@@ -46,10 +46,12 @@ for d in $lab_domains; do show domain "$d" "$("${V[@]}" domstate "$d" 2>/dev/nul
 if "${V[@]}" net-info "$NET" >/dev/null 2>&1; then
   show network "$NET" "$([ -n "$lab_domains" ] && echo "in use" || echo "no guest left")"
 fi
+"${V[@]}" net-info nist-ptest >/dev/null 2>&1 && show network nist-ptest "vm/portability-host.sh"
 for f in $(sudo ls "$IMAGES" 2>/dev/null); do
   case "$f" in
     Rocky-*.iso) show iso "$IMAGES/$f" "staged by build-vm.sh" ;;
     rocky9-genericcloud-base.qcow2) show base "$IMAGES/$f" "BYO base image" ;;
+    ptest-base-*.qcow2) show base "$IMAGES/$f" "portability test image" ;;
     *) lab_name "$f" || continue; show disk "$IMAGES/$f" "$(owner_of_file "$f")" ;;
   esac
 done

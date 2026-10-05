@@ -10,12 +10,12 @@
 #     runs: kickstart 4 GiB each (the CUI host, then the collector), BYO
 #     3 GiB each (two CUI hosts and a collector);
 #   - the tools: libvirt and virt-install, qemu-img, swtpm, and for the
-#     kickstart lab pdftotext, for BYO cloud-localds; uv, which `make tools`
+#     kickstart lab pdftotext, for BYO a cloud-init seed tool; uv, which `make tools`
 #     builds the pinned Ansible with;
 #   - UEFI firmware with Secure Boot and enrolled keys, from the firmware
 #     descriptors libvirt reads (the role seals to PCR 7, the Secure Boot
 #     state);
-#   - libvirt's system instance answering.
+#   - libvirt's system instance answering, with QEMU/KVM behind it.
 # Prints the package command for this distribution (apt or dnf) when tools
 # are missing. Exits 1 if anything required is missing. Installs nothing.
 #
@@ -56,6 +56,8 @@ need virt-install virtinst virt-install
 need qemu-img qemu-utils qemu-img
 need swtpm swtpm swtpm
 need swtpm_setup swtpm-tools swtpm-tools
+need make make make
+need tar tar tar
 need openssl openssl openssl
 need curl curl curl
 if [[ "$lab" == kickstart || "$lab" == all ]]; then
@@ -63,7 +65,10 @@ if [[ "$lab" == kickstart || "$lab" == all ]]; then
   command -v podman >/dev/null 2>&1 && ok "podman" || note "podman not found: the kickstart is not syntax-checked before install, and the stand-in SIEM cannot run (optional)"
 fi
 if [[ "$lab" == byo || "$lab" == all ]]; then
-  need cloud-localds cloud-image-utils cloud-utils "BYO cloud-init seed"
+  # The cloud-init seed: cloud-localds, or xorriso / genisoimage (RHEL 9
+  # packages xorriso, not cloud-localds).
+  if command -v cloud-localds >/dev/null 2>&1 || command -v xorriso >/dev/null 2>&1 || command -v genisoimage >/dev/null 2>&1; then ok "a cloud-init seed tool"
+  else bad "no cloud-init seed tool (cloud-localds, xorriso or genisoimage)"; case $family in apt) missing_pkgs+=(cloud-image-utils) ;; dnf) missing_pkgs+=(xorriso) ;; esac; fi
 fi
 # uv's own installer puts it in ~/.local/bin, which a plain shell's PATH may
 # lack (the from-scratch run of 2026-10-05 stopped here); look there too.
@@ -88,12 +93,19 @@ else
   case $family in apt) missing_pkgs+=(ovmf) ;; dnf) missing_pkgs+=(edk2-ovmf) ;; esac
 fi
 
-# libvirt's system instance.
-if sudo virsh -c qemu:///system uri >/dev/null 2>&1; then ok "libvirt qemu:///system answers"
+# libvirt's system instance, and QEMU/KVM behind it: libvirt answers without
+# a hypervisor installed (RHEL 9's qemu-kvm is a separate package).
+if sudo virsh -c qemu:///system uri >/dev/null 2>&1; then
+  ok "libvirt qemu:///system answers"
+  if sudo virsh -c qemu:///system domcapabilities --virttype kvm >/dev/null 2>&1; then ok "QEMU with KVM"
+  else bad "libvirt has no QEMU/KVM hypervisor"; case $family in apt) missing_pkgs+=(qemu-system-x86) ;; dnf) missing_pkgs+=(qemu-kvm) ;; esac; fi
 else
   bad "libvirt qemu:///system does not answer"
   case $family in apt) missing_pkgs+=(libvirt-daemon-system) ;; dnf) missing_pkgs+=(libvirt) ;; esac
-  note "then start it: sudo systemctl enable --now libvirtd (Ubuntu, Debian) or virtqemud.socket virtnetworkd.socket virtstoraged.socket (RHEL 9, Fedora)"
+  case $family in
+    dnf) note "then start it: sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket virtnodedevd.socket virtsecretd.socket" ;;
+    *)   note "then start it: sudo systemctl enable --now libvirtd" ;;
+  esac
 fi
 
 if (( ${#missing_pkgs[@]} )); then

@@ -30,7 +30,8 @@
 #
 # Host prerequisites, each checked or fixed here rather than by hand:
 #   libvirt qemu:///system, network nist-lab (created by vm/lab-network.sh),
-#   virt-install, cloud-localds, qemu-img, passwordless sudo for the image
+#   virt-install, qemu-img, a seed image tool (cloud-localds, or xorriso /
+#   genisoimage, which RHEL 9 has and cloud-localds it has not), passwordless sudo for the image
 #   directory; swtpm + swtpm-tools for --tpm.
 #
 set -euo pipefail
@@ -118,6 +119,29 @@ ensure_lab() {
   fi
 }
 
+# rocky9 where the host's libosinfo knows it, else the RHEL 9 entry it is built
+# from: an older osinfo-db does not list Rocky, and virt-install then refuses.
+osinfo_id() {
+  if virt_install --osinfo list 2>/dev/null | grep -qw rocky9; then echo rocky9; else echo rhel9.0; fi
+}
+
+# The NoCloud seed: an ISO 9660 volume labelled "cidata" holding user-data and
+# meta-data. cloud-localds makes one; RHEL 9 does not package it, so xorriso
+# or genisoimage make the same thing (DEFECTS 7.21).
+make_seed() {   # out user-data meta-data
+  local out=$1 ud=$2 md=$3 tmp
+  if command -v cloud-localds >/dev/null 2>&1; then cloud-localds "$out" "$ud" "$md"; return; fi
+  tmp=$(mktemp -d); cp "$ud" "$tmp/user-data"; cp "$md" "$tmp/meta-data"
+  if command -v xorriso >/dev/null 2>&1; then
+    xorriso -as mkisofs -quiet -output "$out" -volid cidata -joliet -rock "$tmp/user-data" "$tmp/meta-data"
+  elif command -v genisoimage >/dev/null 2>&1; then
+    genisoimage -quiet -output "$out" -volid cidata -joliet -rock "$tmp/user-data" "$tmp/meta-data"
+  else
+    rm -rf "$tmp"; die "no tool to make the cloud-init seed: install cloud-image-utils, xorriso or genisoimage"
+  fi
+  rm -rf "$tmp"
+}
+
 randpw() { python3 -c 'import secrets,string;a=string.ascii_letters+string.digits;print("".join(secrets.choice(a) for _ in range(24)))'; }
 
 # ---------------------------------------------------------------------------
@@ -175,7 +199,7 @@ EOF
   printf 'instance-id: %s\nlocal-hostname: %s\n' "$name" "$name" > "$dir/meta-data"
   python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' "$dir/user-data" \
     || die "generated user-data is not valid YAML"
-  cloud-localds "$dir/seed.iso" "$dir/user-data" "$dir/meta-data"
+  make_seed "$dir/seed.iso" "$dir/user-data" "$dir/meta-data"
 }
 
 wait_ready() {   # IP
@@ -276,7 +300,7 @@ cmd_build() {
   (( tpm )) && extra=(--tpm "model=tpm-crb,backend.type=emulator,backend.version=2.0")
   say "defining $name"
   virt_install --connect qemu:///system --name "$name" --memory 3072 --vcpus 2 \
-    --osinfo rocky9 --import --noautoconsole --machine q35 \
+    --osinfo "$(osinfo_id)" --import --noautoconsole --machine q35 \
     --boot "hd,firmware=efi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
     --features smm.state=on \
     "${disks[@]}" \

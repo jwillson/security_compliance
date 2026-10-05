@@ -5,8 +5,9 @@
 #   vm/lab-teardown.sh          list what goes, ask, remove   (make teardown)
 #   vm/lab-teardown.sh --yes    without asking
 #
-# Every lab guest - BYO (vm/byo-guest.sh destroy) and kickstart
-# (vm/build-vm.sh --destroy) - with its disks, snapshots, UEFI variables, TPM
+# Every lab guest - BYO (vm/byo-guest.sh destroy), kickstart
+# (vm/build-vm.sh --destroy) and portability test host
+# (vm/portability-host.sh destroy, with its network and images) - with its disks, snapshots, UEFI variables, TPM
 # state, DHCP pin, libvirt logs, host key and inventory entry; the stand-in
 # SIEM and its podman network; the lab network; the staged boot ISO and the
 # cached BYO base image in the libvirt image directory; the per-guest
@@ -28,7 +29,7 @@ NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' vm/nist-lab-network.xml | head -1)
 say() { echo "==> $*"; }
 
 guests=$(for d in $("${V[@]}" list --all --name 2>/dev/null); do
-  if [[ "$d" =~ ^(rl9|byo)- ]] || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
+  if [[ "$d" =~ ^(rl9|byo|ptest)- ]] || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
 done | sort)
 
 echo "This removes both labs from $(hostname):"
@@ -41,7 +42,9 @@ if [[ "${1:-}" != --yes ]]; then
 fi
 
 for g in $guests; do
-  if [[ "$g" == byo-* ]]; then
+  if [[ "$g" == ptest-* ]]; then
+    say "$g (portability test host)"; ./vm/portability-host.sh destroy "${g#ptest-}" || true
+  elif [[ "$g" == byo-* ]]; then
     say "$g (BYO)"; ./vm/byo-guest.sh destroy "$g" || true
     sudo rm -rf "${LAB:?}/$g"            # its cloud-init seed and passwords
   else
