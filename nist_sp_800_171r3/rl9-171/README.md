@@ -41,8 +41,15 @@ why.
 ## Quick start
 
 ```bash
-make all        # catalog → secrets → ISO → VM → apply → verify
+make all        # host check → tools → catalog → secrets → ISO → VM → apply → verify
 ```
+
+`make all` runs from a bare clone on any Linux host with KVM and 8 GiB of
+memory free: `make host-check` names anything missing and the `apt`/`dnf`
+command for it, `make tools` builds the pinned Ansible, and the lab network
+is created if missing. The lab, getting into a hardened guest, and removing
+everything again (`make teardown`) are [docs/LAB.md](docs/LAB.md), *On any
+host*.
 
 Or step by step:
 
@@ -457,6 +464,10 @@ rl9-171/
 │   ├── kickstart/rl9-cui.ks.j2  install-time controls
 │   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
 │   ├── byo-snapshot.sh          save/revert a guest: disks, NVRAM, TPM state
+│   ├── byo-lab-init.sh          the BYO lab directory and the pinned Ansible (make tools)
+│   ├── host-check.sh            can this host run the lab, and what to install
+│   ├── lab-network.sh           the lab network: created if missing, removed when unused
+│   ├── lab-teardown.sh          make teardown: both labs and all they left
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
@@ -470,6 +481,8 @@ rl9-171/
 │   ├── prove-foreign-receiver.sh  forwarding to a receiver the toolkit did not build
 │   ├── ssh-idle-test.sh         an idle SSH session, timed until sshd closes it
 │   ├── console.py               the guest's serial console, scripted
+│   ├── lab-ssh.sh, lab-console.sh  into a hardened guest: SSH with both factors, or its console
+│   ├── lab-residue.sh, lab-from-scratch.sh  what the labs left; both rebuilt from nothing
 │   └── secret-scan.sh           gitleaks over the whole history (also in CI)
 ├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor
 ├── site.yml                     two plays: cui_hosts, then log_hosts
@@ -519,12 +532,13 @@ and records the gap; 03.01.11 and 03.13.09 report it. That path is not
 exercised on a lab host: the role applies security errata, which bring any
 host that can reach its repositories to 9.9.
 
-Control workstation: `ansible-core` ≥ 2.14, `python3-yaml`, `poppler-utils`
-(for `pdftotext`), and for the labs `libvirt`, `virt-install`, `qemu`,
-`swtpm`, `edk2-ovmf` (`ovmf` on Ubuntu); `podman` for kickstart validation
-and the stand-in SIEM. Ansible collections (`ansible.posix`,
-`community.general`) install automatically on first `./apply.sh`. Target:
-reachable over SSH, with sudo.
+Control workstation: for a host you bring, `ansible-core` ≥ 2.14 and
+`python3-yaml` (the collections install on the first `./apply.sh`). For the
+labs, `make host-check` checks and names the rest - KVM, libvirt and
+`virt-install`, `qemu-img`, `swtpm`, UEFI firmware with Secure Boot and
+enrolled keys, `uv`, `poppler-utils`, and `cloud-image-utils` for BYO;
+`podman` is optional (kickstart validation, the stand-in SIEM) - and `make
+tools` builds the pinned Ansible. Target: reachable over SSH, with sudo.
 
 ---
 

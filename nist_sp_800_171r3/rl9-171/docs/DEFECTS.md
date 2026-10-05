@@ -1447,3 +1447,75 @@ public when it had not.*
       created nothing; the live lab was not touched.
       *Not changed:* "the laptop" in several documents - it names the
       owner's workstation the labs ran on, which is accurate.
+
+*Found when the owner ran `make all` on a new host, 2026-10-05.*
+
+- [x] **7.17 On a new host the lab network did not exist, and an install that
+      could not proceed waited forever.** `nist-lab` had been defined by hand
+      once, on the laptop, and no script or document created it, so
+      `make all` elsewhere failed at it. The owner's branch `jason`
+      (`db38e85`) found the gap; its fix defined the network in the user's
+      `qemu:///session`, where `virt-install` (system) never looks, stopped on
+      a second build under `set -e`, removed the shared network when any one
+      VM was destroyed, and enabled libvirt's per-driver daemons on every
+      build, which conflicts with a host running the single `libvirtd` - so it
+      was not merged as it stood. And `build-vm.sh` installed with
+      `--noautoconsole --wait -1`: an installer stopped at a prompt - a mirror
+      it could not reach, most often - waited unseen; on the owner's host, 48
+      hours before it was killed. *Fix:* `vm/lab-network.sh ensure` creates,
+      starts and autostarts `nist-lab` in `qemu:///system` only if missing,
+      called by both builders, and warns about forwarding and Docker's
+      `FORWARD DROP`; `destroy` refuses while a guest uses it and
+      `destroy-if-unused` keeps it then (`make destroy` uses the latter).
+      `build-vm.sh` logs the installer's serial console and watches it: no
+      new output for 20 minutes, or two hours in all, stops the build with
+      the console's last lines and the likely causes, the VM left to
+      inspect; `NIST_ROCKY_MIRROR` replaces the mirror. *Proven:*
+      `tools/test-lab-network.sh` on a throwaway copy of the network
+      (created, idempotent, removed; the real one refused while in use), and
+      the hang reproduced with an unreachable mirror (`192.0.2.1`) and a
+      four-minute threshold: the build stopped in 5 minutes, the console
+      showing the installer's initqueue waiting on the network repository.
+
+- [x] **7.18 Destroying left things behind, and nothing could remove a whole
+      lab.** `build-vm.sh --destroy` undefined without `--tpm` and left the
+      guest's libvirt logs; `byo-guest.sh destroy` left the logs too; neither
+      the network nor the staged ISO nor the BYO base image was ever removed.
+      *Fix:* each destroy removes the guest's disk, UEFI variables, TPM state,
+      logs, host key and inventory entry; `vm/lab-teardown.sh` (`make
+      teardown`) removes both labs, the stand-in SIEM, the network, the
+      staged ISO and the base image, keeping only the inputs a rebuild needs
+      (`.secrets/`, `iso/`, the BYO lab's secrets), and fails unless
+      `tools/lab-residue.sh` then finds nothing. `make clean` no longer
+      deletes the live inventory. *Proven:* the teardown of 2026-10-05
+      removed five guests and the network, and `lab-residue.sh` found
+      nothing; the owner's other libvirt networks were untouched.
+
+- [x] **7.19 The labs assumed this laptop.** `byo-guest.sh` named Ubuntu's
+      firmware files (`/usr/share/OVMF/OVMF_CODE_4M.ms.fd`), and so did the
+      PCR 7 rehearsal, so no other distribution could build a BYO guest;
+      `make all` assumed an Ansible already on `PATH` and ended with
+      `sa-02-kernel-current` failing, since the first apply installs a kernel
+      it does not boot; nothing said what a host needs. *Fix:* the BYO
+      firmware is asked for by feature (Secure Boot, enrolled keys) and
+      libvirt picks it from the host's firmware descriptors; the rehearsal
+      finds its no-keys variable store the same way; `vm/host-check.sh`
+      (`make host-check`, run by `make vm` and BYO builds) checks KVM,
+      memory, the tools, the firmware and libvirt and prints the `apt`/`dnf`
+      command; `make tools` builds the pinned Ansible, which every `make`
+      target puts on `PATH`; `apply.sh --reboot` reboots the hosts that report
+      a reboot owed and applies again, and `make apply` uses it. The first
+      from-scratch run stopped at the host check for want of `uv`, which its
+      installer puts in `~/.local/bin`, not on a plain shell's `PATH`; both
+      scripts now look there. *Tested on Ubuntu 26.04 only*: the other
+      distributions' paths come from libvirt's own descriptors and the
+      package names from their repositories, not from a run.
+
+- [x] **7.20 Getting into a hardened guest was a recipe, not a tool.** The
+      RUNBOOK gave a `bash -c '. lib/ssh-env.sh; ssh -i .secrets/id_rsa ...'`
+      line that fit the kickstart lab only. *Fix:* `tools/lab-ssh.sh HOST
+      [COMMAND]` reads the address, user, key and `known_hosts` from the
+      inventory and supplies the second factor; `tools/lab-console.sh HOST`
+      attaches the serial console, naming the account and password file.
+      *Proven:* both labs - `byo-rl9-02` and `rl9-cui-01` - answered a
+      command through `lab-ssh.sh` with nothing typed.

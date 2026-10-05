@@ -53,17 +53,19 @@ cd nist_sp_800_171r3/rl9-171
 make validate        # catalog <-> overlay <-> checks agree; no host needed
 ```
 
-Required:
+Check the host first; it names what is missing and the `apt` or `dnf`
+command to install it, and installs nothing itself:
 
-| For | Needs |
-|---|---|
-| Everything | `ansible-core` >= 2.14, `python3-yaml` |
-| `make catalog` | `poppler-utils` (`pdftotext`) |
-| `make vm` | `libvirt`, `virt-install`, `qemu`, `swtpm`, `edk2-ovmf` |
-| Kickstart validation | `podman` (optional; skipped silently if absent) |
+```bash
+make host-check      # KVM, memory, libvirt, virt-install, swtpm, Secure Boot firmware, uv
+make tools           # the pinned ansible-core and collections (make all does it)
+```
 
-Ansible collections (`ansible.posix`, `community.general`) install on the
-first `./apply.sh`.
+`make tools` builds the Ansible this project pins (`vm/byo-lab-init.sh
+--tools-only`, into `$NIST_BYO_LAB`, default `~/.local/share/nist-byo-lab`),
+and every `make` target puts it on `PATH`. To harden a host you brought with
+no lab at all, any `ansible-core` >= 2.14 with `python3-yaml` on `PATH` does;
+the collections install on the first `./apply.sh`.
 
 `make catalog` re-extracts `catalog/requirements.json` from
 `NIST.SP.800-171r3.pdf` and reproduces the committed file byte for byte. You
@@ -112,11 +114,20 @@ real findings. Fixing them means a rebuild, not a playbook run.
 ### The reference VM
 
 ```bash
-make secrets      # RSA-3072 key + admin password + LUKS passphrase
-make iso          # download and checksum the Rocky 9 boot ISO
-make vm           # unattended kickstart install, 15-25 min
-make vm-log       # the log collector, so 03.03.05c can be verified
+make all          # host check, tools, catalog, secrets, ISO, the CUI VM, apply, verify
+make vm-log && make pki && make apply && make verify   # the collector, then both again
 ```
+
+`make all` runs from a bare clone on any host that `make host-check` passes:
+it creates the lab network if it is missing, installs unattended (15-25 min),
+applies with the reboot the first apply owes (`apply.sh --reboot`), and
+verifies. Step by step it is `make secrets` (RSA-3072 key, admin password,
+LUKS passphrase), `make iso`, `make vm`, `make apply`, `make verify`.
+
+If the install stops - the installer's console silent for 20 minutes, most
+often because the guest cannot reach the Rocky mirror - `build-vm.sh` says
+so, shows the console's last lines and the likely causes, and leaves the VM
+up to inspect (docs/LAB.md, *When an install stops*).
 
 Both roles install at 4096 MB — the Rocky 9 network installer needs it — and a
 collector is trimmed back to 2048 MB once the install finishes.
@@ -199,18 +210,21 @@ cuiadmin@10.0.0.10's password:                        # without
 and a bare `ansible` fails with
 `Timeout waiting for privilege escalation prompt`.
 
-Source the environment first, and both work silently:
+Use the scripts, which supply the second factor from the inventory and the
+lab's askpass, so nothing is typed and nothing wrong is offered (three wrong
+passwords lock the account, 03.01.08):
 
 ```bash
-bash -c '. lib/ssh-env.sh; ssh -i .secrets/id_rsa \
-  -o UserKnownHostsFile=.secrets/known_hosts cuiadmin@10.0.0.10'
-
+./tools/lab-ssh.sh rl9-cui-01                         # a shell
+./tools/lab-ssh.sh rl9-cui-01 'sudo systemctl status auditd'
+./tools/lab-console.sh rl9-cui-01                     # the serial console, when SSH cannot
 bash -c '. lib/ssh-env.sh; ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'
 ```
 
-Or type the password — it is in `.secrets/admin_password`. Either is fine;
-what you must not do is "fix" this by relaxing `AuthenticationMethods`, which
-is the requirement itself.
+For the kickstart lab on a host that also runs the BYO lab, set
+`NIST_INVENTORY=inventory/kickstart.yml` first. What you must not do is
+"fix" a refused login by relaxing `AuthenticationMethods`, which is the
+requirement itself.
 
 The `ssh` line printed by `vm/build-vm.sh` reflects this. A plain `ssh` works
 against a freshly built guest and stops working the moment you apply the
@@ -633,13 +647,19 @@ out of it.
 ## Decommissioning
 
 ```bash
-make destroy       # removes the CUI VM and the collector, and their disks
-make clean         # removes reports and the generated inventory; keeps the ISO
+make destroy       # the kickstart VMs and all they left; the lab network if unused
+make teardown      # both labs and everything they left on the host (asks first)
+tools/lab-residue.sh   # what is left, if anything
+make clean         # reports only
 ```
 
-`make destroy` also drops each host from `inventory/hosts.yml`. The ISO,
-catalog and `.secrets/` survive both, so a rebuild does not re-download or
-re-key.
+Each destroy removes a guest's disk, UEFI variables, TPM state, logs, host
+key and inventory entry. `make teardown` also removes the BYO guests, the
+stand-in SIEM, the lab network, the staged ISO and the BYO base image, and
+fails if `tools/lab-residue.sh` still finds anything. The downloaded ISO,
+the catalog, `.secrets/` and the BYO lab's secrets survive, so a rebuild
+neither re-downloads nor re-keys; delete those by hand only if you will not
+rebuild.
 
 To decommission a real host rather than a lab guest, sanitization is a
 documented process, not a command — see 03.08.03 in

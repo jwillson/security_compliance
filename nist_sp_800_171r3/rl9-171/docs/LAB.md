@@ -2,10 +2,10 @@
 
 Two labs prove this tool, and they answer different questions.
 
-| Lab | Built by | Proves | Where |
-| --- | --- | --- | --- |
-| **Kickstart** | `vm/build-vm.sh` (`make vm`, `make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. | Either workstation, with `.secrets/`: the owner's older one, and since 2026-09-26 the Ubuntu laptop too (`rl9-cui-01` .143, `rl9-log-01` .184, in `inventory/kickstart.yml`). |
-| **BYO** ("bring your own") | `vm/byo-guest.sh` | The portability claim: the role hardening a stock Rocky 9 host this toolkit did not build, driven from a control workstation with no `.secrets/`. | The owner's Ubuntu laptop. |
+| Lab | Built by | Proves |
+| --- | --- | --- |
+| **Kickstart** | `vm/build-vm.sh` (`make all`, `make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. |
+| **BYO** ("bring your own") | `vm/byo-guest.sh` | The portability claim: the role hardening a stock Rocky 9 host this toolkit did not build. |
 
 Both run on libvirt (`qemu:///system`) on the isolated NAT network `nist-lab`
 (`vm/nist-lab-network.xml`, bridge `virbr17`, 192.168.171.0/24). Nothing on a
@@ -14,9 +14,61 @@ this repository (AGENTS.md, *Doctrine*).
 
 ---
 
+## On any host
+
+Any Linux host with KVM and memory to spare runs either lab: 8 GiB free for
+the kickstart pair (4 GiB each while installing), 9 GiB for the three BYO
+guests. Nothing is set up by hand. Every step is a script or a `make` target,
+each does only what is missing, and re-running one is safe.
+
+| To | Run |
+| --- | --- |
+| See whether this host can, and what to install if not | `make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It prints the `apt` or `dnf` command for whatever is missing |
+| Build, harden and assess the kickstart CUI host from a bare clone | `make all`: the host check, the pinned Ansible (`make tools`), the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
+| Add its collector | `make vm-log && make pki && make apply && make verify` |
+| Build the BYO lab | `vm/byo-lab-init.sh`, `source $NIST_BYO_LAB/env.sh`, then `vm/byo-guest.sh build` per guest (*BYO guests*), or `tools/release-run.sh byo --rebuild`, which builds and cycles all three |
+| Get into a hardened guest | `tools/lab-ssh.sh HOST [COMMAND]` (SSH, both factors supplied); `tools/lab-console.sh HOST` (the serial console, when SSH cannot) |
+| See what the labs left on the host | `tools/lab-residue.sh` (`--orphans`: only what belongs to no guest) |
+| Remove | `make destroy`: the kickstart VMs, then `nist-lab` if no guest uses it. `vm/byo-guest.sh destroy NAME`: one BYO guest. `make teardown`: both labs and everything they left, asking first |
+| Prove all of the above | `tools/lab-from-scratch.sh --yes`: teardown, then both labs rebuilt from nothing by these scripts alone |
+
+`make teardown` keeps the inputs a rebuild needs - `.secrets/`, the
+downloaded ISO in `iso/`, and the BYO lab directory's secrets and tooling -
+and removes everything else: guests, disks, snapshots, UEFI variables, TPM
+state, DHCP pins, libvirt logs, host keys, inventory entries, the stand-in
+SIEM, `nist-lab`, the staged ISO and the BYO base image. It finishes by
+running `tools/lab-residue.sh`, and fails if anything is left.
+
+**Into a hardened guest.** After the overlay is applied, SSH wants your key
+*and* the account's password (03.05.03), from a host key already trusted,
+over an RSA key (the FIPS policy refuses ed25519), and three wrong passwords
+lock the account (03.01.08). A plain `ssh` therefore fails, by design.
+`tools/lab-ssh.sh` reads the address, user, key and `known_hosts` file from
+the inventory and supplies the second factor, so nothing is typed.
+`tools/lab-console.sh` attaches the serial console, for when SSH cannot be
+used - a firewall or sshd mistake, a locked account, a boot waiting for the
+LUKS passphrase - and first prints which account and password file to use.
+A newer OpenSSH client warns that the connection "is not using a
+post-quantum key exchange": the FIPS policy offers none, and the warning is
+expected.
+
+**When an install stops.** `vm/build-vm.sh` logs the installer's serial
+console to `/var/log/libvirt/qemu/NAME-serial.log` and watches it. Twenty
+minutes with no new output (`NIST_INSTALL_STALL_MIN`), or two hours in all
+(`NIST_INSTALL_TIMEOUT_MIN`), and it stops with the console's last lines and
+the likely causes, leaving the VM up to inspect. The usual cause is a guest
+that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
+`FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or
+a proxy. `NIST_ROCKY_MIRROR=URL` installs from another mirror. Before
+2026-10-05 the install waited forever, unseen - 48 hours on one host (DEFECTS
+7.17).
+
+---
+
 ## Two labs on one workstation
 
-The two labs connect differently and must not share an inventory: each has
+Run only one lab and none of this applies. Run both on one host and the two
+connect differently and must not share an inventory: each has
 its own collector, its own CA, and its own second SSH factor — and offering a
 host the other lab's password is a failed authentication, a faillock strike
 (03.01.08) on every connection. So each lab has its own inventory, chosen with
@@ -196,6 +248,14 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | Script | Use |
 | --- | --- |
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
+| `vm/host-check.sh [kickstart\|byo\|all]` | Can this host run the lab: KVM, memory, the tools, UEFI firmware with Secure Boot and enrolled keys, libvirt answering; the `apt`/`dnf` command for what is missing. Run by `make vm` and `byo-guest.sh build` (DEFECTS 7.19). |
+| `vm/lab-network.sh ensure\|destroy\|destroy-if-unused` | `nist-lab` in `qemu:///system`: created only if missing (by both builders), removed only when no guest uses it; warns about forwarding and Docker (DEFECTS 7.17). |
+| `vm/lab-teardown.sh [--yes]` | `make teardown`: both labs and everything they left; fails if `lab-residue.sh` still finds anything (DEFECTS 7.18). |
+| `tools/lab-residue.sh [--orphans]` | Read-only: every guest, disk, snapshot, UEFI store, TPM state, log, network and container the labs have on this host, and which are orphans. |
+| `tools/lab-from-scratch.sh --yes` | Teardown, then both labs rebuilt from nothing by the scripts alone, from a bare shell; logs in `reports/runs/from-scratch-UTC/`. |
+| `tools/lab-ssh.sh HOST [COMMAND]` | SSH into a hardened guest with both factors supplied from the inventory and the lab's askpass (DEFECTS 7.20). |
+| `tools/lab-console.sh HOST` | The guest's serial console, naming the account and password file first (DEFECTS 7.20). |
+| `tools/test-lab-network.sh` | `lab-network.sh` by behaviour, on a throwaway copy of the network. |
 | `vm/byo-lab-init.sh` | Create the BYO lab directory on a new workstation: random secrets, the pinned venv and collections, `tools.sh`, `env.sh`, the askpass scripts; only what is missing (DEFECTS 7.16). |
 | `tools/release-run.sh byo\|kickstart` | The release gate (TASKS R3), one lab at a time, at a committed worktree: every guest to a clean state (BYO: revert to `fresh`, or rebuild with `byo-guest.sh` if it has none; kickstart: reinstall with `build-vm.sh`), `harden-cycle.sh` on the collector and then each CUI host, a final verify of every host, and `summary.md` in `reports/runs/release-LAB-COMMIT-UTC/`. A host passes with `changed=0` and no failure beyond its documented retrofit limits. Destroys and rebuilds lab guests. `--reverify RUN_DIR` repeats only the final assessment at a later commit that changed no role, playbook, overlay or lab script (it refuses otherwise), reusing RUN_DIR's cycles. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
@@ -217,12 +277,15 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/test-lab-guards.sh [BYO] [KICKSTART]` | The lab tools refuse a domain that is not a lab guest (DEFECTS 7.8): a decoy domain on no network must be refused by every destructive entry point and left intact, real guests must pass, and the authored-plans rehearsal must refuse a host with an authored section. Removes the decoy whatever happens. |
 | `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
 
-## Rehearsing from scratch
+## Rehearsing a guest from its fresh state
 
 ```bash
 ./vm/byo-snapshot.sh revert byo-rl9-02 fresh
 ./tools/harden-cycle.sh byo-rl9-02 --snapshot hardened
 ```
+
+The whole host from nothing is `tools/lab-from-scratch.sh --yes` (*On any
+host*).
 
 **A new forwarder must be admitted by the collector.** The collector's TLS
 listener accepts only the certificate names in `nist_col_peers`, which is
