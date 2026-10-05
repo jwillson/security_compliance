@@ -104,7 +104,7 @@ else bad "$MIRROR does not answer from this host (a proxy? NIST_ROCKY_MIRROR=URL
 
 echo "6. DNS inside a container (the kickstart validator)"
 if command -v podman >/dev/null 2>&1; then
-  if out=$(sudo podman run --quiet --rm rockylinux:9 getent hosts "$HOST" 2>&1) && [[ -n "$out" ]]; then ok "a podman container resolves $HOST"
+  if out=$(sudo podman run --quiet --rm quay.io/rockylinux/rockylinux:9 getent hosts "$HOST" 2>&1) && [[ -n "$out" ]]; then ok "a podman container resolves $HOST"
   else bad "a podman container cannot resolve $HOST: it copied a resolver it cannot reach (the systemd-resolved stub?) - $(tail -1 <<<"$out")"; fi
 else info "podman not installed: no kickstart validation, nothing to test"; fi
 

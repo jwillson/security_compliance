@@ -191,7 +191,9 @@ if command -v podman >/dev/null 2>&1; then
   # /dev/stderr` reopened stderr, and where stderr is a log file that
   # truncated it, losing everything the build had logged before (DEFECTS
   # 7.18); and "any output means failure" mistook image-pull messages.
-  ks_out=$(podman run --quiet --rm -v "$KS_OUT:/tmp/candidate.ks:ro,Z" rockylinux:9 \
+  # Fully qualified: RHEL-family hosts enforce short-name resolution, and
+  # with no terminal to ask "rockylinux:9" fails there (Ubuntu maps it to this).
+  ks_out=$(podman run --quiet --rm -v "$KS_OUT:/tmp/candidate.ks:ro,Z" quay.io/rockylinux/rockylinux:9 \
              bash -c 'dnf -q -y install pykickstart >/dev/null 2>&1 || { echo "pykickstart did not install"; exit 3; }
                       ksvalidator -v RHEL9 /tmp/candidate.ks' 2>&1) && ks_rc=0 || ks_rc=$?
   if [[ $ks_rc -eq 0 ]]; then
