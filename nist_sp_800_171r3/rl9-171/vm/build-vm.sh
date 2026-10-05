@@ -260,7 +260,9 @@ if [[ -n "$why" ]]; then
   echo "error: $why. The console's last lines:" >&2
   sudo tail -n 25 "$SERIAL_LOG" 2>/dev/null | sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' -e 's/^/    /' >&2
   cat >&2 <<EOF
-Likely causes, most common first:
+Run tools/diagnose-lab-net.sh: it tests each layer between a guest and the
+mirror (the host's resolver, libvirt's dnsmasq, the guests' DNS, NAT, the
+mirror) and names the one that fails. Likely causes, most common first:
   - the guest cannot reach $MIRROR: no forwarding on this host, a firewall
     or Docker dropping traffic from virbr17, no DNS, or a proxy required
     (vm/lab-network.sh warns about the first two; NIST_ROCKY_MIRROR=URL uses

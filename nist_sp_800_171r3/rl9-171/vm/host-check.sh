@@ -31,11 +31,12 @@ family=other
 case " ${ID:-} ${ID_LIKE:-} " in
   *" debian "*|*" ubuntu "*) family=apt ;;
   *" rhel "*|*" fedora "*|*" centos "*) family=dnf ;;
+  *" arch "*) family=pacman ;;
 esac
-need() {   # command apt-package dnf-package [why]
+need() {   # command apt-package dnf-package [why] [pacman-package]
   if command -v "$1" >/dev/null 2>&1; then ok "$1"; return; fi
   bad "$1 not found${4:+ ($4)}"
-  case $family in apt) missing_pkgs+=("$2") ;; dnf) missing_pkgs+=("$3") ;; esac
+  case $family in apt) missing_pkgs+=("$2") ;; dnf) missing_pkgs+=("$3") ;; pacman) missing_pkgs+=("${5:-$3}") ;; esac
 }
 
 echo "== $(hostname): ${PRETTY_NAME:-unknown OS}, checking for the $lab lab"
@@ -51,9 +52,12 @@ elif (( avail_mb >= 4096 )); then note "memory: ${avail_mb} MiB available, ${nee
 else bad "memory: ${avail_mb} MiB available; one guest needs 3-4 GiB"; fi
 
 # Tools.
-need virsh libvirt-clients libvirt-client "libvirt"
-need virt-install virtinst virt-install
-need qemu-img qemu-utils qemu-img
+need virsh libvirt-clients libvirt-client "libvirt" libvirt
+need virt-install virtinst virt-install "" virt-install
+need qemu-img qemu-utils qemu-img "" qemu-img
+# libvirt's DHCP and DNS for the lab network; an optional dependency on Arch,
+# so a host can have libvirt and not this (DEFECTS 7.22).
+need dnsmasq dnsmasq-base dnsmasq "the lab network's DHCP and DNS" dnsmasq
 need swtpm swtpm swtpm
 need swtpm_setup swtpm-tools swtpm-tools
 need make make make
@@ -113,6 +117,7 @@ if (( ${#missing_pkgs[@]} )); then
   case $family in
     apt) echo "== install: sudo apt-get install -y $pkgs" ;;
     dnf) echo "== install: sudo dnf install -y $pkgs" ;;
+    pacman) echo "== install: sudo pacman -S --needed $pkgs" ;;
     *)   echo "== install the packages providing: $pkgs" ;;
   esac
 fi
