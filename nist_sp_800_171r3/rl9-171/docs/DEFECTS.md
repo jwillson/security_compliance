@@ -1552,3 +1552,16 @@ public when it had not.*
       (poppler 26.01 reproduces the catalog) and both playbooks' syntax
       checks; CI green. The lab VMs still need the host's virtualisation
       (the hybrid is the next step, TASKS).
+
+- [x] **7.24 A kickstart guest on a reused address could not be reached.**
+      Kickstart guests take their address from DHCP, which hands addresses out
+      again; the kickstart lab's `known_hosts` kept the key of an earlier guest
+      at the same address. The from-scratch run's collector came up on `.137`,
+      and the first apply stopped at "REMOTE HOST IDENTIFICATION HAS CHANGED".
+      `build-vm.sh`'s wait for SSH insisted on a known key without recording
+      the new one, so it failed for five silent minutes and then carried on
+      as if SSH were up. `byo-guest.sh` had cleared the entry all along.
+      *Fix:* the entry for the new guest's address is removed, the new key
+      recorded once its sshd answers (a guest created moments ago on the
+      isolated lab network), and the build stops with the console command if
+      SSH never comes up. *Proven* by the from-scratch run that follows.

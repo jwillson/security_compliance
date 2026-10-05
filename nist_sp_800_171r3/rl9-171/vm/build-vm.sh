@@ -310,16 +310,29 @@ log "guest is at $IP"
 log "inventory now:"
 "$ROOT/tools/inventory.py" show
 
+# A freshly installed guest has a new host key. DHCP hands addresses out
+# again, so an entry recorded for this address belongs to a guest that no
+# longer exists: forget it, then record this guest's key once its sshd
+# answers - it was created moments ago on the isolated lab network. Before
+# this, a reused address failed with "REMOTE HOST IDENTIFICATION HAS CHANGED"
+# at the first apply, and the wait below gave up silently (DEFECTS 7.24).
+touch "$SECRETS/known_hosts"; chmod 600 "$SECRETS/known_hosts"
+ssh-keygen -R "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
 log "waiting for SSH"
+ssh_up=0
 for _ in $(seq 1 60); do
+  if ! ssh-keygen -F "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1; then
+    ssh-keyscan -H "$IP" 2>/dev/null >> "$SECRETS/known_hosts" || true
+  fi
   if ssh -i "$SECRETS/id_rsa" -o StrictHostKeyChecking=yes \
          -o UserKnownHostsFile="$SECRETS/known_hosts" -o ConnectTimeout=5 \
          -o BatchMode=yes "$ADMIN_USER@$IP" true 2>/dev/null; then
-    log "SSH is up"
+    log "SSH is up"; ssh_up=1
     break
   fi
   sleep 5
 done
+(( ssh_up )) || die "no SSH to $ADMIN_USER@$IP after 5 minutes (sudo virsh -c $LIBVIRT_URI console $VM_NAME)"
 
 # The forwarding advice only applies when there is no collector yet.
 if [[ "$VM_ROLE" == "log" ]]; then
