@@ -98,9 +98,24 @@ if sudo iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { comman
   bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (vm/lab-network.sh prints the rules)"
 fi
 
-echo "5. the mirror"
-if curl -fsS -o /dev/null --max-time 20 "$MIRROR/BaseOS/x86_64/os/.treeinfo"; then ok "$MIRROR answers from this host"
-else bad "$MIRROR does not answer from this host (a proxy? NIST_ROCKY_MIRROR=URL uses another mirror)"; fi
+echo "5. the mirror, over IPv4 and IPv6 separately"
+# Separately, because a host with an IPv6 route that carries nothing makes
+# curl try IPv6 first and time out, while IPv4 would have worked (DEFECTS
+# 7.27). The lab network is IPv4 only, so the guests are not affected; the
+# host's own downloads (make iso, the BYO base image) are.
+for v in ${https_proxy:+https_proxy} ${HTTPS_PROXY:+HTTPS_PROXY} ${http_proxy:+http_proxy}; do info "$v is set: curl goes through ${!v}"; done
+url="$MIRROR/BaseOS/x86_64/os/.treeinfo"
+v4=0 v6=0
+curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 "$url" 2>/dev/null && v4=1
+curl -6 -fsS -o /dev/null --connect-timeout 10 --max-time 30 "$url" 2>/dev/null && v6=1
+if (( v4 && v6 )); then ok "$MIRROR answers over IPv4 and IPv6"
+elif (( v4 )); then
+  info "$MIRROR answers over IPv4 but not IPv6"
+  if getent ahostsv6 "$HOST" >/dev/null 2>&1 && ip -6 route show default 2>/dev/null | grep -q .; then
+    bad "this host has an IPv6 default route that does not reach the mirror, so curl tries IPv6 first and times out: fix IPv6, or NIST_CURL_OPTS=-4 for make iso"
+  else ok "IPv4 is what this host uses"; fi
+elif (( v6 )); then ok "$MIRROR answers over IPv6 only"
+else bad "$MIRROR does not answer over IPv4 or IPv6: a proxy (https_proxy), a firewall, or the mirror - NIST_ROCKY_MIRROR=URL uses another (https://mirrors.rockylinux.org/mirrormanager/mirrors lists them)"; fi
 
 echo "6. DNS inside a container (the kickstart validator)"
 if command -v podman >/dev/null 2>&1; then

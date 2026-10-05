@@ -2,7 +2,11 @@
 
 SHELL := /bin/bash
 PDF    := NIST.SP.800-171r3.pdf
-ISO_URL := https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-boot.iso
+# The mirror the ISO and the installer use: NIST_ROCKY_MIRROR replaces it (a
+# nearer or proxied one). NIST_CURL_OPTS adds curl options - -4 where this
+# host's IPv6 route carries nothing (tools/diagnose-lab-net.sh says so).
+ROCKY_MIRROR := $(or $(NIST_ROCKY_MIRROR),https://dl.rockylinux.org/pub/rocky/9)
+ISO_URL := $(ROCKY_MIRROR)/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
 # The pinned Ansible tooling (make tools) is on PATH for every target, so a
@@ -109,8 +113,9 @@ iso: $(ISO)
 
 $(ISO):
 	@mkdir -p iso
-	curl -L --retry 3 -o $@ $(ISO_URL)
-	@cd iso && curl -sL -O https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM \
+	curl -fL --retry 3 --connect-timeout 20 $(NIST_CURL_OPTS) -o $@ $(ISO_URL) \
+	  || { rm -f $@; echo "the ISO download failed: tools/diagnose-lab-net.sh tests the path to the mirror"; exit 1; }
+	@cd iso && curl -fsSL --connect-timeout 20 $(NIST_CURL_OPTS) -O $(ROCKY_MIRROR)/isos/x86_64/CHECKSUM \
 	  && grep -A1 "Rocky-9.8-x86_64-boot.iso:" CHECKSUM | grep SHA256 \
 	  | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c -
 

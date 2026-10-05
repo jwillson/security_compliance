@@ -1587,3 +1587,16 @@ public when it had not.*
       *Proven:* into an empty directory, without uv, Python 3.14's venv
       built ansible-core 2.21.4 with `ansible.posix` 2.2.2 and
       `community.general` 13.4.0.
+
+- [x] **7.27 A host that could not reach the mirror could not say why.** The
+      owner's Rocky 9 machine got curl timeouts for `dl.rockylinux.org`.
+      `make iso` named that mirror outright and had no connect timeout; the
+      diagnosis tested the mirror once, letting curl pick the address family.
+      A CDN mirror answers over IPv6 too, and a host with an IPv6 route that
+      carries nothing tries IPv6 first and times out. *Fix:*
+      `diagnose-lab-net.sh` tests the mirror over IPv4 and IPv6 separately,
+      reports a proxy setting, and names the broken-IPv6 case; `make iso`
+      takes the mirror from `NIST_ROCKY_MIRROR` like the installer, fails
+      after 20 seconds without a connection, and passes `NIST_CURL_OPTS`
+      (`-4`). *Proven* on the laptop, IPv4 only: reported as the address
+      family in use, not a failure.
