@@ -1600,3 +1600,16 @@ public when it had not.*
       after 20 seconds without a connection, and passes `NIST_CURL_OPTS`
       (`-4`). *Proven* on the laptop, IPv4 only: reported as the address
       family in use, not a failure.
+
+- [x] **7.28 The diagnosis tested the host's path, not the guests'.** On the
+      owner's Rocky 9 machine the host's own curl reached the mirror while
+      the timeouts came from inside the lab. A guest goes out through the lab
+      bridge and NAT, where firewalld, Docker or a VPN's MTU can stop it
+      while the host is unaffected - and every layer but DNS was tested from
+      the host. *Fix:* layer 7 of `diagnose-lab-net.sh` puts a throwaway
+      network namespace on the lab bridge, at an address DHCP never hands
+      out, and from there resolves the mirror through the guests' DNS
+      server, fetches a small file, then 8 MB (a path MTU problem passes the
+      first and stalls the second); it is removed afterwards, and a failure
+      to set it up is reported as such rather than blamed on the network.
+      *Proven* on the laptop: all three pass, nothing left behind.

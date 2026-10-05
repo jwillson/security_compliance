@@ -17,7 +17,12 @@
 #   4. the way out: forwarding, a NAT rule for the lab subnet, and Docker's
 #      FORWARD DROP policy;
 #   5. the mirror itself, over HTTPS from the host;
-#   6. DNS inside a podman container, as the kickstart validator runs.
+#   6. DNS inside a podman container, as the kickstart validator runs;
+#   7. the guests' own path, from inside the lab network: a throwaway network
+#      namespace on the lab bridge, at an address DHCP never hands out, that
+#      resolves the mirror through the guests' DNS server and fetches from it -
+#      a small file, then 8 MB, which a path MTU problem (a VPN) lets the
+#      first through and stalls the second. Removed afterwards.
 #
 # The lab network must exist (vm/lab-network.sh ensure). Exit 1 if any layer
 # fails.
@@ -122,6 +127,38 @@ if command -v podman >/dev/null 2>&1; then
   if out=$(sudo podman run --quiet --rm quay.io/rockylinux/rockylinux:9 getent hosts "$HOST" 2>&1) && [[ -n "$out" ]]; then ok "a podman container resolves $HOST"
   else bad "a podman container cannot resolve $HOST: it copied a resolver it cannot reach (the systemd-resolved stub?) - $(tail -1 <<<"$out")"; fi
 else info "podman not installed: no kickstart validation, nothing to test"; fi
+
+echo "7. the guests' own path: from inside $NET"
+# What the host can reach, a guest may not: the guests go out through the
+# lab bridge and NAT, where firewalld, Docker or a VPN's MTU can stop them
+# while the host's own curl works (DEFECTS 7.28). A namespace on the bridge
+# is a guest without a VM.
+# Interface names are at most 15 characters.
+NS=nistdiag$$ VETH=nd$$ PROBE=$SUBNET.250
+BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
+if ip link show "$BRIDGE" >/dev/null 2>&1; then
+  cleanup_ns() { sudo ip netns del "$NS" 2>/dev/null; sudo ip link del "$VETH" 2>/dev/null; sudo rm -rf "/etc/netns/$NS"; }
+  trap cleanup_ns EXIT
+  if ! { sudo ip netns add "$NS" && sudo ip link add "$VETH" type veth peer name eth0 netns "$NS" \
+         && sudo ip link set "$VETH" master "$BRIDGE" up \
+         && sudo ip -n "$NS" addr add "$PROBE/24" dev eth0 && sudo ip -n "$NS" link set eth0 up \
+         && sudo ip -n "$NS" link set lo up && sudo ip -n "$NS" route add default via "$GW"; }; then
+    bad "could not set up the test namespace on $BRIDGE - this says nothing about the network itself"
+  else
+  sudo mkdir -p "/etc/netns/$NS"; echo "nameserver $GW" | sudo tee "/etc/netns/$NS/resolv.conf" >/dev/null
+  inside() { sudo ip netns exec "$NS" "$@"; }
+  sleep 2
+  if inside getent hosts "$HOST" >/dev/null 2>&1; then ok "from $PROBE, $HOST resolves through $GW"
+  else bad "from $PROBE, $HOST does not resolve through $GW (layer 3 again, from the guests' side)"; fi
+  if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 "$MIRROR/BaseOS/x86_64/os/.treeinfo" 2>/dev/null; then
+    ok "from $PROBE, a small file from $MIRROR"
+    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 "$MIRROR/isos/x86_64/Rocky-9.8-x86_64-boot.iso" 2>/dev/null; then
+      ok "from $PROBE, 8 MB from $MIRROR"
+    else bad "from $PROBE the small file came but 8 MB did not: a path MTU problem (a VPN or tunnel on this host) - lower the lab network's MTU, or NIST_ROCKY_MIRROR=URL to a nearer mirror"; fi
+  else bad "from $PROBE nothing comes from $MIRROR, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi
+  fi
+  cleanup_ns; trap - EXIT
+else bad "$BRIDGE does not exist (vm/lab-network.sh ensure)"; fi
 
 (( fails )) && { echo "== $fails layer(s) failing - the first is usually the cause"; exit 1; }
 echo "== every layer works; if an install still stalls, read its console: /var/log/libvirt/qemu/NAME-serial.log"
