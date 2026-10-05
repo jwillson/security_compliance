@@ -29,7 +29,7 @@
 # a "fresh" snapshot (vm/byo-snapshot.sh) to revert to.
 #
 # Host prerequisites, each checked or fixed here rather than by hand:
-#   libvirt qemu:///system, network nist-lab (vm/nist-lab-network.xml),
+#   libvirt qemu:///system, network nist-lab (created by vm/lab-network.sh),
 #   virt-install, cloud-localds, qemu-img, passwordless sudo for the image
 #   directory; swtpm + swtpm-tools for --tpm.
 #
@@ -208,6 +208,10 @@ cmd_build() {
   done
   [[ "$ip" =~ ^192\.168\.171\.([0-9]+)$ ]] || die "--ip must be on nist-lab (192.168.171.0/24)"
   [[ "$role" == cui || "$role" == log ]] || die "--role is cui or log"
+  # The host can run a guest (DEFECTS 7.19), and nist-lab exists, created if
+  # missing, before anything reads its leases (7.17).
+  "$HERE/host-check.sh" byo >/dev/null || { "$HERE/host-check.sh" byo; die "this host cannot run the BYO lab yet (above)"; }
+  "$HERE/lab-network.sh" ensure
   "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && die "$name exists (vm/byo-guest.sh destroy $name first)"
 
   # The MAC is derived from the address, so a rebuild gets the same pin.
@@ -255,8 +259,12 @@ cmd_build() {
   "${VIRSH[@]}" net-update "$NET" add ip-dhcp-host \
     "<host mac='$mac' name='$name' ip='$ip'/>" --live --config
 
-  # Same firmware as the original BYO guests: q35, UEFI with Secure Boot
-  # (PCR 7, which the role's clevis tpm2 bind seals to, measures it).
+  # q35, UEFI with Secure Boot enforced and Microsoft's keys enrolled (PCR 7,
+  # which the role's clevis tpm2 bind seals to, measures it), asked for by
+  # feature: libvirt picks the files from the firmware descriptors the host's
+  # distribution installs. The paths were hardcoded to Ubuntu's
+  # /usr/share/OVMF/*_4M.ms.fd, so no other distribution could build a guest
+  # (DEFECTS 7.19).
   # `hd` first: without a boot order the firmware may try network boot before
   # the disk, which cost ~10 minutes of a silent first boot on 2026-09-25.
   # The serial console is logged so a slow or failed boot can be read, not
@@ -269,7 +277,7 @@ cmd_build() {
   say "defining $name"
   virt_install --connect qemu:///system --name "$name" --memory 3072 --vcpus 2 \
     --osinfo rocky9 --import --noautoconsole --machine q35 \
-    --boot "hd,loader=/usr/share/OVMF/OVMF_CODE_4M.ms.fd,loader.readonly=yes,loader.type=pflash,loader.secure=yes,nvram.template=/usr/share/OVMF/OVMF_VARS_4M.ms.fd" \
+    --boot "hd,firmware=efi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
     --features smm.state=on \
     "${disks[@]}" \
     --disk "path=$IMAGES/$name-seed.iso,device=cdrom,bus=sata" \
@@ -323,6 +331,13 @@ for l in sys.stdin:
 
 cmd_destroy() {
   local name=${1:?name} ip="" mac
+  # Nothing left of it - no domain, no lab directory, no image - is not a
+  # refusal but a no-op, so a rebuild after `make teardown` can call this.
+  if ! "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && [[ ! -d "$LAB/$name" ]] \
+     && ! sudo test -e "$IMAGES/$name.qcow2"; then
+    [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$name' is not a guest name"
+    say "$name does not exist"; return 0
+  fi
   lab_guest "$name"
   ip=$(cat "$LAB/$name/ip" 2>/dev/null || true)
   # The domain may already be gone (a half-built or half-destroyed guest);
@@ -340,6 +355,8 @@ cmd_destroy() {
   # included).
   sudo bash -c 'cd "$1" && rm -rf -- "$2.qcow2" "$2-data.qcow2" "$2-seed.iso" \
                   "$2".*.qcow2 "$2"-data.*.qcow2 "$2".*.nvram "$2".*.tpm' _ "$IMAGES" "$name"
+  # And the logs libvirt keeps for it (DEFECTS 7.18).
+  sudo rm -f "/var/log/libvirt/qemu/$name.log" "/var/log/libvirt/qemu/$name-serial.log"
   [[ -n "$mac" && -n "$ip" ]] && "${VIRSH[@]}" net-update "$NET" delete ip-dhcp-host \
     "<host mac='$mac' name='$name' ip='$ip'/>" --live --config >/dev/null 2>&1 || true
   (cd "$ROOT" && ./tools/inventory.py remove "$name") 2>/dev/null || true

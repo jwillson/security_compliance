@@ -9,7 +9,16 @@
 #   ./build-vm.sh                 build the CUI reference VM
 #   ./build-vm.sh --role log      build the log collector (03.03.05c)
 #   ./build-vm.sh --name rl9-cui-02 --disk-gb 60
-#   ./build-vm.sh --destroy       remove the VM and its disk
+#   ./build-vm.sh --destroy       remove the VM and everything it left on the host
+#
+# The install is watched, not waited on forever (DEFECTS 7.17): the installer's
+# serial console is logged to /var/log/libvirt/qemu/NAME-serial.log, and if it
+# prints nothing new for NIST_INSTALL_STALL_MIN minutes (default 20) - the
+# installer stopped at a prompt, usually because the guest cannot reach the
+# mirror - or the install passes NIST_INSTALL_TIMEOUT_MIN (default 120), the
+# build stops with the console's last lines and the likely causes, and leaves
+# the VM up to inspect. NIST_ROCKY_MIRROR replaces the mirror (a local or
+# proxied one). The lab network is created if missing (vm/lab-network.sh).
 #
 # Hosts are added to inventory/hosts.yml rather than replacing it, so a
 # second VM does not evict the first. tools/inventory.py owns that file and
@@ -37,7 +46,7 @@ VM_RAM_MB=4096
 VM_RUNTIME_RAM_MB=2048
 VM_VCPUS=2
 VM_DISK_GB=40
-MIRROR="https://dl.rockylinux.org/pub/rocky/9"
+MIRROR="${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}"
 ADMIN_USER="cuiadmin"
 VM_NETWORK="nist-lab"
 LIBVIRT_URI="qemu:///system"
@@ -83,9 +92,15 @@ if [[ $DESTROY -eq 1 ]]; then
     die "'$VM_NAME' is not attached to nist-lab, so it is not a lab guest; refusing to destroy it"
   fi
   log "destroying $VM_NAME"
+  # Everything the guest left on the host, so nothing outlives it (DEFECTS
+  # 7.18): the domain, its disk, UEFI variables and TPM state, the logs
+  # libvirt keeps for it, its host key and its inventory entry.
+  ip=$("$ROOT/tools/inventory.py" show 2>/dev/null | awk -v n="$VM_NAME" '$1==n {print $2}')
   sudo virsh -c "$LIBVIRT_URI" destroy "$VM_NAME" 2>/dev/null || true
-  sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --remove-all-storage 2>/dev/null || true
-  sudo rm -f "$DISK_PATH"
+  sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --tpm --remove-all-storage 2>/dev/null \
+    || sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --remove-all-storage 2>/dev/null || true
+  sudo rm -f "$DISK_PATH" "/var/log/libvirt/qemu/$VM_NAME.log" "/var/log/libvirt/qemu/$VM_NAME-serial.log"
+  [[ -n "$ip" && -f "$SECRETS/known_hosts" ]] && ssh-keygen -R "$ip" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
   "$ROOT/tools/inventory.py" remove "$VM_NAME" >/dev/null 2>&1 || true
   log "destroyed"
   exit 0
@@ -99,6 +114,10 @@ for f in admin_password_hash id_rsa.pub; do
 done
 command -v virt-install >/dev/null || die "virt-install not installed"
 command -v swtpm >/dev/null || die "swtpm not installed (needed for the vTPM)"
+# The lab network: nothing created it on a new host, so the build failed or
+# hung there (DEFECTS 7.17). Defined in qemu:///system - where virt-install
+# below looks - only if missing; never torn down here.
+"$HERE/lab-network.sh" ensure
 
 if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
   die "domain $VM_NAME already exists - run '$0 --destroy' first"
@@ -181,6 +200,15 @@ fi
 log "creating $VM_NAME: ${VM_VCPUS} vCPU, ${VM_RAM_MB} MB RAM, ${VM_DISK_GB} GB disk"
 log "installing from $MIRROR (unattended, expect 15-25 min)"
 
+# The install is watched rather than waited on: with --noautoconsole and no
+# limit, an installer stopped at a prompt (a mirror it cannot reach, a
+# kickstart it will not accept) waited unseen - 48 hours on one host before
+# anyone killed it (DEFECTS 7.17).
+SERIAL_LOG="/var/log/libvirt/qemu/${VM_NAME}-serial.log"
+STALL_MIN="${NIST_INSTALL_STALL_MIN:-20}"
+LIMIT_MIN="${NIST_INSTALL_TIMEOUT_MIN:-120}"
+VI_OUT="$(mktemp)"
+sudo rm -f "$SERIAL_LOG"
 sudo virt-install \
   --connect "$LIBVIRT_URI" \
   --name "$VM_NAME" \
@@ -193,13 +221,51 @@ sudo virt-install \
   --disk "path=$DISK_PATH,size=$VM_DISK_GB,format=qcow2,bus=virtio,cache=none,discard=unmap" \
   --network network=$VM_NETWORK,model=virtio \
   --graphics none \
+  --serial "pty,log.file=$SERIAL_LOG" \
   --console pty,target_type=serial \
   --os-variant rocky9 \
   --location "$ISO" \
   --initrd-inject "$KS_OUT" \
   --extra-args "inst.ks=file:/$(basename "$KS_OUT") inst.repo=$MIRROR/BaseOS/x86_64/os/ inst.text ip=dhcp console=ttyS0,115200n8" \
   --noautoconsole \
-  --wait -1
+  --wait -1 > "$VI_OUT" 2>&1 &
+vi_pid=$!
+
+log "watching the install: the console is logged to $SERIAL_LOG"
+started=$SECONDS last_size=-1 last_change=$SECONDS why=""
+# ps, not kill -0: the job is sudo, a root process, which kill -0 cannot probe.
+while ps -p "$vi_pid" >/dev/null 2>&1; do
+  sleep 30
+  size=$(sudo stat -c %s "$SERIAL_LOG" 2>/dev/null || echo 0)
+  if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
+  if (( SECONDS - last_change > STALL_MIN * 60 )); then
+    why="the installer's console printed nothing for ${STALL_MIN} minutes"; break
+  fi
+  if (( SECONDS - started > LIMIT_MIN * 60 )); then
+    why="the install has run for more than ${LIMIT_MIN} minutes"; break
+  fi
+done
+if [[ -n "$why" ]]; then
+  sudo kill "$vi_pid" 2>/dev/null || true
+  echo "error: $why. The console's last lines:" >&2
+  sudo tail -n 25 "$SERIAL_LOG" 2>/dev/null | sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' -e 's/^/    /' >&2
+  cat >&2 <<EOF
+Likely causes, most common first:
+  - the guest cannot reach $MIRROR: no forwarding on this host, a firewall
+    or Docker dropping traffic from virbr17, no DNS, or a proxy required
+    (vm/lab-network.sh warns about the first two; NIST_ROCKY_MIRROR=URL uses
+    another mirror)
+  - the installer rejected the kickstart and is waiting for an answer
+The VM is left running to inspect:  sudo virsh -c $LIBVIRT_URI console $VM_NAME
+Remove it afterwards:               $0 --name $VM_NAME --role $VM_ROLE --destroy
+EOF
+  rm -f "$VI_OUT"; exit 1
+fi
+if ! wait "$vi_pid"; then
+  cat "$VI_OUT" >&2; rm -f "$VI_OUT"
+  die "virt-install failed; the console is in $SERIAL_LOG"
+fi
+rm -f "$VI_OUT"
 
 log "install finished; waiting for the VM to boot"
 

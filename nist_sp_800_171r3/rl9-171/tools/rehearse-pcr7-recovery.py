@@ -33,6 +33,7 @@ console and never logged (the transcript records only what the guest sends).
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -46,7 +47,31 @@ import pexpect  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIRSH = ["virsh", "-c", "qemu:///system"]
-NO_KEYS_VARS = "/usr/share/OVMF/OVMF_VARS_4M.fd"     # no PK/KEK/db: Secure Boot off
+FIRMWARE_DESCRIPTORS = "/usr/share/qemu/firmware"   # what every distribution installs
+
+
+def no_keys_vars(nvram: str) -> str:
+    """A UEFI variable store with no Secure Boot keys, for this guest.
+
+    The template of a firmware descriptor that enrolls no keys, the same size
+    as the guest's own store (so it fits its firmware). It was hardcoded to
+    Ubuntu's /usr/share/OVMF/OVMF_VARS_4M.fd (DEFECTS 7.19)."""
+    size = int(sh("sudo", "stat", "-c", "%s", nvram, check=True).stdout)
+    found = []
+    for path in sorted(glob.glob(os.path.join(FIRMWARE_DESCRIPTORS, "*.json"))):
+        try:
+            d = json.load(open(path))
+        except (OSError, ValueError):
+            continue
+        tmpl = d.get("mapping", {}).get("nvram-template", {}).get("filename", "")
+        if d.get("mapping", {}).get("device") != "flash" or "enrolled-keys" in d.get("features", []):
+            continue
+        if tmpl and os.path.exists(tmpl) and os.path.getsize(tmpl) == size:
+            found.append(tmpl)
+    if not found:
+        raise SystemExit(f"error: no firmware descriptor in {FIRMWARE_DESCRIPTORS} offers a variable "
+                         f"store without Secure Boot keys of {size} bytes")
+    return found[0]
 IMAGES = "/var/lib/libvirt/images"                   # vm/byo-snapshot.sh keeps snapshots here
 PASSPHRASE_PROMPT = r"[Pp]assphrase for (disk )?[^\r\n]*(cui_data|cui_backup|lv_cui|lv_backup)"
 # The prompt is shown on every boot - systemd displays the request while
@@ -162,7 +187,7 @@ def main(argv):
             time.sleep(2)
         else:
             sh(*VIRSH, "destroy", host)
-        sh("sudo", "cp", "-f", NO_KEYS_VARS, nvram, check=True)
+        sh("sudo", "cp", "-f", no_keys_vars(nvram), nvram, check=True)
         sh(*VIRSH, "start", host, check=True)
         con = Console(host, timeout=600)
 

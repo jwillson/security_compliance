@@ -5,7 +5,13 @@ PDF    := NIST.SP.800-171r3.pdf
 ISO_URL := https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
-.PHONY: help catalog catalog-check secrets pki iso vm vm-log apply verify report clean destroy validate test all
+# The pinned Ansible tooling (make tools) is on PATH for every target, so a
+# new host needs nothing installed by hand beyond what vm/host-check.sh names.
+NIST_BYO_LAB ?= $(HOME)/.local/share/nist-byo-lab
+export PATH := $(NIST_BYO_LAB)/venv/bin:$(PATH)
+export ANSIBLE_COLLECTIONS_PATH := $(NIST_BYO_LAB)/collections
+
+.PHONY: help catalog catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
@@ -23,10 +29,22 @@ help:
 	@echo "  make apply       apply the overlay via Ansible"
 	@echo "  make verify      assess all 97 requirements on the target"
 	@echo "  make report      open the newest HTML assessment report"
-	@echo "  make destroy     remove the VM and its disk"
-	@echo "  make clean       remove generated artifacts (keeps the ISO)"
+	@echo "  make host-check  can this host run the lab, and what to install if not"
+	@echo "  make tools       the pinned ansible-core and collections (make all does it)"
+	@echo "  make destroy     remove the kickstart VMs, and the lab network if unused"
+	@echo "  make teardown    remove both labs and everything they left (asks first)"
+	@echo "  make clean       remove generated reports (keeps the ISO and secrets)"
 
-all: catalog secrets iso vm apply verify
+# From a bare host: check it, build the tooling, then the reference VM, harden
+# it and assess it. The lab network is created on the way (vm/lab-network.sh).
+all: host-check tools catalog secrets iso vm apply verify
+
+host-check:
+	./vm/host-check.sh kickstart
+
+# ansible-core and the collections, at the versions CI pins.
+tools:
+	./vm/byo-lab-init.sh --tools-only
 
 catalog: catalog/requirements.json
 
@@ -84,13 +102,13 @@ $(ISO):
 	  && grep -A1 "Rocky-9.8-x86_64-boot.iso:" CHECKSUM | grep SHA256 \
 	  | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c -
 
-vm: secrets iso catalog
+vm: host-check secrets iso catalog
 	./vm/build-vm.sh
 
 # A single host cannot demonstrate audit-record forwarding: there is nowhere
 # to forward to, so the assessor reports 03.03.05c as MANUAL rather than
 # passing it. This builds the receiving end. Re-run `make apply` afterwards.
-vm-log: secrets iso catalog
+vm-log: host-check secrets iso catalog
 	./vm/build-vm.sh --role log
 
 apply: catalog
@@ -104,10 +122,23 @@ report:
 	 [ -n "$$latest" ] && { echo "opening $$latest"; xdg-open "$$latest" 2>/dev/null || echo "$$latest"; } \
 	 || echo "no reports yet - run make verify"
 
+# Both labs and everything they left on this host - guests, disks, snapshots,
+# firmware and TPM state, logs, the lab network, the staged ISO - keeping only
+# the inputs a rebuild needs (.secrets/, iso/, the BYO lab's secrets). Asks
+# first. tools/lab-residue.sh lists what is there at any time.
+teardown:
+	./vm/lab-teardown.sh
+
+# The kickstart VMs, then the lab network if no other guest (a BYO one) is
+# still on it. `make teardown` removes every lab guest and everything else.
 destroy:
 	./vm/build-vm.sh --destroy
 	./vm/build-vm.sh --role log --destroy
+	./vm/lab-network.sh destroy-if-unused
 
+# Reports only. It used to delete inventory/hosts.yml too, which on a host
+# running the BYO lab is the live inventory; the destroy paths remove a
+# guest's entry themselves.
 clean:
-	rm -rf reports/*.json reports/*.html inventory/hosts.yml
-	@echo "cleaned (ISO, catalog and secrets kept)"
+	rm -rf reports/*.json reports/*.html
+	@echo "cleaned (ISO, catalog, secrets and inventories kept)"

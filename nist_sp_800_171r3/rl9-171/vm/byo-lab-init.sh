@@ -5,7 +5,11 @@
 # reads, which docs/LAB.md described but no script created (DEFECTS 7.16,
 # issue #15). Run once on a new workstation, before vm/byo-guest.sh build.
 #
-#   vm/byo-lab-init.sh
+#   vm/byo-lab-init.sh               everything below
+#   vm/byo-lab-init.sh --tools-only  the Ansible venv, collections and
+#                                    tools.sh only - what `make tools` runs for
+#                                    the kickstart lab, which needs no BYO
+#                                    secrets
 #
 # Creates only what is missing and never overwrites a file, so it is safe on
 # a lab already in use. Secrets are random, written 0600, and never printed:
@@ -28,6 +32,7 @@ ANSIBLE_CORE=2.21.4      # the version .github/workflows/ci.yml pins
 say() { echo "==> $*"; }
 made() { echo "    created $1"; }
 
+tools_only=0; [[ "${1:-}" == --tools-only ]] && tools_only=1
 install -d -m 0700 "$LAB"
 umask 077
 
@@ -36,10 +41,12 @@ secret() {   # name length
   head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$2" > "$LAB/$1"
   made "$1 (random, 0600)"
 }
-say "secrets in $LAB"
-secret byoadmin_password 24
-secret grub_password 24
-secret luks_passphrase 32
+if (( ! tools_only )); then
+  say "secrets in $LAB"
+  secret byoadmin_password 24
+  secret grub_password 24
+  secret luks_passphrase 32
+fi
 
 say "tooling"
 if [[ ! -x "$LAB/venv/bin/ansible-playbook" ]]; then
@@ -66,6 +73,7 @@ write tools.sh 0600 <<EOF
 export PATH=$LAB/venv/bin:\$PATH
 export ANSIBLE_COLLECTIONS_PATH=$LAB/collections
 EOF
+if (( tools_only )); then say "done: source $LAB/tools.sh, or run make, which puts it on PATH"; exit 0; fi
 write env.sh 0600 <<EOF
 # Source from nist_sp_800_171r3/rl9-171 before ./apply.sh or ./verify.sh
 # against the BYO lab. Reads its secrets from this directory; holds none.
