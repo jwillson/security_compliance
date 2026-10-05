@@ -111,8 +111,10 @@ vm: host-check secrets iso catalog
 vm-log: host-check secrets iso catalog
 	./vm/build-vm.sh --role log
 
+# --reboot: a fresh host owes a reboot after its first apply (the new kernel,
+# FIPS); this reboots it and applies again, so make all ends settled.
 apply: catalog
-	./apply.sh
+	./apply.sh --reboot
 
 verify:
 	./verify.sh
