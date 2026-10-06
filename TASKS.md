@@ -275,6 +275,28 @@ a receiver the toolkit did not build, with a peer name no lab host has.
 
 ---
 
+## Open — bare-metal hosts
+
+The goal: an operator hardens their own bare-metal hosts. The lab is the
+proving ground. Owner decisions, 2026-10-06: new installs first; a spare
+machine (UEFI, no TPM, BMC virtual media, DHCP to the internet) for proof;
+hardened at first boot once the plain ISO path is proven; without a TPM the
+CUI volumes ask for the passphrase at every boot (ODP-REVIEW I5).
+
+- [ ] **B1 Probe the spare machine.** `tools/probes/hardware.sh` (committed):
+      firmware mode, Secure Boot, TPM, board and BIOS, disks by id. If it runs
+      Linux now: `ssh HOST sudo bash -s < tools/probes/hardware.sh`. Its disk
+      id is the `--disk` of B2.
+- [ ] **B2 A bare-metal install ISO.** `vm/baremetal-iso.sh`, the kickstart
+      from `vm/render-kickstart.sh`, built in the control-plane image;
+      rehearsed in the lab by `tools/rehearse-baremetal.sh` (UEFI, no TPM,
+      CD-ROM only), then installed on the spare machine.
+- [ ] **B3 Passphrase unlock without a TPM (I5).** The role stages the key in
+      RAM only and crypttab asks at boot; `mp-09-luks-tpm-bound` accepts a
+      passphrase-only volume on a host with no TPM.
+- [ ] **B4 Hardened at first boot.** The ISO also carries the role, and a
+      one-shot unit applies it locally at first boot.
+
 ## Open — the system owner's authoring
 
 - [ ] **6.3 Author the three SSP sections no host can fill.** Write
