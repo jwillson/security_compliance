@@ -77,7 +77,10 @@ fi
 mounts+=(-v "$passwd:/etc/passwd:ro")
 # Your supplementary groups (libvirt among them) come along: podman's
 # keep-groups (crun), docker's by number.
-if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id --group-add keep-groups)
+# As root (rootful podman, or docker run by root) there is nothing to map:
+# keep-id is rootless podman's alone, and refused otherwise.
+if (( uid == 0 )); then user=()
+elif [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id --group-add keep-groups)
 else user=(--user "$uid:$gid"); for g in $(id -G); do user+=(--group-add "$g"); done; fi
 tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
 

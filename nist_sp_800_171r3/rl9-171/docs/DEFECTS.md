@@ -1785,10 +1785,15 @@ public when it had not.*
       recorder, in Python with a non-blocking stream and no event loop,
       attached and never read: the serial buffer filled and the guest's
       kernel froze half a second into boot. `./nist` also runs under
-      `--init`: as PID 1 a command ignored SIGTERM and outlived its caller.
-      Seen and left open: the direct-kernel boot prints OVMF's "Secure boot
-      image verification failed" yet boots with Secure Boot enabled; a
-      native install's installer boot is to be compared. *Next:* the lab
+      `--init`: as PID 1 a command ignored SIGTERM and outlived its caller;
+      and as root (the owner's Rocky 9 shell) it maps no user - podman's
+      keep-id is for rootless runs only and is refused otherwise - proven by
+      `sudo ./nist` reaching qemu:///system with the full toolset. Seen and
+      left open: the direct-kernel boot prints OVMF's "Secure boot image
+      verification failed" yet boots with Secure Boot enabled; a native
+      install's installer boot is to be compared, recorded by
+      `tools/console-record.sh` - the host's log cannot show it, truncated
+      at the restart. *Next:* the lab
       scripts move onto the socket (TASKS).
 
 - [x] **7.35 Nothing installed a bare-metal host.** The goal is an operator
@@ -1825,5 +1830,8 @@ public when it had not.*
       through `./nist` (259 ok, 154 changed, 0 failed), stopped at its next
       boot for the passphrase until the console typed it (once - systemd
       reuses it for the second volume), and assessed 35/34/0/28, 351 checks,
-      0 failed, both mp-09 checks passing; nothing left behind. On the spare
+      0 failed, both mp-09 checks passing; nothing left behind. And
+      `vm/build-vm.sh` through the moved renderer: a fresh install
+      (`rl9-cui-09`, 163-line kickstart, validated) to SSH, registered in
+      `inventory/kickstart.yml`, destroyed with no orphan. On the spare
       machine: pending (TASKS B1, B2).
