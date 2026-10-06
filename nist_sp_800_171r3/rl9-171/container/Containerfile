@@ -1,8 +1,13 @@
 # The control plane, in one pinned image (DEFECTS 7.23): everything this
 # toolkit runs that is not the hypervisor - Ansible and its collections, the
 # assessor runner, the catalog extractor, the validator and tests, the PKI and
-# inventory tools, SSH. A workstation needs only podman or docker to harden
-# and assess hosts: ./nist make validate, ./nist ./apply.sh, ./nist ./verify.sh.
+# inventory tools, SSH - and the libvirt client side (virsh, virt-install,
+# python3-libvirt), which drives the host's hypervisor through its socket
+# (the lab-in-container spike, DEFECTS 7.34) - and what builds a bare-metal
+# install ISO (install/iso.sh: xorriso, mtools, implantisomd5,
+# pykickstart's ksvalidator; DEFECTS 7.35). A workstation needs only podman
+# or docker to harden and assess hosts: ./nist make validate, ./nist
+# ./apply.sh, ./nist ./verify.sh.
 #
 # Versions are the ones CI pins and the labs were proven with. The base is
 # pinned by digest (container/pin-base.sh renews it). Build: ./nist --rebuild true
@@ -10,21 +15,26 @@ FROM docker.io/library/ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23da
 
 ARG ANSIBLE_CORE=2.21.4
 ARG PYYAML=6.0.3
+ARG PYKICKSTART=3.78
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       python3 python3-venv python3-yaml poppler-utils openssh-client git make \
       curl ca-certificates openssl iproute2 gawk sed coreutils findutils procps \
+      virt-install libvirt-clients cpio mtools isomd5sum \
  && rm -rf /var/lib/apt/lists/*
 
 # ansible-core in its own venv, at the pinned version; the collections at the
 # exact versions requirements.yml names.
 COPY requirements.yml /tmp/requirements.yml
 RUN python3 -m venv /opt/ansible \
- && /opt/ansible/bin/pip install --no-cache-dir "ansible-core==${ANSIBLE_CORE}" "pyyaml==${PYYAML}" \
+ && /opt/ansible/bin/pip install --no-cache-dir "ansible-core==${ANSIBLE_CORE}" "pyyaml==${PYYAML}" "pykickstart==${PYKICKSTART}" \
  && /opt/ansible/bin/ansible-galaxy collection install -p /opt/collections -r /tmp/requirements.yml \
  && rm /tmp/requirements.yml
 
-ENV PATH=/opt/ansible/bin:$PATH \
+# The venv last: virt-install runs `#!/usr/bin/env python3` and needs the
+# system Python, which has gi and libvirt; ansible's own scripts name the
+# venv's interpreter, and the system python3 has PyYAML for the rest.
+ENV PATH=$PATH:/opt/ansible/bin \
     ANSIBLE_COLLECTIONS_PATH=/opt/collections \
     NIST_IN_CONTAINER=1

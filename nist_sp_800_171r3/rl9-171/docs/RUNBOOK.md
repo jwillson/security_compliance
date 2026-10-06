@@ -108,6 +108,13 @@ the disk can open them. The passphrase keyslot stays as the **recovery
 key** — keep it where you keep other break-glass secrets; it is the only way
 in if the TPM ever refuses (see *When you are locked out*).
 
+Without a TPM there is nowhere to seal the key, and none is left on the disk:
+every boot stops at the console and asks for the passphrase before the CUI
+filesystems mount (ODP-REVIEW I5). Plan for a person at the console - the
+BMC's, for a remote machine - at each reboot, `./apply.sh --reboot`
+included. `tools/probes/hardware.sh` tells you beforehand which kind of
+host you have.
+
 Leave one unset and the control it feeds is skipped with a warning and
 reported by `./verify.sh` as a deviation; the run does not abort. `.secrets/`
 is read only when the environment says nothing, which is how the lab works.
@@ -116,6 +123,46 @@ Install-time controls the role cannot retrofit — a separate `/var/log/audit`
 filesystem, FIPS from first boot — will be reported as deviations rather than
 silently skipped. That is correct: on a host not installed that way, they are
 real findings. Fixing them means a rebuild, not a playbook run.
+
+### A new bare-metal host
+
+The install-time controls - separate filesystems with their mount options,
+FIPS from first boot, the minimal package set, the free space the role
+carves the encrypted volumes from - come only from installing with the
+project's kickstart. `install/iso.sh` puts it into the Rocky 9 boot ISO for
+one machine; the workstation needs only podman or docker (it runs in the
+control-plane image).
+
+```bash
+# 1. What the machine offers, if it runs any Linux now (read-only):
+ssh HOST sudo bash -s < tools/probes/hardware.sh
+#    firmware must be UEFI; note Secure Boot, the TPM, and the disk's
+#    /dev/disk/by-id/ name - the one disk the install will wipe.
+
+# 2. Its install ISO (written 0600 under iso/: it holds the admin password's hash):
+make iso
+export NIST_BECOME_PASSWORD=...           # the admin account's password, and sudo's
+./install/iso.sh HOST --disk /dev/disk/by-id/ID [--console tty0|ttyS1] [--key ~/.ssh/id_rsa.pub]
+```
+
+3. Attach `iso/HOST-install.iso` as the BMC's virtual media (or write it to a
+   USB stick), and boot it in UEFI mode. It installs unattended - wiping the
+   disk named and no other; on a machine without that disk it stops - and
+   reboots into Rocky 9. Detach the media, and delete the ISO.
+4. Register it and harden it as a host you brought:
+
+```bash
+./tools/inventory.py add HOST --ip ADDRESS --user cuiadmin --connection byo --key ~/.ssh/id_rsa
+export NIST_GRUB_PASSWORD=... NIST_LUKS_PASSPHRASE=...
+./apply.sh --limit HOST --reboot && ./verify.sh --host HOST
+```
+
+`--console` is where the installer's screen and every later passphrase
+prompt appear: `tty0`, the default, is the screen a BMC's virtual KVM shows;
+`ttyS0`/`ttyS1` is serial-over-LAN. The other gets the kernel's messages too.
+Without a TPM, the reboot in step 4 waits for the LUKS passphrase at that
+console. `tools/rehearse-baremetal.sh` is this procedure in the lab - a guest
+booted from the ISO alone, UEFI, no TPM - and proves it end to end.
 
 ### The reference VM
 

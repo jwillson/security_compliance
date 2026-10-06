@@ -48,6 +48,15 @@ if (( rebuild )) || ! "$RT" image inspect "$image" >/dev/null 2>&1; then
 fi
 
 mounts=(-v "$REPO:$REPO")
+# The host's libvirt, by its socket: the client tools inside drive the
+# hypervisor outside, as any libvirt client does (the lab-in-container spike,
+# DEFECTS 7.34). Access is the host's - your membership of its libvirt group,
+# carried in below.
+[[ -d /run/libvirt ]] && mounts+=(-v /run/libvirt:/run/libvirt)
+# A tool that must show a file at the path the hypervisor sees it by (an ISO
+# uploaded into a pool) adds "-v SRC:DST:ro ..." here.
+read -r -a extra <<<"${NIST_CONTAINER_MOUNTS:-}"
+mounts+=(${extra[@]+"${extra[@]}"})
 [[ -d "$HOME/.ssh" ]] && mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
 [[ -d "$LAB" ]] && mounts+=(-v "$LAB:$LAB")
 # Ansible's own state goes to /tmp: inside the container $HOME exists only as
@@ -55,7 +64,7 @@ mounts=(-v "$REPO:$REPO")
 # SSH control sockets included, whose directory ANSIBLE_HOME does not move.
 envs=(-e HOME="$HOME" -e USER="${USER:-$(id -un)}" -e TERM="${TERM:-dumb}"
       -e ANSIBLE_HOME=/tmp/ansible-home -e ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
-      -e ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/ansible-cp)
+      -e ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/ansible-cp -e XDG_CACHE_HOME=/tmp/cache)
 while IFS='=' read -r k _; do envs+=(-e "$k"); done < <(env | grep -E '^(NIST_|SSH_ASKPASS|ANSIBLE_)' | grep -v '^ANSIBLE_COLLECTIONS_PATH=' || true)
 uid=$(id -u) gid=$(id -g)
 passwd="${XDG_RUNTIME_DIR:-/tmp}/nist-control-$tag-$uid.passwd"
@@ -66,8 +75,14 @@ if [[ ! -s "$passwd" ]]; then
   mv "$passwd.tmp" "$passwd"
 fi
 mounts+=(-v "$passwd:/etc/passwd:ro")
-if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id); else user=(--user "$uid:$gid"); fi
+# Your supplementary groups (libvirt among them) come along: podman's
+# keep-groups (crun), docker's by number.
+if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id --group-add keep-groups)
+else user=(--user "$uid:$gid"); for g in $(id -G); do user+=(--group-add "$g"); done; fi
 tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
 
-exec "$RT" run --rm "${tty[@]}" --network host --security-opt label=disable "${user[@]}" \
+# --init: a small init as PID 1 forwards signals, so a command run here
+# stops when told to; as PID 1 itself it ignored SIGTERM and outlived the
+# tool that started it (DEFECTS 7.34).
+exec "$RT" run --rm --init "${tty[@]}" --network host --security-opt label=disable "${user[@]}" \
   "${mounts[@]}" "${envs[@]}" -w "$PWD" "$image" "$@"

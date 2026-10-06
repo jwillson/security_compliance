@@ -475,10 +475,13 @@ rl9-171/
 │   ├── nist-assess              the assessor
 │   └── checks.yml               346 check definitions
 ├── tests/                       unit tests for the assessor and validate.py
-├── vm/
+├── install/                     how Rocky 9 gets onto a machine, lab guest or bare metal
+│   ├── kickstart/rl9-cui.ks.j2  install-time controls
+│   ├── render-kickstart.sh      the one renderer: host name, the disk it may wipe, the admin
+│   └── iso.sh                   a bare-metal install ISO, kickstart inside (BMC virtual media)
+├── vm/                          the lab
 │   ├── build-vm.sh              unattended kickstart VM build (the reference lab)
 │   ├── siem-container.sh        syslog-ng stand-in SIEM, for the foreign-receiver proof
-│   ├── kickstart/rl9-cui.ks.j2  install-time controls
 │   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
 │   ├── byo-snapshot.sh          save/revert a guest: disks, NVRAM, TPM state
 │   ├── byo-lab-init.sh          the BYO lab directory and the pinned Ansible (make tools)

@@ -290,6 +290,18 @@ mount points.
 Decision (2026-10-02): **keep it as is** - the boot waits for the passphrase;
 no `nofail`. The RUNBOOK's *When you are locked out* row is the procedure.
 
+**I5. Unlocking the CUI volumes on a host with no TPM (bare metal, TASKS B3).**
+Without a TPM there is nowhere to seal the key. Either the key file stays on
+the disk beside the data, so the host boots unattended and
+`mp-09-luks-tpm-bound` and `mp-09-luks-no-key-on-disk` report the deviation
+on every assessment, or no key rests on disk and every boot waits for the
+passphrase, typed at the console (a BMC's, for a remote machine).
+Decision (2026-10-06): **the passphrase at the console.** No key on disk; the
+role stages it in RAM only to format, open and add the volumes, and crypttab
+asks at boot. The checks pass for a passphrase-only volume on a host without
+a TPM, reported as such; every reboot needs a person at the console. A host
+that has a TPM with Secure Boot off keeps I1.
+
 ## H. Values accepted as they are
 
 Everything not listed above keeps its current value, and the acceptance is

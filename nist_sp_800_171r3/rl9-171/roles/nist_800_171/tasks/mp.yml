@@ -80,14 +80,22 @@
   register: nist_tpm_dev
   tags: ["03.08.09", "03.13.08", "03.13.10"]
 
-- name: "03.08.09 | Warn that without a TPM the LUKS key must stay on disk"
+- name: "03.08.09 | Unlock by passphrase at the console where there is no TPM"
+  # Nowhere to seal the key, and a key file beside the data protects
+  # nothing: no key rests on disk, and every boot waits for the passphrase,
+  # typed at the console - a BMC's, for a remote machine (ODP-REVIEW I5).
+  ansible.builtin.set_fact:
+    nist_luks_console_unlock: "{{ not nist_tpm_dev.stat.exists }}"
+  tags: ["03.08.09", "03.13.08", "03.13.10"]
+
+- name: "03.08.09 | Warn that without a TPM every boot asks for the passphrase"
   ansible.builtin.debug:
     msg: >-
       No TPM (/dev/tpmrm0) on this host, so the CUI and backup volumes cannot
-      be sealed to the platform: the key file stays in /root/.luks-key, on the
-      same disk as the data, so that the host still boots unattended.
-      mp-09-luks-tpm-bound and mp-09-luks-no-key-on-disk will report it.
-      Give the host a TPM, or unlock at the console instead.
+      be sealed to the platform. No key is left on the disk: every boot waits
+      at the console for the LUKS passphrase (NIST_LUKS_PASSPHRASE) - over
+      the BMC, for a remote machine - before the CUI filesystems mount
+      (ODP-REVIEW I5).
   when: nist_can_encrypt and not nist_tpm_dev.stat.exists
   tags: ["03.08.09", "03.13.08", "03.13.10"]
 
@@ -122,12 +130,12 @@
 - name: "03.08.09 | Choose where the LUKS key is staged"
   # In RAM (/run is tmpfs) when the TPM will hold the keys: the key is needed
   # only to format, open and bind, and never reaches a disk. On disk only
-  # when crypttab must name it at boot - no TPM, or Secure Boot off - which
-  # the checks report. It used to be /root/.luks-key in every case, written
+  # when crypttab must name it at boot - a TPM with Secure Boot off (I1),
+  # which the checks report. Without a TPM the console asks (I5): RAM too. It used to be /root/.luks-key in every case, written
   # by `copy` through the remote user's ~/.ansible/tmp, and only unlinked
   # afterwards (issue #11).
   ansible.builtin.set_fact:
-    nist_luks_keyfile: "{{ '/run/nist-luks-key' if nist_luks_seal_allowed else '/root/.luks-key' }}"
+    nist_luks_keyfile: "{{ '/run/nist-luks-key' if (nist_luks_seal_allowed or nist_luks_console_unlock) else '/root/.luks-key' }}"
   tags: ["03.08.09", "03.13.08", "03.13.10"]
 
 - name: "03.08.09 | Warn that the volumes are not sealed while Secure Boot is off"
@@ -350,11 +358,13 @@
 
     - name: "03.08.09 | Register the volumes in crypttab"
       # "none" once the TPM holds the keys: no key file is named, and the
-      # password request at boot is answered by clevis-luks-askpass.
+      # password request at boot is answered by clevis-luks-askpass. "none"
+      # too where there is no TPM: the request then waits at the console for
+      # the passphrase (ODP-REVIEW I5).
       ansible.builtin.lineinfile:
         path: /etc/crypttab
         regexp: '^{{ item.name }}\s'
-        line: "{{ item.name }} /dev/{{ nist_vg_name }}/{{ item.lv }} {{ 'none' if nist_luks_tpm_ok else '/root/.luks-key' }} luks,discard"
+        line: "{{ item.name }} /dev/{{ nist_vg_name }}/{{ item.lv }} {{ 'none' if (nist_luks_tpm_ok or nist_luks_console_unlock) else '/root/.luks-key' }} luks,discard"
         create: true
         owner: root
         group: root
@@ -366,7 +376,7 @@
         label: "{{ item.name }}"
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
-    - name: "03.08.09 | Remove the staged key once the TPM holds it"
+    - name: "03.08.09 | Remove the staged key once the TPM holds it, or the console asks for it"
       # The RAM copy is simply removed. A copy on disk - every earlier
       # version staged it there - is overwritten before it is unlinked; on a
       # copy-on-write or SSD-backed store that is best effort, which is why
@@ -380,7 +390,7 @@
         executable: /bin/bash
       register: nist_luks_unstage
       changed_when: "'removed=1' in nist_luks_unstage.stdout"
-      when: nist_luks_tpm_ok
+      when: nist_luks_tpm_ok or nist_luks_console_unlock
       tags: ["03.08.09", "03.13.08", "03.13.10"]
 
     - name: "03.08.09 | Mount the encrypted CUI and backup filesystems"

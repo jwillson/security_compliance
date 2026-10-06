@@ -1748,3 +1748,82 @@ public when it had not.*
       BYO `env.sh`, whose shell then resolves `inventory/hosts.yml` (kind
       byo); `tools/lab-ssh.sh rl9-cui-01` reached the hardened kickstart
       host with both factors; `make` resolves `inventory/kickstart.yml`.
+
+- [x] **7.34 The lab needed the project's tools on the hypervisor host.** The
+      lab scripts drove libvirt with `sudo virsh` and host files (the ISO
+      staged by `sudo cp`, the serial log in `/var/log/libvirt/qemu`), so a
+      lab host needed virt-install, Python and the rest - the host-tool
+      defects of 7.21 and 7.26 among them. *Owner decision 2026-10-06:* the
+      lab in the container too, the host only the hypervisor. A spike proves
+      it can be: `tools/spike-container-libvirt.sh` drives the host's libvirt
+      from the control-plane container through its socket alone - `./nist`
+      mounts `/run/libvirt` and carries the operator's groups in (podman's
+      keep-groups, docker's by number), and the image gains virt-install,
+      libvirt-clients and cpio, its venv now last on PATH since virt-install
+      runs `/usr/bin/env python3` and needs the system Python's gi. Three
+      unknowns, each a check, PASS in one fresh run: (1) virsh inside
+      reaches qemu:///system as the operator, no sudo; (2) the boot ISO
+      uploaded into the default pool (`vol-upload`) and the repo's copy shown
+      inside at the pool's path, virt-install reads kernel and initrd from
+      it, injects the kickstart and uploads them itself, and the host's qemu
+      boots the same path as the CD-ROM - the real kickstart installs, the
+      runtime image from the CD-ROM, SSH on the installed guest; (3) the
+      console is recorded through the socket across the installer's reboot -
+      the host's serial log cannot: libvirt truncates it at every start.
+      The recorder is `tools/console-record.sh`: existing tools, `virsh
+      console` under util-linux `script`; its test,
+      `tools/test-console-record.sh`, boots a diskless guest from the ISO and
+      restarts it twice, in minutes. Four defects found on the way, each from
+      the test's evidence: a console asked for before the guest's terminal
+      exists fails ("PTY device is not yet assigned") and was not retried;
+      `pkill -f` matched the shell that ran it; `script` with a pipe for
+      input waits for that to end, not for its child, so a failed session
+      sat recording nothing; and the `sleep` feeding that pipe is `script`'s
+      child too, so "no child left" never held. Sessions are now watched by
+      their own pid - a live child other than that `sleep` - and ended with
+      their whole process tree when the domain id changes. A first
+      recorder, in Python with a non-blocking stream and no event loop,
+      attached and never read: the serial buffer filled and the guest's
+      kernel froze half a second into boot. `./nist` also runs under
+      `--init`: as PID 1 a command ignored SIGTERM and outlived its caller.
+      Seen and left open: the direct-kernel boot prints OVMF's "Secure boot
+      image verification failed" yet boots with Secure Boot enabled; a
+      native install's installer boot is to be compared. *Next:* the lab
+      scripts move onto the socket (TASKS).
+
+- [x] **7.35 Nothing installed a bare-metal host.** The goal is an operator
+      hardening their own bare-metal hosts; the kickstart reached only lab
+      VMs (virt-install injected it; the disk was hard-wired to `vda`), and a
+      host without a TPM kept its LUKS key on the disk beside the data.
+      *Owner decisions 2026-10-06:* new installs first; a spare machine
+      (UEFI, no TPM, BMC virtual media, DHCP) for proof; without a TPM, the
+      passphrase at the console at every boot (ODP-REVIEW I5). *Fix:*
+      `install/` - how Rocky 9 gets onto a machine, lab guest or bare metal:
+      the kickstart moved there from `vm/`; `install/render-kickstart.sh`,
+      the one renderer (it renders what `build-vm.sh` rendered inline, byte
+      for byte), takes the disk the install may wipe; `install/iso.sh`
+      writes it into the Rocky 9 boot ISO for one machine, wholly in the
+      control-plane image (it re-enters itself through `./nist`) with
+      existing tools - ksvalidator (pykickstart, now in the image),
+      `openssl passwd -6` for the admin password's hash, xorriso to add the
+      kickstart and rebuild with the BIOS, UEFI and GPT boot setup replayed,
+      mtools to edit the UEFI boot image in place, implantisomd5. Lorax's
+      mkksiso does the same, but Rocky 9's needs a loop device - root - and
+      Ubuntu does not package it. The disk is a `/dev/disk/by-id/` path, so
+      on another machine the install finds none and stops; the default boot
+      entry is "Install", not a media check; `--console` picks where the
+      installer and later passphrase prompts appear (the installer carries
+      its `console=` settings into the installed system, and the last one is
+      where systemd asks). `tools/probes/hardware.sh` reports a machine's
+      firmware, Secure Boot, TPM and disks by id beforehand. The role, with
+      no TPM, stages the key in RAM only and writes `none` to crypttab, so
+      boot asks; `mp-09-luks-tpm-bound` there requires every LUKS volume
+      open with a generated unlock unit that names no key - the effective
+      state boot will use. *Proven* by `tools/rehearse-baremetal.sh`, fresh:
+      a guest booted from the ISO alone (UEFI with Secure Boot, no TPM, disk
+      by id) installed itself, took SSH with the run's key, was applied
+      through `./nist` (259 ok, 154 changed, 0 failed), stopped at its next
+      boot for the passphrase until the console typed it (once - systemd
+      reuses it for the second volume), and assessed 35/34/0/28, 351 checks,
+      0 failed, both mp-09 checks passing; nothing left behind. On the spare
+      machine: pending (TASKS B1, B2).

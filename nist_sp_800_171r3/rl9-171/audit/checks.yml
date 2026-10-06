@@ -1497,13 +1497,16 @@ checks:
     expect_output: "present"
 
   - id: mp-09-luks-tpm-bound
-    description: Every encrypted volume unlocks from the TPM, not from a key beside it
+    description: Every encrypted volume unlocks from the TPM, or with no TPM from the console passphrase alone - never from a key beside it
     # 03.08.09 / 03.13.08: encryption at rest protects nothing if the key that
     # opens the volume can be read off the same disk. The role binds each
     # volume to the TPM (clevis tpm2, PCR 7) so the key never rests on disk.
     # Its bind had its options after the pin, so getopts never saw -k and the
-    # bind failed on every host, silently (DEFECTS 6b.5). A host without a TPM
-    # fails this: it has nowhere to seal the key.
+    # bind failed on every host, silently (DEFECTS 6b.5).
+    # A host without a TPM has nowhere to seal the key; there every volume
+    # must open from the passphrase typed at boot alone (ODP-REVIEW I5): the
+    # unit systemd generated from crypttab - what boot will run, the
+    # effective state - names no key ("none"), and the volume is open.
     # A binding that exists is not enough: after a firmware or Secure Boot
     # update changes PCR 7, the binding is still listed but the TPM refuses
     # it. `clevis luks pass` asks the TPM for the key (to /dev/null) - the
@@ -1518,6 +1521,18 @@ checks:
       for d in $(lsblk -pnlo NAME,TYPE | awk '$2=="lvm" || $2=="part" || $2=="disk" {print $1}'); do
         cryptsetup isLuks "$d" 2>/dev/null || continue
         n=$((n + 1))
+        if [ ! -e /dev/tpmrm0 ]; then
+          name=$(lsblk -nlo NAME,TYPE "$d" | awk '$2=="crypt" {print $1; exit}')
+          if [ -z "$name" ]; then echo "no TPM, and not open: $d"; continue; fi
+          key=$(systemctl show -p ExecStart --value "systemd-cryptsetup@$(systemd-escape "$name").service" 2>/dev/null \
+                | sed -n 's/.*argv\[\]=[^ ]* attach [^ ]* [^ ]* \([^ ]*\).*/\1/p' | head -1)
+          case "$key" in
+            none|-) ;;
+            "") echo "no TPM, and no boot-time unlock for $name: $d" ;;
+            *) echo "no TPM, and opened at boot with a key file, not the console passphrase: $d ($key)" ;;
+          esac
+          continue
+        fi
         cfg=$(clevis luks list -d "$d" 2>/dev/null | awk -F: '/tpm2/ {print; exit}')
         slot=${cfg%%:*}
         if [ -z "$cfg" ]; then

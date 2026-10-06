@@ -167,29 +167,8 @@ OVERLAY_VERSION="$(awk '/^  version:/ {gsub(/"/,"",$2); print $2; exit}' "$ROOT/
 KS_OUT="$(mktemp -t rl9-cui-XXXXXX.ks)"
 trap 'rm -f "$KS_OUT"' EXIT
 
-python3 - "$HERE/kickstart/rl9-cui.ks.j2" "$KS_OUT" <<PY
-import sys
-src, dst = sys.argv[1], sys.argv[2]
-subs = {
-    "@@MIRROR@@":           """$MIRROR""",
-    "@@HOSTNAME@@":         """$VM_NAME""",
-    "@@ADMIN_USER@@":       """$ADMIN_USER""",
-    "@@ADMIN_HASH@@":       open("""$SECRETS/admin_password_hash""").read().strip(),
-    "@@SSH_PUBKEY@@":       open("""$SECRETS/id_rsa.pub""").read().strip(),
-    "@@DISK@@":             "vda",
-    "@@OVERLAY_VERSION@@":  """$OVERLAY_VERSION""",
-}
-text = open(src).read()
-for k, v in subs.items():
-    text = text.replace(k, v)
-import re
-# Ignore comment lines; only unresolved substitutions in live config matter.
-left = [l for l in text.splitlines()
-        if re.search(r"@@[A-Z_]+@@", l) and not l.lstrip().startswith("#")]
-if left:
-    sys.exit("unsubstituted placeholders:\n" + "\n".join(left))
-open(dst, "w").write(text)
-PY
+"$ROOT/install/render-kickstart.sh" --out "$KS_OUT" --name "$VM_NAME" --disk vda --user "$ADMIN_USER" \
+  --hash-file "$SECRETS/admin_password_hash" --pubkey-file "$SECRETS/id_rsa.pub" --mirror "$MIRROR"
 log "kickstart rendered ($(wc -l < "$KS_OUT") lines, overlay $OVERLAY_VERSION)"
 
 # A kickstart syntax error costs a full install cycle to discover, so validate

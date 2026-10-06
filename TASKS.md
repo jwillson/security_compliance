@@ -287,13 +287,17 @@ CUI volumes ask for the passphrase at every boot (ODP-REVIEW I5).
       firmware mode, Secure Boot, TPM, board and BIOS, disks by id. If it runs
       Linux now: `ssh HOST sudo bash -s < tools/probes/hardware.sh`. Its disk
       id is the `--disk` of B2.
-- [ ] **B2 A bare-metal install ISO.** `vm/baremetal-iso.sh`, the kickstart
-      from `vm/render-kickstart.sh`, built in the control-plane image;
-      rehearsed in the lab by `tools/rehearse-baremetal.sh` (UEFI, no TPM,
-      CD-ROM only), then installed on the spare machine.
-- [ ] **B3 Passphrase unlock without a TPM (I5).** The role stages the key in
-      RAM only and crypttab asks at boot; `mp-09-luks-tpm-bound` accepts a
-      passphrase-only volume on a host with no TPM.
+- [ ] **B2 A bare-metal install ISO.** `install/iso.sh`, the kickstart
+      from `install/render-kickstart.sh`, built in the control-plane image.
+      Rehearsed in the lab end to end (DEFECTS 7.35); **open:** installed on
+      the spare machine through its BMC, then apply and verify.
+- [x] **B3 Passphrase unlock without a TPM (I5).** Done and rehearsed
+      (DEFECTS 7.35); on the spare machine with B2.
+- [ ] **B5 The lab onto the socket.** The spike passed (DEFECTS 7.34): move
+      `vm/build-vm.sh`, `vm/byo-guest.sh`, `vm/lab-network.sh` and the
+      rehearsals into the control-plane container - storage pools, the
+      console recorded by `tools/console-record.sh`, no `sudo virsh` - each
+      proven by a fresh `./nist make all`.
 - [ ] **B4 Hardened at first boot.** The ISO also carries the role, and a
       one-shot unit applies it locally at first boot.
 

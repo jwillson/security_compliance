@@ -9,7 +9,7 @@
 # Firmware mode, Secure Boot (03.08.09: the LUKS keys seal to it), the TPM
 # (whether they can be sealed at all - without one, every boot waits for the
 # passphrase, ODP-REVIEW I5), the machine and its disks by stable id (the
-# --disk of vm/baremetal-iso.sh). Existing tools where the host has them -
+# --disk of install/iso.sh). Existing tools where the host has them -
 # mokutil, dmidecode, lshw, tpm2_getcap - and /sys where it does not, so it
 # also runs on a minimal system.
 #
@@ -48,7 +48,7 @@ else
 fi
 say memory "$(awk '/MemTotal/ {printf "%.1f GiB", $2 / 1048576}' /proc/meminfo)"
 
-echo "disks (for vm/baremetal-iso.sh --disk):"
+echo "disks (for install/iso.sh --disk):"
 for d in /sys/block/*; do
   n=${d##*/}
   [[ "$n" =~ ^(loop|ram|zram|sr|dm-|md) ]] && continue

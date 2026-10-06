@@ -83,8 +83,9 @@ lives only in one session's scrollback or one agent's memory.
 - **Script everything run against a host.** Building or changing a lab guest,
   a probe that gathers evidence for a finding, a comparison between two
   versions of the assessor: each is a committed script (lab builds in
-  `rl9-171/vm/`, probes and comparisons in `rl9-171/tools/`), run from the
-  repo. An exploratory one-off is allowed only as the first draft of the
+  `rl9-171/vm/`, installing a machine - the kickstart, its renderer, the
+  bare-metal ISO - in `rl9-171/install/`, probes and comparisons in
+  `rl9-171/tools/`), run from the repo. An exploratory one-off is allowed only as the first draft of the
   script it becomes. Secrets never go in a script; it reads them from the
   environment or the lab directory. Re-running it must reproduce the result.
 - **Keep documentation fresh, in the repo.** A fact learned while working —

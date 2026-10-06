@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+#
+# A bare-metal install ISO: the Rocky 9 boot ISO with this project's kickstart
+# inside, for one machine (DEFECTS 7.35). Boot it - BMC virtual media, or a
+# USB stick - and the machine installs itself unattended, wiping the one disk
+# named, then reboots into a host ready for ./apply.sh.
+#
+#   NIST_BECOME_PASSWORD=... install/iso.sh NAME --disk /dev/disk/by-id/ID
+#       [--user cuiadmin] [--key ~/.ssh/id_rsa.pub] [--console tty0|ttyS0|ttyS1]
+#
+# --disk is required and should be a /dev/disk/by-id/ path: the install uses
+# that disk and no other, and on a machine without it, it stops instead of
+# wiping whatever disk it finds. Find it from the running machine
+# (`ls -l /dev/disk/by-id/`), or its BMC's storage inventory.
+#
+# The admin account (--user) gets your public key (--key; RSA, which the FIPS
+# policy accepts) and the password in NIST_BECOME_PASSWORD - the same one
+# ./apply.sh then uses for sudo.
+#
+# --console is where the installer's screen and, on every later boot, the
+# LUKS passphrase prompt appear (a host with no TPM asks at each boot,
+# ODP-REVIEW I5): tty0, the default, is the screen a BMC's virtual KVM shows;
+# ttyS0 or ttyS1 is serial - a BMC's serial-over-LAN, often ttyS1 - and what
+# the lab rehearsal types into. The other one gets the kernel's messages
+# too. The installer carries these console= settings into the installed
+# system, and the last one is where systemd asks for the passphrase. Only its SHA-512 crypt hash goes into the
+# ISO, but that hash is in it: the ISO is written 0600 under iso/ (ignored by
+# git); treat it as a credential and delete it after the install.
+#
+# It runs in the control-plane container, whole: started on the host it
+# re-enters itself through ./nist, so the workstation needs only podman or
+# docker. Existing tools do the work:
+# the kickstart is install/render-kickstart.sh's, as for a lab guest; `openssl
+# passwd -6` hashes the password; ksvalidator (pykickstart) checks it; xorriso
+# adds it to the ISO and rebuilds the ISO with its BIOS, UEFI and GPT boot
+# setup replayed; mtools edits the UEFI boot image (efiboot.img) in place;
+# implantisomd5 renews the media checksum. Each boot entry gains
+# inst.ks=hd:LABEL=<the ISO's label>:/ks.cfg and inst.text, and the default
+# entry becomes "Install" - not "Test this media", which over a BMC's
+# virtual media can take long. Lorax's mkksiso does the same, but Rocky 9's
+# needs a loop device - root - to rebuild efiboot.img, and Ubuntu does not
+# package it. The installer's runtime image comes from the ISO (DEFECTS
+# 7.32); packages from the mirror (NIST_ROCKY_MIRROR), over DHCP.
+#
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+# The whole of it inside the control-plane image; NIST_* (the password) and
+# ~/.ssh (the key) come along.
+[[ -n "${NIST_IN_CONTAINER:-}" ]] || exec "$ROOT/nist" "$0" "$@"
+cd "$ROOT"
+die() { echo "error: $*" >&2; exit 1; }
+log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+
+name=${1:-}; [[ -n "$name" && "$name" != -* ]] || { sed -n '3,27p' "$0"; exit 2; }; shift
+disk="" user=cuiadmin key="$HOME/.ssh/id_rsa.pub" console=tty0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --disk) disk=$2; shift 2 ;;
+    --user) user=$2; shift 2 ;;
+    --key)  key=$2;  shift 2 ;;
+    --console) console=$2; shift 2 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+# The primary console last: the installer, and systemd's passphrase prompt, use it.
+case "$console" in
+  tty0)      consoles="console=ttyS0,115200n8 console=tty0 inst.text" ;;
+  ttyS[0-9]) consoles="console=tty0 console=$console,115200n8 inst.text" ;;
+  *) die "--console takes tty0, ttyS0 .. ttyS9" ;;
+esac
+[[ -n "$disk" ]] || die "--disk is required: the one disk the install wipes, as /dev/disk/by-id/..."
+[[ "$disk" == /dev/disk/by-id/* ]] || echo "warning: --disk $disk is not a /dev/disk/by-id/ path; names like sda can change between boots and machines" >&2
+[[ -n "${NIST_BECOME_PASSWORD:-}" ]] || die "NIST_BECOME_PASSWORD is not set: the admin account's password (and ./apply.sh's sudo password)"
+[[ -f "$key" ]] || die "no public key at $key (--key)"
+[[ "$(awk '{print $1; exit}' "$key")" == ssh-rsa ]] || die "$key is not an RSA key; the FIPS policy refuses others (ssh-keygen -t rsa -b 3072)"
+iso=iso/Rocky-9.8-x86_64-boot.iso
+[[ -f "$iso" ]] || die "$iso missing (make iso)"
+out="iso/${name}-install.iso"
+
+work=$(mktemp -d "$ROOT/iso/.baremetal-XXXXXX")
+trap 'rm -rf "$work"' EXIT
+umask 077
+openssl passwd -6 -stdin <<<"$NIST_BECOME_PASSWORD" > "$work/hash"
+"$HERE/render-kickstart.sh" --out "$work/ks.cfg" --name "$name" --disk "$disk" --user "$user" \
+  --hash-file "$work/hash" --pubkey-file "$key"
+rm -f "$work/hash"
+log "kickstart rendered for $name: disk ${disk#/dev/}, user $user, console $console"
+
+log "validating it and writing it into the ISO (ksvalidator, xorriso, mtools, implantisomd5)"
+bash -c '
+  set -euo pipefail
+  in=$1 w=$2 add=$3
+  ksvalidator -v RHEL9 "$w/ks.cfg"
+  xorriso -osirrox on -indev "$in" -extract /EFI/BOOT/grub.cfg "$w/grub.cfg" \
+    -extract /isolinux/isolinux.cfg "$w/isolinux.cfg" -extract /images/efiboot.img "$w/efiboot.img" 2>/dev/null
+  chmod u+w "$w"/grub.cfg "$w"/isolinux.cfg "$w"/efiboot.img
+  # Every entry that boots the installer: add the kickstart, from this ISO by
+  # its own label, and text mode (the BMC console shows it as well as graphics).
+  ks() { sed -i -E "s|(inst\.stage2=hd:LABEL=([^ ]+))|\1 inst.ks=hd:LABEL=\2:/ks.cfg $add|" "$1"; }
+  ks "$w/grub.cfg"; ks "$w/isolinux.cfg"
+  sed -i "s/^set default=.*/set default=\"0\"/" "$w/grub.cfg"
+  grep -q "inst.ks=hd:LABEL=" "$w/grub.cfg" || { echo "no installer entry found in grub.cfg"; exit 1; }
+  # The UEFI boot image carries its own grub.cfg: the same edit, in place.
+  if mtype -i "$w/efiboot.img" ::/EFI/BOOT/grub.cfg > "$w/efi-grub.cfg" 2>/dev/null; then
+    ks "$w/efi-grub.cfg"; sed -i "s/^set default=.*/set default=\"0\"/" "$w/efi-grub.cfg"
+    mcopy -o -i "$w/efiboot.img" "$w/efi-grub.cfg" ::/EFI/BOOT/grub.cfg
+  fi
+  xorriso -indev "$in" -outdev "$w/out.iso" -boot_image any replay \
+    -map "$w/ks.cfg" /ks.cfg -map "$w/grub.cfg" /EFI/BOOT/grub.cfg \
+    -map "$w/isolinux.cfg" /isolinux/isolinux.cfg -map "$w/efiboot.img" /images/efiboot.img
+  implantisomd5 --force "$w/out.iso" >/dev/null' _ "$ROOT/$iso" "$work" "$consoles" > "$work/build.log" 2>&1 \
+  || { cat "$work/build.log" >&2; die "the ISO was not written (above)"; }
+
+mv "$work/out.iso" "$out"; chmod 600 "$out"
+log "wrote $out ($(du -h "$out" | cut -f1)), mode 0600 - it holds the admin password's hash"
+cat <<DONE
+
+  1. Attach $out to $name as virtual media (or write it to a USB stick).
+  2. Boot it in UEFI mode. It installs unattended - wiping ${disk} - and
+     reboots into Rocky 9; detach the media then.
+  3. From this workstation:
+       ./tools/inventory.py add $name --ip ADDRESS --user $user --connection byo --key ${key%.pub}
+       ./apply.sh --limit $name --reboot && ./verify.sh --host $name
+  Then delete $out.
+DONE

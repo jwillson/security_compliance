@@ -122,6 +122,17 @@ class Console:
         out = re.sub(r"^\[ *\d+\.\d+\] filter_IN_[^\n]*\n?", "", out, flags=re.M)
         return out.split("\n", 1)[1].rstrip() if "\n" in out else ""
 
+    def answer_passphrases(self, pw: str, prompt: str, timeout: int = 900) -> int:
+        """At boot, answer every LUKS passphrase prompt matching `prompt` with
+        pw until the login prompt; return how many were answered. For a host
+        with no TPM (ODP-REVIEW I5), where each boot asks: nothing to wait
+        out first, unlike tools/rehearse-pcr7-recovery.py's unlock_at_boot."""
+        n = 0
+        while self.expect([prompt, self.login_prompt], timeout=timeout) == 0:
+            self.sendline(pw)
+            n += 1
+        return n
+
     def logout(self) -> None:
         self.sendline("exit")
         self.c.expect(self.login_prompt, timeout=30)
