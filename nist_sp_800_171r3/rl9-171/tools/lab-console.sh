@@ -15,7 +15,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.." || exit 2
 host=${1:?usage: tools/lab-console.sh HOST}
-. lib/inventory-env.sh || exit 2
+NIST_FOR_HOST=$host . lib/inventory-env.sh || exit 2
 user=$(ansible-inventory --host "$host" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ansible_user",""))' 2>/dev/null || true)
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 if [[ "$NIST_INVENTORY_KIND" == lab ]]; then pw="$PWD/.secrets/admin_password"

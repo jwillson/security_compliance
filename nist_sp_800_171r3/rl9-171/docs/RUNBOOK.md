@@ -141,8 +141,10 @@ collector is trimmed back to 2048 MB once the install finishes.
 `make vm` establishes what a role cannot: separate filesystems for `/home`,
 `/tmp`, `/var`, `/var/log`, `/var/log/audit`, `/var/tmp` with
 `nodev`/`nosuid`/`noexec`; FIPS from first boot; minimal package set; locked
-root; UEFI + vTPM 2.0. It registers the guest in `inventory/hosts.yml` via
-`tools/inventory.py` — it does not overwrite hosts already there.
+root; UEFI + vTPM 2.0. It registers the guest in the kickstart lab's
+inventory, `inventory/kickstart.yml`, via `tools/inventory.py` — it does not
+overwrite hosts already there — and `make apply` / `make verify` read the
+same file.
 
 ```bash
 ./tools/inventory.py show      # what is in the inventory and where it forwards
@@ -227,8 +229,7 @@ passwords lock the account, 03.01.08):
 bash -c '. lib/ssh-env.sh; ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'
 ```
 
-For the kickstart lab on a host that also runs the BYO lab, set
-`NIST_INVENTORY=inventory/kickstart.yml` first. What you must not do is
+Both find the host in whichever lab's inventory lists it. What you must not do is
 "fix" a refused login by relaxing `AuthenticationMethods`, which is the
 requirement itself.
 

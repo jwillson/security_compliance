@@ -5,8 +5,10 @@
 #
 #   tools/release-run.sh byo [--rebuild]   after: source $NIST_BYO_LAB/env.sh
 #   tools/release-run.sh LAB --reverify RUN_DIR
-#   tools/release-run.sh kickstart    in a fresh shell: source $NIST_BYO_LAB/tools.sh;
-#                                     export NIST_INVENTORY=inventory/kickstart.yml
+#   tools/release-run.sh kickstart    in a fresh shell: source $NIST_BYO_LAB/tools.sh
+#
+# Each lab's inventory is its own and chosen here - inventory/kickstart.yml or
+# inventory/hosts.yml - unless NIST_INVENTORY names another (DEFECTS 7.33).
 #
 # Clean state first:
 #   byo        each guest reverted to its `fresh` snapshot - the stock image
@@ -48,7 +50,11 @@ cd "$ROOT"
 lab=${1:-}; rebuild=0; reverify=""
 [[ "${2:-}" == --rebuild && "$lab" == byo ]] && rebuild=1
 [[ "${2:-}" == --reverify && -d "${3:-}" ]] && reverify=$(cd "$3" && pwd)
-[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 || -n "$reverify" ]] || { sed -n '3,42p' "$0"; exit 2; }
+[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 || -n "$reverify" ]] || { sed -n '3,45p' "$0"; exit 2; }
+if [[ -z "${NIST_INVENTORY:-}" ]]; then
+  if [[ "$lab" == kickstart ]]; then export NIST_INVENTORY=inventory/kickstart.yml
+  else export NIST_INVENTORY=inventory/hosts.yml; fi
+fi
 . lib/ssh-env.sh || exit 2
 # An empty inventory is right where the run builds the guests itself - BYO
 # with --rebuild, kickstart always: after `make teardown` that is exactly

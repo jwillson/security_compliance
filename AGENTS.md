@@ -130,8 +130,10 @@ export NIST_BECOME_PASSWORD=... NIST_GRUB_PASSWORD=...
 ./apply.sh --check --diff && ./apply.sh && ./verify.sh
 ```
 
-One inventory per lab: `NIST_INVENTORY` picks it (default
-`inventory/hosts.yml`), and `lib/inventory-env.sh` refuses an inventory that
+One inventory per lab, chosen by the lab's own tools: `make` and
+`vm/build-vm.sh` use `inventory/kickstart.yml`; `./apply.sh`, `./verify.sh`
+and the BYO lab use `inventory/hosts.yml`; `NIST_INVENTORY` overrides. Do not
+make the operator export it. `lib/inventory-env.sh` refuses an inventory that
 mixes kickstart-lab hosts (`.secrets/` key) with hosts you brought — each needs
 its own second SSH factor, and the wrong one is a faillock strike
 (`rl9-171/docs/LAB.md`, *Two labs on one workstation*).

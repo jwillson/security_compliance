@@ -5,9 +5,12 @@
 # by vm/build-vm.sh, credentials in .secrets/) and the BYO lab (hosts you
 # already have, credentials from the operator) - and the two must not share an
 # inventory: each has its own collector, its own CA and its own second SSH
-# factor. NIST_INVENTORY selects the inventory file (default
-# inventory/hosts.yml); exporting ANSIBLE_INVENTORY from it makes every
-# ansible and ansible-inventory call follow.
+# factor. Each lab's tools choose its inventory (DEFECTS 7.33): the
+# kickstart lab's - make, vm/build-vm.sh - inventory/kickstart.yml; hosts you
+# bring and the BYO lab inventory/hosts.yml, the default here. A tool that
+# names one host sets NIST_FOR_HOST, and the inventory listing it is taken.
+# NIST_INVENTORY overrides all of it. Exporting ANSIBLE_INVENTORY from it
+# makes every ansible and ansible-inventory call follow.
 #
 # NIST_INVENTORY_KIND is derived from the inventory, never assumed:
 #   lab    every host connects with the .secrets/ key (tools/inventory.py
@@ -19,6 +22,13 @@
 # authentication - a faillock strike (03.01.08) on every connection.
 
 NIST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${NIST_INVENTORY:-}" ] && [ -n "${NIST_FOR_HOST:-}" ]; then
+  # inventory.py writes each host as a 4-space key under cui_hosts.hosts.
+  for _inv in inventory/kickstart.yml inventory/hosts.yml; do
+    grep -q "^    ${NIST_FOR_HOST}:" "$NIST_ROOT/$_inv" 2>/dev/null && { NIST_INVENTORY=$_inv; break; }
+  done
+  unset _inv
+fi
 NIST_INVENTORY="${NIST_INVENTORY:-inventory/hosts.yml}"
 case "$NIST_INVENTORY" in
   /*) ;;

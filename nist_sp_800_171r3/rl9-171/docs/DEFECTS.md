@@ -1698,6 +1698,43 @@ public when it had not.*
       against the laptop's BYO inventory and accepts it for
       `inventory/kickstart.yml`; `--resume` on the owner's host: pending.
 
+- [x] **7.32 The installer's runtime image came from the mirror in one
+      unretried transfer.** `tools/install-log.sh` named the halt of 7.30:
+      dracut fetches `install.img` (about 1 GB) from the repository URL,
+      and on the owner's Rocky 9 host the mirror closed the transfer early -
+      `curl: (18) transfer closed with 741179392 bytes remaining to read`,
+      then `Failed to find a root filesystem in .../install.img` and a
+      halt. The next attempt fetched it whole, so the fault is intermittent
+      and outside this host; dracut never retries it. *Fix:* the boot ISO,
+      verified by `make iso` and attached by virt-install as a CD-ROM,
+      already carries that image: `build-vm.sh` passes
+      `inst.stage2=hd:LABEL=<the ISO's volume label>`, so the runtime image
+      is read from the ISO and kernel, initrd and runtime come from one
+      release; packages still come from the mirror, which dnf retries per
+      package. Without a label it falls back to the mirror and says so.
+      *Proven* on the laptop with a fresh install (`rl9-cui-09`, thrown
+      away after): the kernel line carried
+      `inst.stage2=hd:LABEL=Rocky-9-8-x86_64-dvd`, the runtime image was
+      read from `sr0` (no `curl_fetch` in the console), and the install went
+      on to fetch and configure its packages from the mirror.
+
+- [x] **7.33 The operator had to choose the inventory by hand.** The
+      kickstart lab's hosts belong in `inventory/kickstart.yml`, but every
+      tool defaulted to `inventory/hosts.yml`, so the operator had to export
+      `NIST_INVENTORY` - and on the owner's Rocky 9 host, without it, a
+      finished install was refused at registration (7.31). *Owner:* a
+      setting every run needs belongs in the code. *Fix:* each lab's tools
+      choose its inventory: the Makefile (the kickstart pipeline) and
+      `vm/build-vm.sh` use `inventory/kickstart.yml`; `./apply.sh`,
+      `./verify.sh` and the BYO lab's `env.sh` (`byo-lab-init.sh` adds the
+      line to an existing one) use `inventory/hosts.yml`;
+      `tools/release-run.sh` picks by the lab it is given;
+      `tools/lab-ssh.sh` and `tools/lab-console.sh` take the inventory that
+      lists the host named (`NIST_FOR_HOST`, `lib/inventory-env.sh`);
+      `./apply.sh` and `./verify.sh` with no `hosts.yml` but a kickstart
+      inventory point at `make apply` / `make verify`. `NIST_INVENTORY`
+      remains an override, not a step.
+
 - [x] **7.30 An installer that gave up was reported as a stalled network.**
       With DNS fixed (7.29) the owner's Rocky 9 host got further: the
       installer stopped after two minutes and halted - `reboot: System

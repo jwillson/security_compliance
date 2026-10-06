@@ -103,7 +103,16 @@ export SSH_ASKPASS=$LAB/askpass.sh
 export SSH_ASKPASS_REQUIRE=force
 # 03.03.05c over TLS: the CA and per-host certificates (tools/lab-pki.sh).
 export NIST_PKI_DIR=$LAB/pki
+# The BYO lab's inventory: make's own default is the kickstart lab's.
+export NIST_INVENTORY=inventory/hosts.yml
 EOF
+# An env.sh written before the inventory was chosen by the lab gets the line
+# (DEFECTS 7.33); write() never touches an existing file.
+if ! grep -q '^export NIST_INVENTORY=' "$LAB/env.sh"; then
+  printf '%s\n' "# The BYO lab's inventory: make's own default is the kickstart lab's." \
+    "export NIST_INVENTORY=inventory/hosts.yml" >> "$LAB/env.sh"
+  made "env.sh: NIST_INVENTORY"
+fi
 write askpass.sh 0700 <<'EOF'
 #!/usr/bin/env bash
 # The SSH askpass for the BYO lab: the knowledge factor once 03.05.03 applies.

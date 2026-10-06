@@ -19,8 +19,9 @@
 # 3. The BYO lab: vm/byo-lab-init.sh, then tools/release-run.sh byo
 #    --rebuild (builds the three guests from the stock image and cycles them).
 # Each step's log is in reports/runs/from-scratch-UTC/. Exit 0 only if every
-# step succeeds. The kickstart lab uses inventory/kickstart.yml, the BYO lab
-# the default inventory (docs/LAB.md, "Two labs on one workstation").
+# step succeeds. Each lab's tools pick its own inventory - the kickstart lab
+# inventory/kickstart.yml, the BYO lab inventory/hosts.yml (docs/LAB.md,
+# "Two labs on one workstation").
 #
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,8 +47,8 @@ step() {   # name command... (in a bare environment)
 }
 
 step teardown "./vm/lab-teardown.sh --yes"
-step kickstart-all "export NIST_INVENTORY=inventory/kickstart.yml; make all"
-step kickstart-collector "export NIST_INVENTORY=inventory/kickstart.yml; make vm-log && make pki && make apply && make verify"
+step kickstart-all "make all"
+step kickstart-collector "make vm-log && make pki && make apply && make verify"
 step byo-init "./vm/byo-lab-init.sh"
 step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo --rebuild"
 say "residue now:"; ./tools/lab-residue.sh | tee -a "$OUT/summary.txt"

@@ -34,7 +34,11 @@ done
 [[ -f "$NIST_INVENTORY" ]] || {
   echo "error: no inventory at $NIST_INVENTORY." >&2
   echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
-  echo "  new lab VM:     make vm" >&2
+  if [[ -f inventory/kickstart.yml ]]; then
+    echo "  the kickstart lab is in inventory/kickstart.yml: make apply / make verify" >&2
+  else
+    echo "  new lab VM:     make vm" >&2
+  fi
   exit 1
 }
 

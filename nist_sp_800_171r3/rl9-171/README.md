@@ -334,8 +334,10 @@ receiving half: rsyslog on 6514/tcp under TLS with mutual x509
 authentication (03.13.08), one directory per sending host (named by the address the record came from,
 not the hostname it claims) at mode 0700, and
 rotation at the same `audit_retention_days` the records had at origin.
-`tools/inventory.py` owns `inventory/hosts.yml` and points the forwarders at
-the collector; adding or removing a log host rewires them.
+`tools/inventory.py` owns the lab inventories - `inventory/kickstart.yml`
+for the kickstart lab (`make`), `inventory/hosts.yml` for the BYO lab - and
+points the forwarders at the collector; adding or removing a log host
+rewires them.
 
 Every host needs `ca.crt` and its own `HOST.crt`/`HOST.key` in
 `NIST_PKI_DIR` (default `.secrets/pki`), where `HOST` is its inventory name:
@@ -486,7 +488,7 @@ rl9-171/
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
-│   ├── inventory.py             owns inventory/hosts.yml across VMs
+│   ├── inventory.py             owns the lab inventories across VMs
 │   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
 │   ├── probe.sh, probes/        evidence probes and self-cleaning experiments run on hosts
 │   ├── assessor-parity.sh       two assessor versions, same hosts, every check compared

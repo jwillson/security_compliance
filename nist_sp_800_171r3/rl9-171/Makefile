@@ -19,11 +19,21 @@ export PATH := $(NIST_BYO_LAB)/venv/bin:$(PATH)
 export ANSIBLE_COLLECTIONS_PATH := $(NIST_BYO_LAB)/collections
 endif
 
+# The inventory is the lab's, chosen here rather than by the operator: these
+# targets build, apply to and assess the kickstart lab, whose hosts are in
+# inventory/kickstart.yml. Hosts you bring, and the BYO lab, are in
+# inventory/hosts.yml, which ./apply.sh and ./verify.sh read by default - and
+# the BYO lab's env.sh sets it, so its `make pki` still finds them (DEFECTS
+# 7.33). NIST_INVENTORY overrides either.
+NIST_INVENTORY ?= inventory/kickstart.yml
+export NIST_INVENTORY
+
 .PHONY: help catalog catalog-present catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
 	@echo
+	@echo "  (the kickstart lab: its inventory is inventory/kickstart.yml)"
 	@echo "  make all         catalog + secrets + iso + vm + apply + verify"
 	@echo "  make catalog     extract requirements from the PDF"
 	@echo "  make catalog-check  re-extract to a scratch file; fail unless byte-identical"
@@ -88,10 +98,10 @@ secrets: .secrets/id_rsa
 
 # Audit records are forwarded over TLS (03.03.05c under 03.13.08), which needs
 # a CA and a certificate per host. This mints a LAB authority for the hosts in
-# inventory/hosts.yml; a real deployment drops its own ca.crt and HOST.crt/.key
+# the inventory (NIST_INVENTORY, above); a real deployment drops its own ca.crt and HOST.crt/.key
 # into NIST_PKI_DIR instead. Re-run after adding a host; existing ones are kept.
 pki:
-	@[ -f "$${NIST_INVENTORY:-inventory/hosts.yml}" ] || { echo "no inventory at $${NIST_INVENTORY:-inventory/hosts.yml}"; exit 1; }
+	@[ -f "$$NIST_INVENTORY" ] || { echo "no inventory at $$NIST_INVENTORY (make vm first)"; exit 1; }
 	@./tools/lab-pki.sh --inventory
 
 .secrets/id_rsa:

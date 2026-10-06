@@ -235,6 +235,17 @@ log "installing from $MIRROR (unattended, expect 15-25 min)"
 SERIAL_LOG="/var/log/libvirt/qemu/${VM_NAME}-serial.log"
 STALL_MIN="${NIST_INSTALL_STALL_MIN:-20}"
 LIMIT_MIN="${NIST_INSTALL_TIMEOUT_MIN:-120}"
+# The installer's runtime image (install.img, about 1 GB) from the boot ISO,
+# which virt-install attaches as a CD-ROM, not from the mirror: dracut
+# fetches it in one transfer and never retries, and on the owner's Rocky 9
+# host the mirror cut that transfer short - "curl: (18) transfer closed with
+# 741179392 bytes remaining", then "Failed to find a root filesystem" and a
+# halt (DEFECTS 7.32). The ISO was checksum-verified by make iso, and its
+# kernel, initrd and runtime image now all come from the same release.
+# Packages still come from the mirror, where dnf retries each one.
+ISO_LABEL=$(sudo blkid -o value -s LABEL "$ISO" 2>/dev/null || true)
+if [[ -n "$ISO_LABEL" ]]; then STAGE2="inst.stage2=hd:LABEL=${ISO_LABEL// /\\x20}"
+else STAGE2=""; log "no volume label on $ISO: the installer's runtime image will come from the mirror"; fi
 VI_OUT="$(mktemp)"
 sudo rm -f "$SERIAL_LOG"
 sudo virt-install \
@@ -254,7 +265,7 @@ sudo virt-install \
   --os-variant "$OSINFO" \
   --location "$ISO" \
   --initrd-inject "$KS_OUT" \
-  --extra-args "inst.ks=file:/$(basename "$KS_OUT") inst.repo=$MIRROR/BaseOS/x86_64/os/ inst.text ip=dhcp console=ttyS0,115200n8" \
+  --extra-args "inst.ks=file:/$(basename "$KS_OUT") inst.repo=$MIRROR/BaseOS/x86_64/os/ ${STAGE2} inst.text ip=dhcp console=ttyS0,115200n8" \
   --noautoconsole \
   --wait -1 > "$VI_OUT" 2>&1 &
 vi_pid=$!

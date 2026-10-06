@@ -88,15 +88,19 @@ Run only one lab and none of this applies. Run both on one host and the two
 connect differently and must not share an inventory: each has
 its own collector, its own CA, and its own second SSH factor — and offering a
 host the other lab's password is a failed authentication, a faillock strike
-(03.01.08) on every connection. So each lab has its own inventory, chosen with
-`NIST_INVENTORY` (default `inventory/hosts.yml`); `lib/inventory-env.sh`,
-sourced by `apply.sh`, `verify.sh` and the tools, exports it as
-`ANSIBLE_INVENTORY` so every `ansible` call follows.
+(03.01.08) on every connection. So each lab has its own inventory, and the
+lab's own tools choose it - nothing to export (DEFECTS 7.33): `make` and
+`vm/build-vm.sh` use `inventory/kickstart.yml`; `./apply.sh`, `./verify.sh`
+and the BYO lab's `env.sh` use `inventory/hosts.yml`; `tools/lab-ssh.sh` and
+`tools/lab-console.sh` take the one that lists the host named.
+`NIST_INVENTORY` overrides any of them. `lib/inventory-env.sh`, sourced by
+`apply.sh`, `verify.sh` and the tools, exports it as `ANSIBLE_INVENTORY` so
+every `ansible` call follows.
 
 | Lab | Inventory | Shell | Secrets from |
 | --- | --- | --- | --- |
-| BYO | `inventory/hosts.yml` (the default) | `source ~/.local/share/nist-byo-lab/env.sh` | the environment that `env.sh` sets |
-| Kickstart | `inventory/kickstart.yml` | a **fresh** shell: `source ~/.local/share/nist-byo-lab/tools.sh` (the ansible tooling alone, no secrets), then `export NIST_INVENTORY=inventory/kickstart.yml` | `.secrets/` |
+| BYO | `inventory/hosts.yml` | `source ~/.local/share/nist-byo-lab/env.sh`, then `./apply.sh`, `./verify.sh` | the environment that `env.sh` sets |
+| Kickstart | `inventory/kickstart.yml` | a **fresh** shell (none of the BYO lab's secrets in it), then `make` - `make vm`, `make apply`, `make verify` | `.secrets/` |
 
 The helper reads the connection kind from the inventory itself — `lab` if the
 hosts use the `.secrets/` key, `byo` otherwise — and from it `lib/ssh-env.sh`

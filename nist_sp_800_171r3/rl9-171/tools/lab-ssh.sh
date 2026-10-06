@@ -8,9 +8,9 @@
 # A hardened host wants both factors - your key, then the account's password
 # (03.05.03) - from a host whose key is already trusted, over an RSA key (the
 # FIPS policy refuses ed25519). This reads the address, user, key and
-# known_hosts file for HOST from the inventory NIST_INVENTORY selects (the
-# BYO lab's by default; NIST_INVENTORY=inventory/kickstart.yml for the
-# kickstart lab), records the host key if it is new, and supplies the
+# known_hosts file for HOST from whichever lab's inventory lists it (the
+# kickstart lab's or the BYO lab's, lib/inventory-env.sh; NIST_INVENTORY to
+# choose another), records the host key if it is new, and supplies the
 # password factor the way lib/ssh-env.sh does for every tool - so nothing is
 # typed, and nothing wrong is offered: three failed attempts lock the account
 # (03.01.08). `sudo` on the host asks for the same password.
@@ -22,7 +22,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.." || exit 2
 host=${1:?usage: tools/lab-ssh.sh HOST [COMMAND...]}; shift
-. lib/ssh-env.sh || exit 2
+NIST_FOR_HOST=$host . lib/ssh-env.sh || exit 2
 read -r addr user key kh < <(ansible-inventory --host "$host" 2>/dev/null | ROOT="$PWD" python3 -c '
 import json, os, re, sys
 try:
