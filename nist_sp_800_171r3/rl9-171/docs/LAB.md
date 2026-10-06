@@ -56,7 +56,15 @@ expected.
 console to `/var/log/libvirt/qemu/NAME-serial.log` and watches it. Twenty
 minutes with no new output (`NIST_INSTALL_STALL_MIN`), or two hours in all
 (`NIST_INSTALL_TIMEOUT_MIN`), and it stops with the console's last lines and
-the likely causes, leaving the VM up to inspect. The usual cause is a guest
+the likely causes, leaving the VM up to inspect. An installer that halts
+itself - anaconda giving up - is caught at once rather than after the
+twenty minutes, and either way the stop shows what the installer said
+(`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
+7.30). An installer that halts
+itself - anaconda giving up - is caught at once rather than after the
+twenty minutes, and either way the stop shows what the installer said
+(`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
+7.30). The usual cause is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
 `FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or
 a proxy. DNS: the guests ask libvirt's dnsmasq, which forwards to the
@@ -262,6 +270,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/lab-ssh.sh HOST [COMMAND]` | SSH into a hardened guest with both factors supplied from the inventory and the lab's askpass (DEFECTS 7.20). |
 | `tools/lab-console.sh HOST` | The guest's serial console, naming the account and password file first (DEFECTS 7.20). |
 | `tools/test-lab-network.sh` | `lab-network.sh` by behaviour, on a throwaway copy of the network. |
+| `tools/install-log.sh NAME\|FILE` | What an installer said before it stopped: the console log cut where the shutdown began, the lines that name a fault, then the last lines before it. `build-vm.sh` prints it when an install stops (DEFECTS 7.30). |
 | `vm/byo-lab-init.sh` | Create the BYO lab directory on a new workstation: random secrets, the pinned venv and collections, `tools.sh`, `env.sh`, the askpass scripts; only what is missing (DEFECTS 7.16). |
 | `tools/release-run.sh byo\|kickstart` | The release gate (TASKS R3), one lab at a time, at a committed worktree: every guest to a clean state (BYO: revert to `fresh`, or rebuild with `byo-guest.sh` if it has none; kickstart: reinstall with `build-vm.sh`), `harden-cycle.sh` on the collector and then each CUI host, a final verify of every host, and `summary.md` in `reports/runs/release-LAB-COMMIT-UTC/`. A host passes with `changed=0` and no failure beyond its documented retrofit limits. Destroys and rebuilds lab guests. `--reverify RUN_DIR` repeats only the final assessment at a later commit that changed no role, playbook, overlay or lab script (it refuses otherwise), reusing RUN_DIR's cycles. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |

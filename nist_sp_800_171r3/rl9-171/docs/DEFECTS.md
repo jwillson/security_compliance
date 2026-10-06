@@ -1663,3 +1663,39 @@ public when it had not.*
       resolves the mirror through it; a scoped link-local and a plain address
       both define, and a second run changes nothing; with the real
       resolv.conf back the forwarders go. On the owner's machine: pending.
+
+- [x] **7.30 An installer that gave up was reported as a stalled network.**
+      With DNS fixed (7.29) the owner's Rocky 9 host got further: the
+      installer stopped after two minutes and halted - `reboot: System
+      halted`, its in-memory root remounted read-only. qemu stays up after a
+      halt, so the watcher saw only silence, waited the 20 minutes, printed
+      the last 25 lines (all systemd shutdown) and suggested network causes.
+      The kickstart ends with `reboot`; a halt or power-off means anaconda
+      gave up, and its reason is earlier in the console. *Fix:*
+      `vm/build-vm.sh` stops as soon as the console shows a halt or
+      power-off, and on any stop prints `tools/install-log.sh`, new: it cuts
+      the console log where the shutdown began and shows the lines before
+      it that name a fault (anaconda's and dracut's errors, a refused
+      kickstart, a traceback, a repository or a name not reached), then the
+      last lines before the shutdown. It takes a guest's name or any log, so
+      it reads a log already left behind. *Proven* on a synthetic halted log
+      and on a real log on the laptop; the cause on the owner's host:
+      pending its output.
+
+- [x] **7.30 An installer that gave up was reported as a stalled network.**
+      With DNS fixed (7.29) the owner's Rocky 9 host got further: the
+      installer stopped after two minutes and halted - `reboot: System
+      halted`, its in-memory root remounted read-only. qemu stays up after a
+      halt, so the watcher saw only silence, waited the 20 minutes, printed
+      the last 25 lines (all systemd shutdown) and suggested network causes.
+      The kickstart ends with `reboot`; a halt or power-off means anaconda
+      gave up, and its reason is earlier in the console. *Fix:*
+      `vm/build-vm.sh` stops as soon as the console shows a halt or
+      power-off, and on any stop prints `tools/install-log.sh`, new: it cuts
+      the console log where the shutdown began and shows the lines before
+      it that name a fault (anaconda's and dracut's errors, a refused
+      kickstart, a traceback, a repository or a name not reached), then the
+      last lines before the shutdown. It takes a guest's name or any log, so
+      it reads a log already left behind. *Proven* on a synthetic halted log
+      and on a real log on the laptop; the cause on the owner's host:
+      pending its output.

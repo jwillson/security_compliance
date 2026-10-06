@@ -250,6 +250,13 @@ while ps -p "$vi_pid" >/dev/null 2>&1; do
   sleep 30
   size=$(sudo stat -c %s "$SERIAL_LOG" 2>/dev/null || echo 0)
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
+  # The kickstart ends with `reboot`; an installer that halts or powers off
+  # has given up, and qemu stays up with nothing more to say - which read as
+  # a 20-minute stall blamed on the network (DEFECTS 7.30). Stop at once.
+  halted=$(sudo grep -c -E 'reboot: (System halted|Power down)' "$SERIAL_LOG" 2>/dev/null || true)
+  if (( ${halted:-0} > 0 )); then
+    why="the installer halted itself after $(( (SECONDS - started) / 60 )) minutes, before installing: anaconda gave up"; break
+  fi
   if (( SECONDS - last_change > STALL_MIN * 60 )); then
     why="the installer's console printed nothing for ${STALL_MIN} minutes"; break
   fi
@@ -259,10 +266,11 @@ while ps -p "$vi_pid" >/dev/null 2>&1; do
 done
 if [[ -n "$why" ]]; then
   sudo kill "$vi_pid" 2>/dev/null || true
-  echo "error: $why. The console's last lines:" >&2
-  sudo tail -n 25 "$SERIAL_LOG" 2>/dev/null | sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' -e 's/^/    /' >&2
+  echo "error: $why. What the installer said (tools/install-log.sh $VM_NAME):" >&2
+  "$ROOT/tools/install-log.sh" "$SERIAL_LOG" 2>&1 | sed 's/^/  /' >&2
   cat >&2 <<EOF
-Run tools/diagnose-lab-net.sh: it tests each layer between a guest and the
+If an error above names the kickstart, a disk or a package, that is the
+cause. Otherwise run tools/diagnose-lab-net.sh: it tests each layer between a guest and the
 mirror (the host's resolver, libvirt's dnsmasq, the guests' DNS, NAT, the
 mirror) and names the one that fails. Likely causes, most common first:
   - the guest cannot reach $MIRROR: no forwarding on this host, a firewall
