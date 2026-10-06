@@ -60,7 +60,10 @@ the likely causes, leaving the VM up to inspect. An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
-7.30). An installer that halts
+7.30). If the install finished and a later step stopped - the inventory,
+the guest's address, SSH - `vm/build-vm.sh --resume` (with the same
+`--role`/`--name`) carries on from there instead of installing again; the
+inventory itself is checked before the install starts (7.31). An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS

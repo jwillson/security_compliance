@@ -1682,6 +1682,22 @@ public when it had not.*
       and on a real log on the laptop; the cause on the owner's host:
       pending its output.
 
+- [x] **7.31 A finished install was thrown away by an inventory refusal.** On
+      the owner's Rocky 9 host the install completed (7.29 held) and the
+      guest booted, then registration refused it: `inventory/hosts.yml`
+      held hosts brought by the operator, and one inventory serves one lab.
+      The check came only at registration, twenty minutes in, and a rerun
+      refused because the domain existed - so the only way on was
+      `--destroy` and a second install. *Fix:* `tools/inventory.py check
+      NAME` answers the question without writing, and `vm/build-vm.sh` asks
+      it in preflight, before anything is installed, naming the kickstart
+      lab's own inventory (`NIST_INVENTORY=inventory/kickstart.yml`).
+      `build-vm.sh --resume` adopts a guest whose install finished and runs
+      the steps after it - boot, address, registration, host key, SSH - so
+      a late stop costs nothing. *Proven:* `check` refuses a kickstart host
+      against the laptop's BYO inventory and accepts it for
+      `inventory/kickstart.yml`; `--resume` on the owner's host: pending.
+
 - [x] **7.30 An installer that gave up was reported as a stalled network.**
       With DNS fixed (7.29) the owner's Rocky 9 host got further: the
       installer stopped after two minutes and halted - `reboot: System

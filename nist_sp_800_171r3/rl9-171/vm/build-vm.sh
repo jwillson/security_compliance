@@ -10,6 +10,9 @@
 #   ./build-vm.sh --role log      build the log collector (03.03.05c)
 #   ./build-vm.sh --name rl9-cui-02 --disk-gb 60
 #   ./build-vm.sh --destroy       remove the VM and everything it left on the host
+#   ./build-vm.sh --resume        the install is done but a later step stopped:
+#                                 register, record its key and wait for SSH,
+#                                 without installing again
 #
 # The install is watched, not waited on forever (DEFECTS 7.17): the installer's
 # serial console is logged to /var/log/libvirt/qemu/NAME-serial.log, and if it
@@ -52,7 +55,7 @@ VM_NETWORK="nist-lab"
 LIBVIRT_URI="qemu:///system"
 ISO="$ROOT/iso/Rocky-9.8-x86_64-boot.iso"
 SECRETS="$ROOT/.secrets"
-DESTROY=0
+DESTROY=0 RESUME=0
 : "${IMAGE_DIR:=/var/lib/libvirt/images}"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -68,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --mirror)   MIRROR="$2"; shift 2 ;;
     --iso)      ISO="$2"; shift 2 ;;
     --destroy)  DESTROY=1; shift ;;
+    --resume)   RESUME=1; shift ;;
     -h|--help)  sed -n '2,17p' "$0"; exit 0 ;;
     *)          die "unknown argument: $1" ;;
   esac
@@ -107,7 +111,7 @@ if [[ $DESTROY -eq 1 ]]; then
 fi
 
 # --- preflight ---------------------------------------------------------------
-[[ -f "$ISO" ]] || die "boot ISO not found: $ISO (run make iso)"
+[[ -f "$ISO" ]] || (( RESUME )) || die "boot ISO not found: $ISO (run make iso)"
 [[ -d "$SECRETS" ]] || die "missing $SECRETS (run make secrets)"
 for f in admin_password_hash id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
@@ -119,9 +123,21 @@ command -v swtpm >/dev/null || die "swtpm not installed (needed for the vTPM)"
 # below looks - only if missing; never torn down here.
 "$HERE/lab-network.sh" ensure
 
-if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
-  die "domain $VM_NAME already exists - run '$0 --destroy' first"
+# The inventory takes this host before the install, not after it: the check
+# used to come only at registration, twenty minutes in, and a refusal there
+# threw the install away (DEFECTS 7.31).
+"$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed; choose the inventory first - \
+the kickstart lab's own: NIST_INVENTORY=inventory/kickstart.yml (docs/LAB.md, \"Two labs on one workstation\")"
+
+if (( RESUME )); then
+  sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1 || die "--resume: there is no domain $VM_NAME"
+  log "resuming $VM_NAME: installed already, carrying on after the install"
+elif sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
+  die "domain $VM_NAME already exists - '$0 --resume' if its install finished, else '$0 --destroy' first"
 fi
+
+# --- install (skipped with --resume) -----------------------------------------
+if (( ! RESUME )); then
 
 # qemu runs as an unprivileged user that cannot traverse $HOME, so an ISO kept
 # in the project tree is unreadable to it. Stage it into the libvirt image
@@ -288,8 +304,10 @@ if ! wait "$vi_pid"; then
   die "virt-install failed; the console is in $SERIAL_LOG"
 fi
 rm -f "$VI_OUT"
+log "install finished"
+fi   # --- end of the install, skipped with --resume ---------------------------
 
-log "install finished; waiting for the VM to boot"
+log "waiting for the VM to boot"
 
 # virt-install --wait returns when the domain shuts down after install. The
 # kickstart ends with `reboot`, so the domain should come back up on its own;

@@ -12,6 +12,7 @@ address of until the collector exists.
     ./tools/inventory.py add byo-rl9-02 --ip 192.168.171.142 --user byoadmin \
         --connection byo
     ./tools/inventory.py remove rl9-cui-01
+    ./tools/inventory.py check rl9-cui-01     could it be added? (exit 1 if not)
     ./tools/inventory.py show
 
 Roles:
@@ -119,6 +120,28 @@ def save(data: dict) -> None:
                                                  default_flow_style=False))
 
 
+def conflict(data: dict, name: str, connection: str):
+    """Why `connection` host `name` cannot join this inventory, or None.
+
+    One connection kind per inventory: a second SSH factor serves one lab
+    (lib/inventory-env.sh refuses a mixed inventory)."""
+    kinds = {("lab" if ".secrets/" in str(h.get("ansible_ssh_private_key_file", "")) else "byo")
+             for n, h in data["cui_hosts"]["hosts"].items() if n != name}
+    if kinds and kinds != {connection}:
+        where = INVENTORY.relative_to(ROOT) if INVENTORY.is_relative_to(ROOT) else INVENTORY
+        return (f"error: {where} holds {kinds.pop()} hosts; add this {connection} host to its own "
+                "inventory (NIST_INVENTORY=inventory/<lab>.yml)")
+    return None
+
+
+def cmd_check(args) -> int:
+    msg = conflict(load(), args.name, args.connection)
+    if msg:
+        print(msg, file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_add(args) -> int:
     data = load()
     host = dict(CONNECTIONS[args.connection])
@@ -127,14 +150,9 @@ def cmd_add(args) -> int:
     host["ansible_host"] = args.ip
     host["ansible_user"] = args.user
 
-    # One connection kind per inventory: a second SSH factor serves one lab
-    # (lib/inventory-env.sh refuses a mixed inventory).
-    kinds = {("lab" if ".secrets/" in str(h.get("ansible_ssh_private_key_file", "")) else "byo")
-             for n, h in data["cui_hosts"]["hosts"].items() if n != args.name}
-    if kinds and kinds != {args.connection}:
-        sys.exit(f"error: {INVENTORY.relative_to(ROOT) if INVENTORY.is_relative_to(ROOT) else INVENTORY} "
-                 f"holds {kinds.pop()} hosts; add this {args.connection} host to its own inventory "
-                 "(NIST_INVENTORY=inventory/<lab>.yml)")
+    msg = conflict(data, args.name, args.connection)
+    if msg:
+        sys.exit(msg)
     data["cui_hosts"]["hosts"][args.name] = host
     if args.role == "log":
         data.setdefault("log_hosts", {}).setdefault("hosts", {})[args.name] = None
@@ -190,6 +208,12 @@ def main() -> int:
     a.add_argument("--key", default="~/.ssh/id_rsa",
                    help="private key for --connection byo")
     a.set_defaults(fn=cmd_add)
+
+    c = sub.add_parser("check", help="exit 1 if the host could not be added "
+                       "(the inventory holds the other lab's hosts)")
+    c.add_argument("name")
+    c.add_argument("--connection", choices=sorted(CONNECTIONS), default="lab")
+    c.set_defaults(fn=cmd_check)
 
     r = sub.add_parser("remove", help="remove a host")
     r.add_argument("name")
