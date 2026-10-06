@@ -16,6 +16,12 @@
 # askpass scripts resolve unchanged: the repository, ~/.ssh, and the BYO lab
 # directory ($NIST_BYO_LAB). NIST_* and SSH_ASKPASS* pass through.
 #
+# ssh takes the home directory from the passwd entry, not $HOME, so the
+# container gets one for you with your home: the image's own uid 1000
+# ("ubuntu", /home/ubuntu) would otherwise send it to a known_hosts that does
+# not exist, and an unknown host key is asked about through SSH_ASKPASS -
+# which answers with a password, and ssh asks again, forever (DEFECTS 7.23).
+#
 # SELinux labelling is off for this container rather than :Z on the mounts:
 # relabelling ~/.ssh for a container would stop the host's own sshd from
 # reading authorized_keys on Fedora and RHEL.
@@ -45,11 +51,22 @@ mounts=(-v "$REPO:$REPO")
 [[ -d "$HOME/.ssh" ]] && mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
 [[ -d "$LAB" ]] && mounts+=(-v "$LAB:$LAB")
 # Ansible's own state goes to /tmp: inside the container $HOME exists only as
-# the mount point for ~/.ssh, and ~/.ansible could not be created there.
+# the mount point for ~/.ssh, and ~/.ansible could not be created there - the
+# SSH control sockets included, whose directory ANSIBLE_HOME does not move.
 envs=(-e HOME="$HOME" -e USER="${USER:-$(id -un)}" -e TERM="${TERM:-dumb}"
-      -e ANSIBLE_HOME=/tmp/ansible-home -e ANSIBLE_LOCAL_TEMP=/tmp/ansible-local)
+      -e ANSIBLE_HOME=/tmp/ansible-home -e ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
+      -e ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/ansible-cp)
 while IFS='=' read -r k _; do envs+=(-e "$k"); done < <(env | grep -E '^(NIST_|SSH_ASKPASS|ANSIBLE_)' | grep -v '^ANSIBLE_COLLECTIONS_PATH=' || true)
-if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id); else user=(--user "$(id -u):$(id -g)"); fi
+uid=$(id -u) gid=$(id -g)
+passwd="${XDG_RUNTIME_DIR:-/tmp}/nist-control-$tag-$uid.passwd"
+if [[ ! -s "$passwd" ]]; then
+  "$RT" run --rm --entrypoint cat "$image" /etc/passwd \
+    | awk -F: -v u="$uid" '$3 != u' > "$passwd.tmp"
+  echo "${USER:-$(id -un)}:x:$uid:$gid::$HOME:/bin/bash" >> "$passwd.tmp"
+  mv "$passwd.tmp" "$passwd"
+fi
+mounts+=(-v "$passwd:/etc/passwd:ro")
+if [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id); else user=(--user "$uid:$gid"); fi
 tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
 
 exec "$RT" run --rm "${tty[@]}" --network host --security-opt label=disable "${user[@]}" \

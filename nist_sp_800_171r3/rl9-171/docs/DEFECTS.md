@@ -1552,6 +1552,28 @@ public when it had not.*
       (poppler 26.01 reproduces the catalog) and both playbooks' syntax
       checks; CI green. The lab VMs still need the host's virtualisation
       (the hybrid is the next step, TASKS).
+      *Then against a lab host, three defects:* (a) ssh inside took its home
+      from the passwd entry, not `$HOME` - the image's uid 1000 is `ubuntu`,
+      `/home/ubuntu` - so it never saw the mounted `known_hosts`, took every
+      host key for unknown, and asked through `SSH_ASKPASS`; the askpass
+      answers with the password, not "yes", and OpenSSH 10 asked again
+      without end (a million times in four hours; ansible's 62 s become
+      timeout was the only sign). `./nist` now mounts a passwd file with
+      the operator's own entry and home, for any uid and either runtime, and
+      `ansible.cfg` sets `StrictHostKeyChecking=yes` - every tool records the
+      key before connecting, so an unknown one is refused at once, natively
+      too. (b) The aborted connections earned sshd's `PerSourcePenalties`
+      (OpenSSH 9.8+, on by default in the guests' 9.9): the host then reset
+      every connection from the workstation, natively as well, for up to 10
+      minutes ("Not allowed at this time" in `ssh -v`; RUNBOOK, *When you
+      are locked out*). (c) `verify.sh` sent its setup steps to /dev/null
+      under `set -e`, so a failure ended the run with no word; it now shows
+      ansible's message. And the test's own apply check accepted an
+      unreachable host (`failed=0` alone); it now needs `unreachable=0`, and
+      an ad-hoc `ansible -b` check, with a `-vvvv` trace kept on failure, was
+      added. *Proven:* `tools/test-container.sh byo-rl9-02` - SSH with both
+      factors, sudo, `verify.sh` and `apply.sh --check` from inside: PASS;
+      native `verify.sh` unchanged.
 
 - [x] **7.24 A kickstart guest on a reused address could not be reached.**
       Kickstart guests take their address from DHCP, which hands addresses out

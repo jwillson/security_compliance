@@ -65,6 +65,16 @@ fi
 # Reports are written inside the assessor's own 0700 directory, not /tmp,
 # and removed before each run, so a run that dies cannot hand back the
 # previous run's results under a new timestamp.
+# Run a setup step quietly; on failure show ansible's own message and stop,
+# rather than letting set -e end the run with no word of why.
+quiet() {
+  local out
+  out=$("$@" 2>&1) && return 0
+  echo "    setup failed: ${*:1:4}" >&2
+  sed 's/^/    /' <<<"$out" | tail -20 >&2
+  exit 1
+}
+
 REMOTE_JSON=/opt/nist-assess/assessment.json
 REMOTE_HTML=/opt/nist-assess/assessment.html
 
@@ -75,11 +85,11 @@ for host in "${HOSTS[@]}"; do
 
   # Push the assessor and the policy it reads. Copying every time means the
   # host is always assessed against the current catalog, not a stale copy.
-  ansible "$host" -m file -a "path=/opt/nist-assess state=directory mode=0700" -b >/dev/null
+  quiet ansible "$host" -m file -a "path=/opt/nist-assess state=directory mode=0700" -b
   for f in audit/nist-assess audit/checks.yml \
            catalog/overlay-rocky9.yml catalog/requirements.json; do
-    ansible "$host" -m copy \
-      -a "src=$f dest=/opt/nist-assess/$(basename "$f") mode=0700" -b >/dev/null
+    quiet ansible "$host" -m copy \
+      -a "src=$f dest=/opt/nist-assess/$(basename "$f") mode=0700" -b
   done
 
   # PyYAML is the assessor's only dependency.
