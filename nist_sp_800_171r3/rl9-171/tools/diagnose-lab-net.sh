@@ -9,7 +9,9 @@
 #
 #   1. the host's own resolver - including systemd-resolved's stub
 #      (127.0.0.53), which breaks anything that copies resolv.conf into an
-#      isolated network stack (qemu user-mode networking, containers);
+#      isolated network stack (qemu user-mode networking, containers), and a
+#      resolv.conf with no nameserver at all, which leaves libvirt's dnsmasq
+#      nothing to forward to while the host resolves another way;
 #   2. libvirt's dnsmasq for the lab network: installed (Arch packages it as
 #      an optional dependency) and running;
 #   3. the guests' DNS path: a query sent from this host to the lab
@@ -22,7 +24,9 @@
 #      namespace on the lab bridge, at an address DHCP never hands out, that
 #      resolves the mirror through the guests' DNS server and fetches from it -
 #      a small file, then 8 MB, which a path MTU problem (a VPN) lets the
-#      first through and stalls the second. Removed afterwards.
+#      first through and stalls the second. If the name does not resolve
+#      there, the fetch is tried with the address given, so a DNS fault is
+#      not reported as a blocked NAT. Removed afterwards.
 #
 # The lab network must exist (vm/lab-network.sh ensure). Exit 1 if any layer
 # fails.
@@ -41,36 +45,7 @@ fails=0
 ok()   { echo "  ok    $*"; }
 bad()  { echo "  FAIL  $*"; fails=$((fails + 1)); }
 info() { echo "  info  $*"; }
-dnsq() {   # SERVER NAME -> the first A record, by a plain UDP query (stdlib only)
-  python3 - "$1" "$2" <<'PY'
-import random, socket, struct, sys
-server, name = sys.argv[1], sys.argv[2]
-qid = random.randrange(65536)
-q = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
-q += b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0" + struct.pack(">HH", 1, 1)
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
-try:
-    s.sendto(q, (server, 53)); data, _ = s.recvfrom(4096)
-except OSError as e:
-    print("no answer: %s" % e); sys.exit(1)
-rcode, an = data[3] & 0x0F, struct.unpack(">H", data[6:8])[0]
-if rcode or not an:
-    print("rcode %d, %d answers" % (rcode, an)); sys.exit(1)
-i = 12
-while data[i]: i += data[i] + 1
-i += 5
-for _ in range(an):
-    if data[i] & 0xC0 == 0xC0: i += 2
-    else:
-        while data[i]: i += data[i] + 1
-        i += 1
-    rtype, _, _, rdlen = struct.unpack(">HHIH", data[i:i + 10]); i += 10
-    if rtype == 1:
-        print(".".join(str(b) for b in data[i:i + 4])); sys.exit(0)
-    i += rdlen
-print("no A record"); sys.exit(1)
-PY
-}
+dnsq() { python3 "$HERE/../lib/dnsq.py" "$@"; }   # SERVER NAME -> first A record
 
 echo "== the path from a $NET guest to $MIRROR"
 
@@ -81,6 +56,19 @@ info "nameservers: ${ns:-none}"
 [[ "$ns" == "127.0.0.53 " ]] && info "only the systemd-resolved stub: right for this host and for libvirt's dnsmasq (which runs here), wrong for anything that copies resolv.conf into its own network (see 6)"
 if addr=$(getent hosts "$HOST" | awk '{print $1; exit}') && [[ -n "$addr" ]]; then ok "this host resolves $HOST ($addr)"
 else bad "this host cannot resolve $HOST - fix the host's DNS first; nothing below can work"; fi
+if [[ -z "$ns" ]]; then
+  # libvirt's dnsmasq takes its upstream servers from resolv.conf alone; the
+  # host may resolve by another way, which is what this shows (DEFECTS 7.29).
+  info "how this host resolves without one - nsswitch hosts:$(awk '/^hosts:/ {$1 = ""; print}' /etc/nsswitch.conf 2>/dev/null)"
+  systemctl is-active --quiet systemd-resolved 2>/dev/null && info "systemd-resolved is running: $(resolvectl dns 2>/dev/null | tr '\n' ';')"
+  command -v nmcli >/dev/null 2>&1 && info "NetworkManager's DNS servers: $(nmcli -t -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show 2>/dev/null | grep -E '^IP[46]\.DNS' | cut -d: -f2- | tr -d '\\' | xargs)"
+  info "listening on port 53 here: $(sudo ss -Hlun 'sport = :53' 2>/dev/null | awk '{print $4}' | xargs)"
+  live=$(sudo virsh -c qemu:///system net-dumpxml "$NET" 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | sed -E "s/.*(addr='|server=)//; s/'$//" | xargs)
+  if up=$("$HERE/../vm/lab-network.sh" upstream 2>/dev/null); then
+    if [[ -n "$live" ]]; then ok "$NET forwards DNS to $live (this host answers from $up)"
+    else bad "resolv.conf lists no nameserver and $NET has no forwarder, so its dnsmasq refuses every guest query (layer 3): vm/lab-network.sh ensure gives it $up - at once if no guest is on it, else when it next starts"; fi
+  else bad "resolv.conf lists no nameserver and no resolver this host might use answers for $HOST - fix the host's DNS, or NIST_LAB_DNS=IP for vm/lab-network.sh"; fi
+fi
 
 echo "2. libvirt's dnsmasq for $NET"
 command -v dnsmasq >/dev/null 2>&1 && ok "dnsmasq installed" \
@@ -148,14 +136,24 @@ if ip link show "$BRIDGE" >/dev/null 2>&1; then
   sudo mkdir -p "/etc/netns/$NS"; echo "nameserver $GW" | sudo tee "/etc/netns/$NS/resolv.conf" >/dev/null
   inside() { sudo ip netns exec "$NS" "$@"; }
   sleep 2
-  if inside getent hosts "$HOST" >/dev/null 2>&1; then ok "from $PROBE, $HOST resolves through $GW"
+  resolved=0 pin=()
+  if inside getent hosts "$HOST" >/dev/null 2>&1; then ok "from $PROBE, $HOST resolves through $GW"; resolved=1
   else bad "from $PROBE, $HOST does not resolve through $GW (layer 3 again, from the guests' side)"; fi
-  if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 "$MIRROR/BaseOS/x86_64/os/.treeinfo" 2>/dev/null; then
-    ok "from $PROBE, a small file from $MIRROR"
-    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 "$MIRROR/isos/x86_64/Rocky-9.8-x86_64-boot.iso" 2>/dev/null; then
+  # Without a name the fetch tells nothing about the NAT, so it is tried
+  # with the address this host resolved: DNS and the way out judged apart.
+  if (( ! resolved )); then
+    v4=$(getent ahostsv4 "$HOST" 2>/dev/null | awk 'NR == 1 {print $1}')
+    if [[ -n "$v4" ]]; then pin=(--resolve "$HOST:443:$v4"); info "fetching with $HOST given as $v4, to test the way out apart from DNS"
+    else info "this host has no IPv4 address for $HOST either: the way out cannot be tested by name"; fi
+  fi
+  if (( ! resolved )) && (( ${#pin[@]} == 0 )); then :
+  elif inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 ${pin[@]+"${pin[@]}"} "$MIRROR/BaseOS/x86_64/os/.treeinfo" 2>/dev/null; then
+    ok "from $PROBE, a small file from $MIRROR${pin:+ (address given)}"
+    (( resolved )) || info "so the way out works: the guests' fault is DNS alone (layers 1 and 3)"
+    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 ${pin[@]+"${pin[@]}"} "$MIRROR/isos/x86_64/Rocky-9.8-x86_64-boot.iso" 2>/dev/null; then
       ok "from $PROBE, 8 MB from $MIRROR"
     else bad "from $PROBE the small file came but 8 MB did not: a path MTU problem (a VPN or tunnel on this host) - lower the lab network's MTU, or NIST_ROCKY_MIRROR=URL to a nearer mirror"; fi
-  else bad "from $PROBE nothing comes from $MIRROR, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi
+  else bad "from $PROBE nothing comes from $MIRROR${pin:+ even with its address given}, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi
   fi
   cleanup_ns; trap - EXIT
 else bad "$BRIDGE does not exist (vm/lab-network.sh ensure)"; fi

@@ -7,6 +7,13 @@
 # nist-lab, with guests on it, `destroy` must refuse and `destroy-if-unused`
 # keep it. The copy is removed at the end whatever happens.
 #
+# DNS (DEFECTS 7.29), on the copy: with a resolv.conf that lists no
+# nameserver, `ensure` must give the network a forwarder this host answers
+# from, and the network's dnsmasq must then resolve the mirror through it;
+# NIST_LAB_DNS with a scoped link-local and a plain address must define
+# (libvirt accepts both forms); and with the host's real resolv.conf back,
+# the forwarders go again.
+#
 #   tools/test-lab-network.sh
 #
 set -uo pipefail
@@ -16,11 +23,12 @@ V=(sudo virsh -c qemu:///system)
 fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
-xml=$(mktemp --suffix=.xml)
+xml=$(mktemp --suffix=.xml) empty=$(mktemp)
+fwd() { "${V[@]}" net-dumpxml --inactive nist-lab-nettest 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | xargs; }
 sed -e 's:<name>nist-lab</name>:<name>nist-lab-nettest</name>:' -e "s:virbr17:virbr179:" \
     -e 's/192\.168\.171\./192.168.179./g' -e "s:<domain name='nist-lab':<domain name='nist-lab-nettest':" \
     vm/nist-lab-network.xml > "$xml"
-cleanup() { "${V[@]}" net-destroy nist-lab-nettest >/dev/null 2>&1; "${V[@]}" net-undefine nist-lab-nettest >/dev/null 2>&1; rm -f "$xml"; }
+cleanup() { "${V[@]}" net-destroy nist-lab-nettest >/dev/null 2>&1; "${V[@]}" net-undefine nist-lab-nettest >/dev/null 2>&1; rm -f "$xml" "$empty"; }
 trap cleanup EXIT
 "${V[@]}" net-info nist-lab-nettest >/dev/null 2>&1 && { echo "error: nist-lab-nettest already exists" >&2; exit 2; }
 
@@ -30,6 +38,23 @@ info=$("${V[@]}" net-info nist-lab-nettest 2>/dev/null)
   && ok "a missing network is defined, started and set to autostart" || bad "rc=$rc: $out"
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 [[ $rc -eq 0 && -z "$(grep '^==>' <<<"$out")" ]] && ok "a second run changes nothing" || bad "second run: rc=$rc: $out"
+if grep -q '^nameserver' /etc/resolv.conf; then
+  [[ -z "$(fwd)" ]] && ok "with nameservers in resolv.conf, no forwarder is added" || bad "forwarders added anyway: $(fwd)"
+fi
+out=$(NIST_RESOLV_CONF="$empty" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+f=$(fwd); r=$(python3 lib/dnsq.py 192.168.179.1 dl.rockylinux.org 2>&1)
+[[ $rc -eq 0 && -n "$f" ]] && ok "an empty resolv.conf gets a forwarder this host answers from ($f)" || bad "empty resolv.conf: rc=$rc forwarders='$f': $out"
+[[ -n "$f" && "$r" =~ ^[0-9.]+$ ]] && ok "the network's dnsmasq resolves the mirror through it ($r)" || bad "dnsmasq on 192.168.179.1 does not resolve: $r"
+out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+f=$(fwd)
+[[ $rc -eq 0 && "$f" == *"server=fe80::1%virbr179"* && "$f" == *"addr=192.0.2.53"* ]] \
+  && ok "NIST_LAB_DNS: a scoped link-local and a plain address both define" || bad "NIST_LAB_DNS: rc=$rc forwarders='$f': $out"
+out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+[[ $rc -eq 0 && -z "$(grep '^==>' <<<"$out")" ]] && ok "and a second run with them changes nothing" || bad "NIST_LAB_DNS second run: rc=$rc: $out"
+out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+if grep -q '^nameserver' /etc/resolv.conf; then
+  [[ $rc -eq 0 && -z "$(fwd)" ]] && ok "with resolv.conf's nameservers back, the forwarders go" || bad "revert: rc=$rc forwarders='$(fwd)': $out"
+fi
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh destroy 2>&1); rc=$?
 gone=$("${V[@]}" net-info nist-lab-nettest 2>&1)
 [[ $rc -eq 0 && "$gone" == *"not found"* ]] && ok "destroy removes an unused network" || bad "destroy: rc=$rc: $out"

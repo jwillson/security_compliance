@@ -59,7 +59,13 @@ minutes with no new output (`NIST_INSTALL_STALL_MIN`), or two hours in all
 the likely causes, leaving the VM up to inspect. The usual cause is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
 `FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or
-a proxy. `NIST_ROCKY_MIRROR=URL` installs from another mirror. Before
+a proxy. DNS: the guests ask libvirt's dnsmasq, which forwards to the
+nameservers in `/etc/resolv.conf` and to nothing else; when that file lists
+none (the host resolving through systemd-resolved or a local resolver
+instead), `vm/lab-network.sh` gives the network a forwarder the host answers
+from, or the one `NIST_LAB_DNS="IP ..."` names (DEFECTS 7.29).
+`tools/diagnose-lab-net.sh` tests each layer from the host and from inside
+the lab network. `NIST_ROCKY_MIRROR=URL` installs from another mirror. Before
 2026-10-05 the install waited forever, unseen - 48 hours on one host (DEFECTS
 7.17).
 
@@ -249,7 +255,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | --- | --- |
 | `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
 | `vm/host-check.sh [kickstart\|byo\|all]` | Can this host run the lab: KVM, memory, the tools, UEFI firmware with Secure Boot and enrolled keys, libvirt answering; the `apt`/`dnf` command for what is missing. Run by `make vm` and `byo-guest.sh build` (DEFECTS 7.19). |
-| `vm/lab-network.sh ensure\|destroy\|destroy-if-unused` | `nist-lab` in `qemu:///system`: created only if missing (by both builders), removed only when no guest uses it; warns about forwarding and Docker (DEFECTS 7.17). |
+| `vm/lab-network.sh ensure\|destroy\|destroy-if-unused` | `nist-lab` in `qemu:///system`: created only if missing (by both builders), removed only when no guest uses it; warns about forwarding and Docker (DEFECTS 7.17); gives dnsmasq a DNS forwarder when resolv.conf lists none (7.29). `upstream` prints the one it uses. |
 | `vm/lab-teardown.sh [--yes]` | `make teardown`: both labs and everything they left; fails if `lab-residue.sh` still finds anything (DEFECTS 7.18). |
 | `tools/lab-residue.sh [--orphans]` | Read-only: every guest, disk, snapshot, UEFI store, TPM state, log, network and container the labs have on this host, and which are orphans. |
 | `tools/lab-from-scratch.sh --yes` | Teardown, then both labs rebuilt from nothing by the scripts alone, from a bare shell; logs in `reports/runs/from-scratch-UTC/`. |

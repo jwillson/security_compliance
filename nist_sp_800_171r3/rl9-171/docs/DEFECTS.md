@@ -1635,3 +1635,31 @@ public when it had not.*
       first and stalls the second); it is removed afterwards, and a failure
       to set it up is reported as such rather than blamed on the network.
       *Proven* on the laptop: all three pass, nothing left behind.
+
+- [x] **7.29 A host with no nameserver in resolv.conf left the guests no DNS.**
+      On the owner's Rocky 9 machine `/etc/resolv.conf` (NetworkManager's,
+      `/run/NetworkManager/resolv.conf`) listed no nameserver while the host
+      resolved by another way. libvirt's dnsmasq forwards to resolv.conf's
+      nameservers and to nothing else, so it answered every guest query
+      REFUSED (rcode 5) and the install waited for a mirror it could not
+      name. The same family as the faults found in the ktistes builder - a
+      resolver that serves the host but not what reads its configuration -
+      and the same host showed ktistes's other signature, an IPv6 path that
+      resolves first and carries nothing (layer 5; the guests are IPv4 only).
+      Layer 7 then also blamed the NAT, though its fetch had only failed to
+      resolve. *Fix:* `vm/lab-network.sh ensure`, when resolv.conf lists no
+      nameserver, gives the network a forwarder this host answers from - the
+      first of systemd-resolved's stub, 127.0.0.1, ::1, then the servers
+      resolvectl and NetworkManager know (IPv6 and an RA-advertised
+      link-local included, the latter as a dnsmasq `server=` since libvirt's
+      `<forwarder>` refuses a scoped address), each asked by the new
+      stdlib `lib/dnsq.py`; `NIST_LAB_DNS` chooses instead. A changed
+      forwarder is applied at once if no guest is on the network, else at its
+      next start. `diagnose-lab-net.sh` layer 1 shows how the host does
+      resolve and whether the network has its forwarder, and layer 7 retries
+      the fetch with the address given, so DNS and the NAT are judged apart.
+      *Proven* by `tools/test-lab-network.sh` on a throwaway network: an
+      empty resolv.conf gets the stub as forwarder and the network's dnsmasq
+      resolves the mirror through it; a scoped link-local and a plain address
+      both define, and a second run changes nothing; with the real
+      resolv.conf back the forwarders go. On the owner's machine: pending.

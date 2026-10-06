@@ -499,7 +499,7 @@ rl9-171/
 │   ├── lab-ssh.sh, lab-console.sh  into a hardened guest: SSH with both factors, or its console
 │   ├── lab-residue.sh, lab-from-scratch.sh  what the labs left; both rebuilt from nothing
 │   └── secret-scan.sh           gitleaks over the whole history (also in CI)
-├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor
+├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor; dnsq.py asks a DNS server
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile
 └── reports/                     assessment output (generated)
