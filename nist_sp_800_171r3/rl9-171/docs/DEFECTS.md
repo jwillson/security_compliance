@@ -1662,7 +1662,10 @@ public when it had not.*
       empty resolv.conf gets the stub as forwarder and the network's dnsmasq
       resolves the mirror through it; a scoped link-local and a plain address
       both define, and a second run changes nothing; with the real
-      resolv.conf back the forwarders go. On the owner's machine: pending.
+      resolv.conf back the forwarders go. On the owner's Rocky 9 machine, 2026-10-06: a fresh `make all`
+      installed, hardened and verified `rl9-cui-01` - 35 satisfied, 34
+      partial, 0 not satisfied, 28 organizational; 351 checks, 0 failed, the
+      same as the laptop's from-scratch run.
 
 - [x] **7.30 An installer that gave up was reported as a stalled network.**
       With DNS fixed (7.29) the owner's Rocky 9 host got further: the
@@ -1679,8 +1682,8 @@ public when it had not.*
       kickstart, a traceback, a repository or a name not reached), then the
       last lines before the shutdown. It takes a guest's name or any log, so
       it reads a log already left behind. *Proven* on a synthetic halted log
-      and on a real log on the laptop; the cause on the owner's host:
-      pending its output.
+      and on a real log on the laptop; on the owner's host it named the
+      cause, the truncated `install.img` of 7.32.
 
 - [x] **7.31 A finished install was thrown away by an inventory refusal.** On
       the owner's Rocky 9 host the install completed (7.29 held) and the
@@ -1718,7 +1721,10 @@ public when it had not.*
       away after): the kernel line carried
       `inst.stage2=hd:LABEL=Rocky-9-8-x86_64-dvd`, the runtime image was
       read from `sr0` (no `curl_fetch` in the console), and the install went
-      on to fetch and configure its packages from the mirror.
+      on to fetch and configure its packages from the mirror. On the owner's Rocky 9 machine, 2026-10-06: a fresh `make all`
+      installed, hardened and verified `rl9-cui-01` - 35 satisfied, 34
+      partial, 0 not satisfied, 28 organizational; 351 checks, 0 failed, the
+      same as the laptop's from-scratch run.
 
 - [x] **7.33 The operator had to choose the inventory by hand.** The
       kickstart lab's hosts belong in `inventory/kickstart.yml`, but every
@@ -1742,21 +1748,3 @@ public when it had not.*
       BYO `env.sh`, whose shell then resolves `inventory/hosts.yml` (kind
       byo); `tools/lab-ssh.sh rl9-cui-01` reached the hardened kickstart
       host with both factors; `make` resolves `inventory/kickstart.yml`.
-
-- [x] **7.30 An installer that gave up was reported as a stalled network.**
-      With DNS fixed (7.29) the owner's Rocky 9 host got further: the
-      installer stopped after two minutes and halted - `reboot: System
-      halted`, its in-memory root remounted read-only. qemu stays up after a
-      halt, so the watcher saw only silence, waited the 20 minutes, printed
-      the last 25 lines (all systemd shutdown) and suggested network causes.
-      The kickstart ends with `reboot`; a halt or power-off means anaconda
-      gave up, and its reason is earlier in the console. *Fix:*
-      `vm/build-vm.sh` stops as soon as the console shows a halt or
-      power-off, and on any stop prints `tools/install-log.sh`, new: it cuts
-      the console log where the shutdown began and shows the lines before
-      it that name a fault (anaconda's and dracut's errors, a refused
-      kickstart, a traceback, a repository or a name not reached), then the
-      last lines before the shutdown. It takes a guest's name or any log, so
-      it reads a log already left behind. *Proven* on a synthetic halted log
-      and on a real log on the laptop; the cause on the owner's host:
-      pending its output.

@@ -55,17 +55,13 @@ expected.
 **When an install stops.** `vm/build-vm.sh` logs the installer's serial
 console to `/var/log/libvirt/qemu/NAME-serial.log` and watches it. Twenty
 minutes with no new output (`NIST_INSTALL_STALL_MIN`), or two hours in all
-(`NIST_INSTALL_TIMEOUT_MIN`), and it stops with the console's last lines and
+(`NIST_INSTALL_TIMEOUT_MIN`), and it stops with what the installer said and
 the likely causes, leaving the VM up to inspect. An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
 7.30). The inventory is checked before the install starts (7.31); after any
-failure, `make destroy` and `make all` repeat it from nothing. An installer that halts
-itself - anaconda giving up - is caught at once rather than after the
-twenty minutes, and either way the stop shows what the installer said
-(`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
-7.30). The usual cause is a guest
+failure, `make destroy` and `make all` repeat it from nothing. The usual cause of a stall is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
 `FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or
 a proxy. DNS: the guests ask libvirt's dnsmasq, which forwards to the

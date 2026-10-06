@@ -541,7 +541,7 @@ refresh, malware scan, and security errata (`dnf-automatic`).
 | | Proven | Expected to work, not run |
 |---|---|---|
 | **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky Linux 9 minors. **Not RHEL 9** yet: `site.yml` refuses it, since the role and checks name Rocky's GPG key, release file, repository IDs and EFI path (ODP-REVIEW I3) |
-| **Control workstation** | Ubuntu 26.04 (the labs); ubuntu-24.04 in CI for everything that needs no host | Any Linux with the tools below |
+| **Control workstation and lab host** | Ubuntu 26.04 (both labs); Rocky Linux 9 (the kickstart lab from nothing: `make all`, 0 of 351 checks failed, 2026-10-06); ubuntu-24.04 in CI for everything that needs no host | Fedora and other Linux with the tools below (`make host-check` names what is missing) |
 
 **OpenSSH before 9.2** — the 8.7p1 of early Rocky 9 minors — has no
 `ChannelTimeout`. The role then warns, leaves the idle-session settings out,
