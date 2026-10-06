@@ -4,15 +4,12 @@
 #
 # Produces an unattended install with the install-time controls already in
 # place (partition layout, FIPS, minimal package set). The Ansible role is
-# applied afterwards by ../apply.sh.
+# applied afterwards by make apply.
 #
 #   ./build-vm.sh                 build the CUI reference VM
 #   ./build-vm.sh --role log      build the log collector (03.03.05c)
 #   ./build-vm.sh --name rl9-cui-02 --disk-gb 60
 #   ./build-vm.sh --destroy       remove the VM and everything it left on the host
-#   ./build-vm.sh --resume        the install is done but a later step stopped:
-#                                 register, record its key and wait for SSH,
-#                                 without installing again
 #
 # The install is watched, not waited on forever (DEFECTS 7.17): the installer's
 # serial console is logged to /var/log/libvirt/qemu/NAME-serial.log, and if it
@@ -23,8 +20,8 @@
 # the VM up to inspect. NIST_ROCKY_MIRROR replaces the mirror (a local or
 # proxied one). The lab network is created if missing (vm/lab-network.sh).
 #
-# Hosts are added to inventory/hosts.yml rather than replacing it, so a
-# second VM does not evict the first. tools/inventory.py owns that file and
+# Hosts are added to the kickstart lab's inventory, inventory/kickstart.yml,
+# rather than replacing it, so a second VM does not evict the first. tools/inventory.py owns that file and
 # points the CUI hosts at the collector once one exists.
 #
 set -euo pipefail
@@ -55,7 +52,11 @@ VM_NETWORK="nist-lab"
 LIBVIRT_URI="qemu:///system"
 ISO="$ROOT/iso/Rocky-9.8-x86_64-boot.iso"
 SECRETS="$ROOT/.secrets"
-DESTROY=0 RESUME=0
+# Every guest this builds is a kickstart-lab host: its inventory is that
+# lab's own, whoever runs this - make or a person (DEFECTS 7.33).
+# NIST_INVENTORY names another.
+export NIST_INVENTORY="${NIST_INVENTORY:-inventory/kickstart.yml}"
+DESTROY=0
 : "${IMAGE_DIR:=/var/lib/libvirt/images}"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -71,7 +72,6 @@ while [[ $# -gt 0 ]]; do
     --mirror)   MIRROR="$2"; shift 2 ;;
     --iso)      ISO="$2"; shift 2 ;;
     --destroy)  DESTROY=1; shift ;;
-    --resume)   RESUME=1; shift ;;
     -h|--help)  sed -n '2,17p' "$0"; exit 0 ;;
     *)          die "unknown argument: $1" ;;
   esac
@@ -111,7 +111,7 @@ if [[ $DESTROY -eq 1 ]]; then
 fi
 
 # --- preflight ---------------------------------------------------------------
-[[ -f "$ISO" ]] || (( RESUME )) || die "boot ISO not found: $ISO (run make iso)"
+[[ -f "$ISO" ]] || die "boot ISO not found: $ISO (run make iso)"
 [[ -d "$SECRETS" ]] || die "missing $SECRETS (run make secrets)"
 for f in admin_password_hash id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
@@ -126,18 +126,12 @@ command -v swtpm >/dev/null || die "swtpm not installed (needed for the vTPM)"
 # The inventory takes this host before the install, not after it: the check
 # used to come only at registration, twenty minutes in, and a refusal there
 # threw the install away (DEFECTS 7.31).
-"$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed; choose the inventory first - \
-the kickstart lab's own: NIST_INVENTORY=inventory/kickstart.yml (docs/LAB.md, \"Two labs on one workstation\")"
+"$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed: $NIST_INVENTORY is not this lab's - \
+the kickstart lab's own is inventory/kickstart.yml, used unless NIST_INVENTORY names another"
 
-if (( RESUME )); then
-  sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1 || die "--resume: there is no domain $VM_NAME"
-  log "resuming $VM_NAME: installed already, carrying on after the install"
-elif sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
-  die "domain $VM_NAME already exists - '$0 --resume' if its install finished, else '$0 --destroy' first"
+if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
+  die "domain $VM_NAME already exists - run '$0 --destroy' first"
 fi
-
-# --- install (skipped with --resume) -----------------------------------------
-if (( ! RESUME )); then
 
 # qemu runs as an unprivileged user that cannot traverse $HOME, so an ISO kept
 # in the project tree is unreadable to it. Stage it into the libvirt image
@@ -315,10 +309,8 @@ if ! wait "$vi_pid"; then
   die "virt-install failed; the console is in $SERIAL_LOG"
 fi
 rm -f "$VI_OUT"
-log "install finished"
-fi   # --- end of the install, skipped with --resume ---------------------------
 
-log "waiting for the VM to boot"
+log "install finished; waiting for the VM to boot"
 
 # virt-install --wait returns when the domain shuts down after install. The
 # kickstart ends with `reboot`, so the domain should come back up on its own;
@@ -376,11 +368,11 @@ done
 # The forwarding advice only applies when there is no collector yet.
 if [[ "$VM_ROLE" == "log" ]]; then
   NEXT_HINT="
-  This host receives forwarded audit records. ./apply.sh configures both
-  halves: every CUI host forwards, and this one listens. Then 03.03.05c is
-  verified rather than reported MANUAL:
+  This host receives forwarded audit records. make pki && make apply
+  configures both halves: every CUI host forwards, and this one listens.
+  Then 03.03.05c is verified rather than reported MANUAL:
 
-             ./verify.sh --requirement 03.03.05
+             make verify
 "
 elif "$ROOT/tools/inventory.py" show 2>/dev/null | grep -q ' log '; then
   NEXT_HINT=""
@@ -390,8 +382,7 @@ else
   there is nowhere to forward to, so the assessor reports it MANUAL. Build
   the collector and re-apply to close that:
 
-             ./vm/build-vm.sh --role log
-             ./apply.sh
+             make vm-log && make pki && make apply
 "
 fi
 
@@ -407,16 +398,14 @@ cat <<DONE
   VM:        $VM_NAME  (role: $VM_ROLE)
   Address:   $IP
   User:      $ADMIN_USER  (password in .secrets/admin_password)
-  SSH:       bash -c '. lib/ssh-env.sh; ssh -i .secrets/id_rsa \\
-               -o UserKnownHostsFile=.secrets/known_hosts $ADMIN_USER@$IP'
-  Console:   sudo virsh -c $LIBVIRT_URI console $VM_NAME
+  Inventory: $NIST_INVENTORY
+  SSH:       ./tools/lab-ssh.sh $VM_NAME      (both factors, as apply does)
+  Console:   ./tools/lab-console.sh $VM_NAME  (when SSH cannot reach it)
 
-  A plain \`ssh\` works now and stops working after ./apply.sh: 03.05.03
-  requires publickey AND password, and only lib/ssh-env.sh supplies the
-  second factor. Otherwise OpenSSH asks you for $ADMIN_USER's password
-  (it is in .secrets/admin_password).
+  Once hardened, 03.05.03 requires publickey AND password; tools/lab-ssh.sh
+  supplies both, a plain \`ssh\` only the key.
 
-  Next:      ./apply.sh          apply the 800-171r3 overlay
-             ./verify.sh         assess the host against all 97 requirements
+  Next:      make apply          apply the 800-171r3 overlay
+             make verify         assess the host against all 97 requirements
 $NEXT_HINT
 DONE

@@ -1692,11 +1692,13 @@ public when it had not.*
       NAME` answers the question without writing, and `vm/build-vm.sh` asks
       it in preflight, before anything is installed, naming the kickstart
       lab's own inventory (`NIST_INVENTORY=inventory/kickstart.yml`).
-      `build-vm.sh --resume` adopts a guest whose install finished and runs
-      the steps after it - boot, address, registration, host key, SSH - so
-      a late stop costs nothing. *Proven:* `check` refuses a kickstart host
-      against the laptop's BYO inventory and accepts it for
-      `inventory/kickstart.yml`; `--resume` on the owner's host: pending.
+      A `build-vm.sh --resume` to adopt a finished install was added and
+      then removed the same day at the owner's word: changes are proven by
+      repeating fresh installs, and a resume path is code a fresh install
+      never runs; the preflight check is what keeps a late refusal from
+      happening (and 7.33 makes the right inventory the default). *Proven:*
+      `check` refuses a kickstart host against the laptop's BYO inventory
+      and accepts it for `inventory/kickstart.yml`.
 
 - [x] **7.32 The installer's runtime image came from the mirror in one
       unretried transfer.** `tools/install-log.sh` named the halt of 7.30:
@@ -1733,7 +1735,13 @@ public when it had not.*
       lists the host named (`NIST_FOR_HOST`, `lib/inventory-env.sh`);
       `./apply.sh` and `./verify.sh` with no `hosts.yml` but a kickstart
       inventory point at `make apply` / `make verify`. `NIST_INVENTORY`
-      remains an override, not a step.
+      remains an override, not a step. *Proven* on the laptop with nothing
+      exported: the fresh `rl9-cui-09` install (7.32) registered in
+      `inventory/kickstart.yml` and `build-vm.sh --destroy` found it there,
+      leaving no orphan; `byo-lab-init.sh` added the line to the existing
+      BYO `env.sh`, whose shell then resolves `inventory/hosts.yml` (kind
+      byo); `tools/lab-ssh.sh rl9-cui-01` reached the hardened kickstart
+      host with both factors; `make` resolves `inventory/kickstart.yml`.
 
 - [x] **7.30 An installer that gave up was reported as a stalled network.**
       With DNS fixed (7.29) the owner's Rocky 9 host got further: the
