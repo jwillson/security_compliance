@@ -17,7 +17,7 @@
 #    creating the lab network - apply, verify); make vm-log; apply and verify
 #    again so the CUI host forwards to the collector.
 # 3. The BYO lab: vm/byo-lab-init.sh, then tools/release-run.sh byo
-#    --rebuild (builds the three guests from the stock image and cycles them).
+#    (builds the three guests from the stock image and cycles them).
 # Each step's log is in reports/runs/from-scratch-UTC/. Exit 0 only if every
 # step succeeds. Each lab's tools pick its own inventory - the kickstart lab
 # inventory/kickstart.yml, the BYO lab inventory/hosts.yml (docs/LAB.md,
@@ -50,6 +50,6 @@ step teardown "./vm/lab-teardown.sh --yes"
 step kickstart-all "make all"
 step kickstart-collector "make vm-log && make pki && make apply && make verify"
 step byo-init "./vm/byo-lab-init.sh"
-step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo --rebuild"
+step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo"
 say "residue now:"; ./tools/lab-residue.sh | tee -a "$OUT/summary.txt"
 say "PASS: both labs rebuilt from nothing by the scripts"

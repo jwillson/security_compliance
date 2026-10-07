@@ -3,7 +3,7 @@
 # One full hardening cycle on one host, recorded: the sequence every claim in
 # the READMEs rests on (TASKS.md R3), run the same way every time.
 #
-#   tools/harden-cycle.sh HOST [--snapshot LABEL] [--no-probe]
+#   tools/harden-cycle.sh HOST [--no-probe]
 #
 #   1  probe before      tools/probe.sh 6b-evidence (read-only)
 #   2  dry run           apply.sh --check --diff        must not fail
@@ -16,7 +16,6 @@
 #   7  dry run again     expected changed=0 (idempotence)
 #   8  verify            verify.sh --host HOST
 #   9  probe after       and the difference from step 1
-#  10  snapshot          vm/byo-snapshot.sh save HOST LABEL, if asked
 #
 # Everything is written to reports/runs/HOST-UTC/ (gitignored), and a summary
 # is printed at the end. Source the lab's env.sh first. For a BYO inventory,
@@ -37,10 +36,9 @@ cd "$ROOT"
 nist_seed_known_hosts
 
 host=${1:-}; shift || true
-snapshot="" probe=1
+probe=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --snapshot) snapshot=$2; shift 2 ;;
     --no-probe) probe=0; shift ;;
     *) echo "error: unknown option $1" >&2; exit 2 ;;
   esac
@@ -126,11 +124,6 @@ if (( probe )); then
   ev() { sed 's/^[^ ]* *//' "$1" | grep -E '^6b\.'; }
   diff <(ev "$RUN/probe-before.txt") <(ev "$RUN/probe-after.txt") > "$RUN/probe.diff" || true
   say "evidence that changed: $(grep -c '^>' "$RUN/probe.diff") lines (probe.diff)"
-fi
-
-if [[ -n "$snapshot" ]]; then
-  step "snapshot $snapshot" "$RUN/8-snapshot.log" ./vm/byo-snapshot.sh save "$host" "$snapshot" \
-    || say "snapshot failed; see 8-snapshot.log"
 fi
 
 say "done; logs in $RUN"

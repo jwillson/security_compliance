@@ -44,7 +44,8 @@ the stale binding reported, resealed, and the next boot unlocking alone
 (`tools/rehearse-pcr7-recovery.py`); audit records received legible by
 syslog-ng, a certificate-less client refused and a wrong peer name sending
 nothing (`tools/prove-foreign-receiver.sh`, 6.2a); every lockout recovery in
-the RUNBOOK (DEFECTS Phase 3). The history behind these numbers — and the defects each
+the RUNBOOK (DEFECTS Phase 3). The proof scripts named here are retired
+and rerun from commit 1195ace (DEFECTS 7.36). The history behind these numbers — and the defects each
 run found — is `docs/DEFECTS.md`.
 
 What is open is below. Every release blocker is closed; going public is the
@@ -293,13 +294,36 @@ CUI volumes ask for the passphrase at every boot (ODP-REVIEW I5).
       the spare machine through its BMC, then apply and verify.
 - [x] **B3 Passphrase unlock without a TPM (I5).** Done and rehearsed
       (DEFECTS 7.35); on the spare machine with B2.
-- [ ] **B5 The lab onto the socket.** The spike passed (DEFECTS 7.34): move
-      `vm/build-vm.sh`, `vm/byo-guest.sh`, `vm/lab-network.sh` and the
-      rehearsals into the control-plane container - storage pools, the
-      console recorded by `tools/console-record.sh`, no `sudo virsh` - each
-      proven by a fresh `./nist make all`.
-- [ ] **B4 Hardened at first boot.** The ISO also carries the role, and a
-      one-shot unit applies it locally at first boot.
+## Open — container only
+
+Owner decision, 2026-10-07: the tool runs only in the control-plane container;
+host-bound tools are retired. On the host: podman or docker, and for the lab
+KVM, libvirt, qemu, swtpm, UEFI firmware and dnsmasq - nothing else. Each step
+is proven by fresh runs.
+
+- [x] **C1 Retire the one-off proofs.** The rehearsals and probes of closed
+      defects, `vm/siem-container.sh` (only the retired foreign-receiver proof
+      used it) and `vm/byo-snapshot.sh` (the release run rebuilds from the
+      stock image instead of reverting - fresh installs only). They stay in
+      git history; DEFECTS records the last commit that held them.
+- [ ] **C2 Every workstation entry point enters the container itself**
+      (`lib/container.sh`); no `./nist` to type, no native path.
+- [ ] **C3 Secrets in an ansible-vault file per inventory**, the vault password
+      at a hidden prompt (or a password-file script); ansible answers the SSH
+      password factor itself. No exported passwords; environment variables
+      only for automation (CI, rehearsals with throwaway secrets).
+- [ ] **C4 Retire the host tooling:** the lab venv, uv, `make tools`,
+      `tools.sh`, `env.sh`'s exports, the Python checks of `host-check.sh`
+      (left: what libvirt reports - KVM, UEFI with Secure Boot, swtpm, memory).
+- [ ] **C5 The lab onto the socket:** `lab-network`, `build-vm`, `byo-guest`,
+      `lab-teardown`, `lab-residue`, the portability host and run, the release
+      run, `harden-cycle`, `lab-ssh`, `lab-console`/`console.py`,
+      `install-log` - pools for ISOs, images and seeds, the console by
+      `tools/console-record.sh`, no `sudo`. `diagnose-lab-net.sh` alone runs
+      privileged (`sudo`, network namespaces and NAT rules).
+- [ ] **C6 Proof:** fresh `make all` with the collector, the BYO release run
+      (rebuild), the bare-metal rehearsal, the container, network and console
+      tests; `make teardown` leaves nothing.
 
 ## Open — the system owner's authoring
 

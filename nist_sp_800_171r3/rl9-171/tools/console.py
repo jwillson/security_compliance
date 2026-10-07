@@ -126,7 +126,7 @@ class Console:
         """At boot, answer every LUKS passphrase prompt matching `prompt` with
         pw until the login prompt; return how many were answered. For a host
         with no TPM (ODP-REVIEW I5), where each boot asks: nothing to wait
-        out first, unlike tools/rehearse-pcr7-recovery.py's unlock_at_boot."""
+        out first, unlike the PCR 7 rehearsal's unlock_at_boot (retired 2026-10-07; at commit 1195ace, DEFECTS 7.36)."""
         n = 0
         while self.expect([prompt, self.login_prompt], timeout=timeout) == 0:
             self.sendline(pw)

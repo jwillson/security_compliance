@@ -352,7 +352,7 @@ hold the established 6514 socket, auditd records land in the collector's
 per-host directory, and the checks below pass on the side where each is
 meaningful. Proven too against a receiver this toolkit did not build —
 syslog-ng in a container, with a peer name no lab host has
-(`tools/prove-foreign-receiver.sh`): the records arrive legible, a client
+(the foreign-receiver proof, (retired 2026-10-07; at commit 1195ace, DEFECTS 7.36)): the records arrive legible, a client
 without a certificate is refused, and a forwarder told to expect another name
 sends nothing. A production SIEM, with a certificate the lab did not mint, is
 the deployer's to prove the same way. To forward to one, set
@@ -481,9 +481,7 @@ rl9-171/
 │   └── iso.sh                   a bare-metal install ISO, kickstart inside (BMC virtual media)
 ├── vm/                          the lab
 │   ├── build-vm.sh              unattended kickstart VM build (the reference lab)
-│   ├── siem-container.sh        syslog-ng stand-in SIEM, for the foreign-receiver proof
 │   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
-│   ├── byo-snapshot.sh          save/revert a guest: disks, NVRAM, TPM state
 │   ├── byo-lab-init.sh          the BYO lab directory and the pinned Ansible (make tools)
 │   ├── host-check.sh            can this host run the lab, and what to install
 │   ├── lab-network.sh           the lab network: created if missing, removed when unused
@@ -494,12 +492,9 @@ rl9-171/
 │   ├── inventory.py             owns the lab inventories across VMs
 │   ├── lab-pki.sh               lab CA + per-host certificates for TLS forwarding
 │   ├── probe.sh, probes/        evidence probes and self-cleaning experiments run on hosts
-│   ├── assessor-parity.sh       two assessor versions, same hosts, every check compared
 │   ├── harden-cycle.sh          one recorded apply/reboot/apply/verify cycle on a host
 │   ├── release-run.sh           the release gate: a whole lab from clean, every host cycled
 │   ├── rehearse-*.py, *.sh      recovery and behaviour rehearsals (GRUB, PCR 7, the plans)
-│   ├── prove-foreign-receiver.sh  forwarding to a receiver the toolkit did not build
-│   ├── ssh-idle-test.sh         an idle SSH session, timed until sshd closes it
 │   ├── console.py               the guest's serial console, scripted
 │   ├── lab-ssh.sh, lab-console.sh  into a hardened guest: SSH with both factors, or its console
 │   ├── lab-residue.sh, lab-from-scratch.sh  what the labs left; both rebuilt from nothing

@@ -147,24 +147,8 @@ A build writes the cloud-init seed, creates the disks, pins the address in
 `nist-lab`'s DHCP (the MAC is derived from the address, so a rebuild keeps
 it), defines the domain, waits for first boot, adds the host to
 `inventory/hosts.yml` with `tools/inventory.py add --connection byo`, mints
-its TLS certificate into `$NIST_PKI_DIR`, and saves a `fresh` snapshot.
-
-### Snapshots
-
-`virsh snapshot-create-as` refuses a UEFI guest with raw NVRAM (DEFECTS 3.1),
-so a snapshot is a copy of every file the guest's state lives in: each disk,
-the NVRAM, and the vTPM state when there is one. The TPM state matters — a
-LUKS volume bound with clevis `tpm2` cannot be unlocked after a revert that
-restores the disk but not the TPM it was sealed to.
-
-```bash
-./vm/byo-snapshot.sh save   byo-rl9-02 hardened   # shuts down, copies, starts
-./vm/byo-snapshot.sh revert byo-rl9-02 fresh      # stops, copies back, starts, waits for SSH
-./vm/byo-snapshot.sh list
-```
-
-Labels in use: `fresh` (right after cloud-init) and `hardened` (applied,
-rebooted, settled).
+its TLS certificate into `$NIST_PKI_DIR`. There are no snapshots: a clean
+guest is a rebuilt one (DEFECTS 7.36).
 
 ### The lab directory
 
@@ -242,7 +226,8 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   authentication with "A valid context for byoadmin could not be obtained":
   pam_selinux refuses a session from an sshd not running in `sshd_t`, and
   policy does not allow starting one there. Test the real sshd by behaviour
-  instead (`tools/ssh-idle-test.sh`), and read OpenSSH's source for mechanism.
+  instead (the idle-session proof of DEFECTS 6b, retired with the other
+  one-off proofs - 7.36), and read OpenSSH's source for mechanism.
 - **`build-vm.sh` on Ubuntu.** Its firmware presence check knew only the
   Fedora/RHEL paths; Ubuntu ships `/usr/share/OVMF/OVMF_CODE_4M.fd`. Found by
   the first kickstart build on the laptop.
@@ -250,7 +235,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   just the inventory helper: once 03.05.03 is applied every connection needs
   the second factor, which for the kickstart lab only `ssh-env.sh` supplies,
   and a newly built host's key must be seeded into `.secrets/known_hosts`
-  first. `harden-cycle.sh`, `probe.sh` and `stage-pending-kernel.sh` do.
+  first. `harden-cycle.sh` and `probe.sh` do.
 - **A silent firmware delay.** Without a boot order the firmware tried other
   devices first and the kernel started ~10 minutes after the domain did.
   `byo-guest.sh` puts `hd` first, and logs the serial console to
@@ -279,29 +264,12 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/release-run.sh byo\|kickstart` | The release gate (TASKS R3), one lab at a time, at a committed worktree: every guest to a clean state (BYO: revert to `fresh`, or rebuild with `byo-guest.sh` if it has none; kickstart: reinstall with `build-vm.sh`), `harden-cycle.sh` on the collector and then each CUI host, a final verify of every host, and `summary.md` in `reports/runs/release-LAB-COMMIT-UTC/`. A host passes with `changed=0` and no failure beyond its documented retrofit limits. Destroys and rebuilds lab guests. `--reverify RUN_DIR` repeats only the final assessment at a later commit that changed no role, playbook, overlay or lab script (it refuses otherwise), reusing RUN_DIR's cycles. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind DEFECTS 6b.2–6b.6; run it before and after a fix and diff. The `*-experiment` probes are self-cleaning tests of one behaviour (clevis binding and resealing; the role's bind script under `set -e`, against a bind that fails; rsyslog's peer-name check). |
-| `tools/rehearse-pcr7-recovery.py HOST` | The RUNBOOK's recovery when the TPM stops releasing the LUKS keys, for real, under ODP-REVIEW I1: starts the guest with no Secure Boot keys (Secure Boot off, PCR 7 changes), checks the boot waits for the passphrase and types it; verify reports the stale binding and Secure Boot off; the role declines to reseal, puts the key back on disk and completes; the hardened variable store is restored (Secure Boot on) and the host boots by itself; the role finds the original seal valid and removes the key; the next boot unlocks from the TPM alone. Refuses a guest that is not a lab guest or has no `hardened` snapshot before it touches anything. PCR 7 and the TPM event log are saved per boot under `reports/runs/`. Reverts to `hardened` at the end. |
-| `tools/rehearse-grub-edit.py HOST` | 03.10.07 by behaviour: reboots with the console attached, catches the one-second GRUB menu, presses `e`, and checks a username is demanded, a wrong password refused, the right one accepted, and the default entry still boots unattended. The edited entry is never booted. |
-| `tools/rehearse-poam-spreadsheet.sh HOST` | The POA&M register survives a spreadsheet (DEFECTS 7.12): re-saves the host's real register with a byte-order mark, as "CSV UTF-8" does, and requires the generator to keep every ID and a backup, and to refuse a scoped assessment; puts the register back. |
-| `tools/rehearse-luks-rotation.sh HOST` | `rotate-luks-passphrase.yml` by behaviour (DEFECTS 7.14): to a random passphrase and back on a LUKS guest, requiring the second run unchanged, the TPM still unlocking, 03.08.09 verifying, nothing left in `/run`. |
-| `tools/rehearse-log-rotation.sh HOST` | Log rotation by behaviour (DEFECTS 7.9): no configuration error, `logrotate.service` succeeding, and btmp, wtmp and messages recreated 0600 after a forced rotation; then 03.14.08 verifies. |
-| `tools/rehearse-luks-staging.sh HOST` | Where the LUKS key goes while the volumes are created (DEFECTS 7.7): reverts a `--data-disk --tpm` guest to `fresh`, applies 03.08.09 while polling for a key file, and requires it only ever in RAM (`/run/nist-luks-key`), never `/root/.luks-key`, and nothing left after; reverts to `hardened`. |
-| `tools/rehearse-grub-preflight.sh HOST` | 03.10.07's pre-flight by behaviour (DEFECTS 7.6): adds a test boot entry without `--unrestricted` (never the default, never booted), moves the password aside, and requires the role to decline to set it and `pe-07-boot-entries-unrestricted` to fail; restores both whatever happens. |
-| `tools/rehearse-authored-plans.sh HOST` | Authored SSP sections (through `NIST_SSP_DIR`) and an owner's POA&M entry must survive the scheduled assessment service and a second apply; the rehearsal text is removed at the end (DEFECTS 6.6). |
-| `tools/stage-pending-kernel.sh HOST` | Leaves a host as dnf-automatic would: the newest kernel installed and default, an older one running. `apply.sh` must then report "Reboot required: True" with the reason (DEFECTS 6b.10). |
-| `tools/ssh-idle-test.sh HOST [LIMIT] [--output]` | Behaviour, not configuration (03.01.11 / 03.13.09). Silent: a session running `sleep` with no terminal, which sshd's ChannelTimeout must close at the limit (DEFECTS 6b.3). `--output`: a terminal session printing every 10 s with nobody typing, which only logind's StopIdleSessionSec ends, since sshd counts output as activity (issue #9); it may live up to about twice the limit, as logind checks on a timer. TMOUT can end neither. |
-| `vm/siem-container.sh up\|down\|records` | A stand-in SIEM: syslog-ng (not rsyslog) in a rootful podman container at `192.168.171.50:6514`, macvlan on `virbr17`, mutual x509 with the lab CA, certificate for `siem.nist-lab`. Never in an inventory. State and received records in `$NIST_BYO_LAB/siem/`. The workstation cannot reach a macvlan child of its own bridge; the guests can. |
-| `tools/prove-foreign-receiver.sh HOST [--keep]` | Forwarding to a receiver the toolkit did not build (DEFECTS 6.2a): points HOST at the container for the run only (extra vars), then requires the three forwarding checks to PASS, auditd records legible at the receiver, a certificate-less client refused, and nothing delivered when HOST expects a different peer name; points HOST back at its own collector. |
-| `tools/prove-collector-attribution.sh FORWARDER VICTIM COLLECTOR` | Root on a permitted peer sends, with its own TLS certificate, one record whose header claims to be another host; PASS when the collector files it under the peer it came from (DEFECTS 7.5). Leaves the marked line in the store; it says what it is. |
-| `tools/test-workstation-guard.sh [LAB_HOST]` | `site.yml` refuses the control workstation (DEFECTS 7.13): a throwaway inventory naming this machine in both groups must be stopped by both plays' guard with no role task reached (`--check`), and a lab host must pass. |
-| `tools/test-lab-guards.sh [BYO] [KICKSTART]` | The lab tools refuse a domain that is not a lab guest (DEFECTS 7.8): a decoy domain on no network must be refused by every destructive entry point and left intact, real guests must pass, and the authored-plans rehearsal must refuse a host with an authored section. Removes the decoy whatever happens. |
-| `tools/assessor-parity.sh BASE NEW [--host H]` | Run two versions of the assessor back to back against the same hosts and compare every check. How PR #2 was accepted (DEFECTS 6b.1). |
+| *Retired one-off proofs* | The rehearsals and proofs of closed defects - PCR 7 recovery, GRUB edit and pre-flight, LUKS rotation and staging, log rotation, POA&M spreadsheet, authored plans, a pending kernel, the SSH idle timeout, the stand-in SIEM and foreign receiver, collector attribution, the workstation and lab guards, assessor parity - are no longer in the tree (DEFECTS 7.36). Each reruns from the last commit that held it: `git worktree add /tmp/at-1195ace 1195ace`. |
 
-## Rehearsing a guest from its fresh state
+## Rehearsing a guest
 
-```bash
-./vm/byo-snapshot.sh revert byo-rl9-02 fresh
-./tools/harden-cycle.sh byo-rl9-02 --snapshot hardened
-```
+A guest is rehearsed from nothing: `vm/byo-guest.sh destroy NAME` and `build`, then
+`tools/harden-cycle.sh NAME`.
 
 The whole host from nothing is `tools/lab-from-scratch.sh --yes` (*On any
 host*).

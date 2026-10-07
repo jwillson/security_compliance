@@ -374,7 +374,7 @@ checks:
     # "session*": a running session's channel is relabelled session:shell,
     # session:command or session:subsystem:*, and a bare "session" matches
     # none of them - sshd -T shows it set while no session ever idles out.
-    # tools/ssh-idle-test.sh proves the behaviour.
+    # The idle-session proof showed the behaviour (retired 2026-10-07; at commit 1195ace, DEFECTS 7.36).
     command: "sshd -T 2>/dev/null | awk '/^channeltimeout/ {print $2}'"
     expect_output: "session*={odp.session_timeout_seconds}s"
 

@@ -303,7 +303,7 @@
       # its last line - the word the tasks below read - is never printed.
       # Without it a failed bind still printed "bound", crypttab was set to
       # none and the key deleted, and the next boot stopped at the console
-      # (issue #3; tools/probes/bind-script-experiment.sh shows both). The
+      # (issue #3; a probe showed both, (retired 2026-10-07; at commit 1195ace, DEFECTS 7.36)). The
       # TPM is then asked for the key, so a seal it will not release fails
       # too, before anything relies on it.
       # A stale binding (the TPM refuses it since PCR 7 changed) is resealed
@@ -419,7 +419,7 @@
     state: present
   # 03.08.09 too: the path task below runs under that tag and needs the
   # group, so `--tags 03.08.09` on a fresh host failed on "failed to look up
-  # group" (the 1b.7 failure, found by tools/rehearse-luks-staging.sh).
+  # group" (the 1b.7 failure, found by the LUKS staging rehearsal, (retired 2026-10-07; at commit 1195ace, DEFECTS 7.36)).
   tags: ["03.08.02", "03.04.11", "03.08.09"]
 
 - name: "03.08.02 | Restrict the CUI and backup paths to authorized roles"

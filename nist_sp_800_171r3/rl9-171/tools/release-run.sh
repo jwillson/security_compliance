@@ -3,7 +3,7 @@
 # The release gate (TASKS.md R3): one lab, from a clean state, every host
 # cycled at one commit, and a summary the CHANGELOG quotes.
 #
-#   tools/release-run.sh byo [--rebuild]   after: source $NIST_BYO_LAB/env.sh
+#   tools/release-run.sh byo          after: source $NIST_BYO_LAB/env.sh
 #   tools/release-run.sh LAB --reverify RUN_DIR
 #   tools/release-run.sh kickstart    in a fresh shell: source $NIST_BYO_LAB/tools.sh
 #
@@ -11,14 +11,12 @@
 # inventory/hosts.yml - unless NIST_INVENTORY names another (DEFECTS 7.33).
 #
 # Clean state first:
-#   byo        each guest reverted to its `fresh` snapshot - the stock image
-#              just after cloud-init. A guest with none is destroyed and
-#              rebuilt by vm/byo-guest.sh from the shape in BYO_SPEC below,
-#              which saves one. --rebuild rebuilds every guest that way, so
-#              nothing from an older build survives: the release run of
-#              2026-09-26 found byo-rl9-01's hand-made `fresh` snapshot held a
-#              password rotated away the next day (DEFECTS 6b.12). A rebuild
-#              of a guest whose lease a different MAC holds waits it out.
+#   byo        every guest destroyed and rebuilt by vm/byo-guest.sh from the
+#              stock image, in the shape BYO_SPEC gives below - fresh, never
+#              reverted: a reverted snapshot once held a password rotated
+#              away the next day (DEFECTS 6b.12), and snapshots are retired
+#              (7.36). A rebuild of a guest whose lease a different MAC holds
+#              waits it out.
 #   kickstart  both VMs destroyed and reinstalled by vm/build-vm.sh, then
 #              `make pki` (existing certificates are kept: rsyslog checks the
 #              name, and a rebuild keeps the name).
@@ -47,28 +45,26 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT"
-lab=${1:-}; rebuild=0; reverify=""
-[[ "${2:-}" == --rebuild && "$lab" == byo ]] && rebuild=1
+lab=${1:-}; reverify=""
 [[ "${2:-}" == --reverify && -d "${3:-}" ]] && reverify=$(cd "$3" && pwd)
-[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || $rebuild == 1 || -n "$reverify" ]] || { sed -n '3,45p' "$0"; exit 2; }
+[[ "$lab" == byo || "$lab" == kickstart ]] && [[ -z "${2:-}" || -n "$reverify" ]] || { sed -n '3,45p' "$0"; exit 2; }
 if [[ -z "${NIST_INVENTORY:-}" ]]; then
   if [[ "$lab" == kickstart ]]; then export NIST_INVENTORY=inventory/kickstart.yml
   else export NIST_INVENTORY=inventory/hosts.yml; fi
 fi
 . lib/ssh-env.sh || exit 2
-# An empty inventory is right where the run builds the guests itself - BYO
-# with --rebuild, kickstart always: after `make teardown` that is exactly
-# what there is, and refusing it made a rebuild from nothing impossible
-# (DEFECTS 7.25).
+# An empty inventory is right: the run builds the guests itself, and after
+# `make teardown` that is exactly what there is - refusing it made a rebuild
+# from nothing impossible (DEFECTS 7.25).
 case "$lab" in
-  byo)       [[ "$NIST_INVENTORY_KIND" == byo || ( "$NIST_INVENTORY_KIND" == empty && $rebuild == 1 ) ]] \
-               || { echo "error: $NIST_INVENTORY is not a BYO inventory (empty is accepted with --rebuild)" >&2; exit 2; } ;;
+  byo)       [[ "$NIST_INVENTORY_KIND" == byo || "$NIST_INVENTORY_KIND" == empty ]] \
+               || { echo "error: $NIST_INVENTORY is not a BYO inventory" >&2; exit 2; } ;;
   kickstart) [[ "$NIST_INVENTORY_KIND" == lab || "$NIST_INVENTORY_KIND" == empty ]] \
                || { echo "error: $NIST_INVENTORY is not a kickstart inventory" >&2; exit 2; } ;;
 esac
 
-# Hosts, collector first, and how each BYO guest is rebuilt when it has no
-# `fresh` snapshot (docs/LAB.md, BYO guests).
+# Hosts, collector first, and the shape each BYO guest is rebuilt in
+# (docs/LAB.md, BYO guests).
 declare -A BYO_SPEC=(
   [byo-log-01]="--ip 192.168.171.101 --role log"
   [byo-rl9-01]="--ip 192.168.171.141"
@@ -116,14 +112,9 @@ if [[ -n "$reverify" ]]; then
   cp "$reverify"/cycle-*.out "$reverify"/cycle-*.rc "$OUT"/
 elif [[ "$lab" == byo ]]; then
   for h in "${hosts[@]}"; do
-    if (( ! rebuild )) && ./vm/byo-snapshot.sh list "$h" 2>/dev/null | grep -qE "^$h +fresh +qcow2"; then
-      say "$h: revert to fresh"
-      ./vm/byo-snapshot.sh revert "$h" fresh >> "$OUT/clean-$h.log" 2>&1 || die "revert $h failed (clean-$h.log)"
-    else
-      say "$h: $( (( rebuild )) && echo "--rebuild" || echo "no fresh snapshot"); destroy and rebuild (${BYO_SPEC[$h]})"
-      { ./vm/byo-guest.sh destroy "$h" && ./vm/byo-guest.sh build "$h" ${BYO_SPEC[$h]}; } \
-        >> "$OUT/clean-$h.log" 2>&1 || die "rebuild $h failed (clean-$h.log)"
-    fi
+    say "$h: destroy and rebuild from the stock image (${BYO_SPEC[$h]})"
+    { ./vm/byo-guest.sh destroy "$h" && ./vm/byo-guest.sh build "$h" ${BYO_SPEC[$h]}; } \
+      >> "$OUT/clean-$h.log" 2>&1 || die "rebuild $h failed (clean-$h.log)"
   done
 else
   for h in "${hosts[@]}"; do
@@ -152,7 +143,7 @@ fails=0
   echo
   echo "Commit \`$(git rev-parse HEAD)\`, run $(date -u +%Y-%m-%dT%H:%MZ). Clean state:"
   [[ -n "$reverify" ]] && echo "Hardened and cycled at \`$cycled\` ($(basename "$reverify")); only the final assessment is from this commit, which changes no role, playbook or lab script since."
-  [[ "$lab" == byo ]] && echo "BYO guests $( (( rebuild )) && echo "rebuilt from" || echo "reverted to or rebuilt as") stock GenericCloud." \
+  [[ "$lab" == byo ]] && echo "BYO guests rebuilt from stock GenericCloud." \
                       || echo "kickstart VMs reinstalled."
   echo
   echo "| Host | Release, kernel | Satisfied / partial / not / org. | Checks run, failed | changed=0 | Unexpected failures |"

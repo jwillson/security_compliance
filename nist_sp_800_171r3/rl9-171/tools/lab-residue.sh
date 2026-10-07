@@ -9,8 +9,8 @@
 # A lab guest is a libvirt domain attached to the lab network, or one whose
 # name a lab script uses (rl9-*, byo-*). Looked for: the domains and the
 # network; disks, snapshots and staged ISOs in the image directory; UEFI
-# variable stores; TPM state; the logs libvirt keeps per domain; the
-# stand-in SIEM container and its podman network. The operator-side inputs -
+# variable stores; TPM state; the logs libvirt keeps per domain. The
+# operator-side inputs -
 # .secrets/, the BYO lab directory, the downloaded ISO - are not residue and
 # are not listed.
 #
@@ -65,10 +65,6 @@ done
 for f in $(sudo ls "$QLOG" 2>/dev/null); do
   lab_name "$f" || continue; show log "$QLOG/$f" "$(owner_of_file "$f")"
 done
-if command -v podman >/dev/null 2>&1; then
-  sudo podman container exists nist-siem 2>/dev/null && show container nist-siem "vm/siem-container.sh"
-  sudo podman network exists nist-lab-siem 2>/dev/null && show podman-net nist-lab-siem "vm/siem-container.sh"
-fi
 (( orphans )) && echo "== $orphans orphan(s): residue of guests that no longer exist" || echo "== no orphans"
 (( only_orphans && orphans )) && exit 1
 exit 0

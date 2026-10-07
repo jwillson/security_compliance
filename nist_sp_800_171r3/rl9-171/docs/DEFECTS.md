@@ -1835,3 +1835,24 @@ public when it had not.*
       (`rl9-cui-09`, 163-line kickstart, validated) to SSH, registered in
       `inventory/kickstart.yml`, destroyed with no orphan. On the spare
       machine: pending (TASKS B1, B2).
+
+- [x] **7.36 One-off proofs and snapshots retired.** *Owner decision
+      2026-10-07:* the tool runs only in its container, and host-bound tools
+      that only proved closed defects are retired rather than ported. Gone
+      from the tree, each last held by commit `1195ace` (rerun from there:
+      `git worktree add /tmp/at-1195ace 1195ace`): the PCR 7 recovery, GRUB
+      edit and GRUB pre-flight, LUKS rotation and LUKS staging, log rotation,
+      POA&M spreadsheet and authored-plans rehearsals; the pending-kernel
+      stager; the SSH idle-session test; the foreign-receiver and
+      collector-attribution proofs with the stand-in SIEM
+      (`vm/siem-container.sh`, which nothing else used); the workstation and
+      lab guard tests; assessor parity; the probe experiments (`tools/probes/`
+      keeps `6b-evidence`, which every hardening cycle runs, and `hardware`).
+      Their DEFECTS entries stand as the record of what they proved.
+      `vm/byo-snapshot.sh` goes too: a snapshot revert is a shortcut a fresh
+      build does not need, and it alone needed host file access the
+      container cannot have (libvirt has no API for vTPM state). The release
+      run now rebuilds every BYO guest from the stock image (no `--rebuild`
+      flag: always), `byo-guest.sh` saves no `fresh` snapshot, and
+      `harden-cycle.sh` loses `--snapshot`. The rest of the container-only
+      work is TASKS C2-C6.

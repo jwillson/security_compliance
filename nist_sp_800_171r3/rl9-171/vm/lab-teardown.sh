@@ -8,8 +8,7 @@
 # Every lab guest - BYO (vm/byo-guest.sh destroy), kickstart
 # (vm/build-vm.sh --destroy) and portability test host
 # (vm/portability-host.sh destroy, with its network and images) - with its disks, snapshots, UEFI variables, TPM
-# state, DHCP pin, libvirt logs, host key and inventory entry; the stand-in
-# SIEM and its podman network; the lab network; the staged boot ISO and the
+# state, DHCP pin, libvirt logs, host key and inventory entry; the lab network; the staged boot ISO and the
 # cached BYO base image in the libvirt image directory; the per-guest
 # cloud-init seeds in the BYO lab directory. Then tools/lab-residue.sh must
 # find nothing, or this exits 1 saying what is left.
@@ -60,7 +59,6 @@ for g in $guests; do
   fi
 done
 
-[[ -x vm/siem-container.sh ]] && command -v podman >/dev/null 2>&1 && { say "stand-in SIEM"; ./vm/siem-container.sh down || true; }
 say "lab network"; ./vm/lab-network.sh destroy || true
 say "staged ISO, BYO base image, orphaned logs"
 sudo bash -c 'rm -f /var/lib/libvirt/images/Rocky-*-boot.iso /var/lib/libvirt/images/rocky9-genericcloud-base.qcow2

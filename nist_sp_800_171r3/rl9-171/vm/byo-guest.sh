@@ -25,8 +25,8 @@
 #     NAME/USER_password        each --user account's password
 #     NAME/{user-data,meta-data,seed.iso,ip}   this guest's cloud-init seed
 # A build ends by adding the host to inventory/hosts.yml (--connection byo),
-# minting its TLS certificate into $NIST_PKI_DIR when that is set, and saving
-# a "fresh" snapshot (vm/byo-snapshot.sh) to revert to.
+# minting its TLS certificate into $NIST_PKI_DIR when that is set. There is
+# no snapshot to revert to: a clean guest is a rebuilt one (DEFECTS 7.36).
 #
 # Host prerequisites, each checked or fixed here rather than by hand:
 #   libvirt qemu:///system, network nist-lab (created by vm/lab-network.sh),
@@ -321,7 +321,6 @@ cmd_build() {
     (cd "$ROOT" && ./tools/lab-pki.sh -d "$NIST_PKI_DIR" "$name=$ip")
   fi
 
-  "$HERE/byo-snapshot.sh" save "$name" fresh
   cmd_check "$name"
 }
 
