@@ -8,7 +8,7 @@
 #   vm/byo-guest.sh build NAME --ip IP [--role cui|log] [--data-disk GB]
 #                               [--tpm] [--user NAME]...
 #   vm/byo-guest.sh check NAME      read-only: what the guest provides
-#   vm/byo-guest.sh destroy NAME    domain, disks, snapshots, DHCP pin,
+#   vm/byo-guest.sh destroy NAME    domain, disks, seed, DHCP pin,
 #                                   inventory entry, known_hosts lines
 #
 #   --data-disk GB  a second disk carrying volume group vg_sys with all of it
@@ -28,24 +28,29 @@
 # minting its TLS certificate into $NIST_PKI_DIR when that is set. There is
 # no snapshot to revert to: a clean guest is a rebuilt one (DEFECTS 7.36).
 #
-# Host prerequisites, each checked or fixed here rather than by hand:
-#   libvirt qemu:///system, network nist-lab (created by vm/lab-network.sh),
-#   virt-install, qemu-img, a seed image tool (cloud-localds, or xorriso /
-#   genisoimage, which RHEL 9 has and cloud-localds it has not), passwordless sudo for the image
-#   directory; swtpm + swtpm-tools for --tpm.
+# It runs in the control-plane container, through the host's libvirt socket
+# (TASKS C5): the stock image, each guest's disks and its cloud-init seed are
+# volumes in the default pool - uploaded (vol-upload) or created there, the
+# guest disk backed by the image - so no sudo and no host file. The host needs
+# libvirt, the lab network (vm/lab-network.sh) and, for --tpm, swtpm. On
+# Ubuntu the first vTPM can fail at "Need read/write rights on statedir
+# /var/lib/swtpm-localca for user tss": the package leaves that directory to
+# another user, and the fix is the host's (docs/LAB.md):
+#   sudo install -d -m 0750 -o tss -g root /var/lib/swtpm-localca
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
-IMAGES=/var/lib/libvirt/images
-BASE="$IMAGES/rocky9-genericcloud-base.qcow2"
+POOL=default
+BASE_VOL="rocky9-genericcloud-base.qcow2"
 IMAGE_URL="https://dl.rockylinux.org/pub/rocky/9/images/x86_64"
 IMAGE_NAME="Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
 NET=nist-lab
-VIRSH=(virsh -c qemu:///system)
+VIRSH=(virsh -c "$NIST_LIBVIRT_URI")
 SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=5
      -o StrictHostKeyChecking=accept-new)
 
@@ -66,38 +71,22 @@ lab_guest() {
   die "'$name' is not a guest this script built (no $LAB/$name, no nist-lab interface at 52:54:00:17:ab:*); refusing to touch it"
 }
 
-usage() { sed -n '3,33p' "$0"; exit "${1:-0}"; }
-
-# virt-install imports gi from the system Python. A PATH that puts another
-# python3 first (linuxbrew, pyenv, a venv) breaks it with "No module named
-# 'gi'", so it is always run under /usr/bin/python3.
-virt_install() { /usr/bin/python3 /usr/bin/virt-install "$@"; }
+usage() { sed -n '3,37p' "$0"; exit "${1:-0}"; }
 
 guest_ip() { cat "$LAB/$1/ip" 2>/dev/null || die "no $LAB/$1/ip - was $1 built by this script?"; }
 
-# ---------------------------------------------------------------------------
-# swtpm: libvirt runs the emulator as swtpm_user (default tss), but Ubuntu's
-# package leaves the local CA directory owned by another user, so the first
-# vTPM fails at "Need read/write rights on statedir /var/lib/swtpm-localca
-# for user tss". Fixed here, once, and said out loud.
-# ---------------------------------------------------------------------------
-ensure_swtpm() {
-  command -v swtpm_setup >/dev/null || die "--tpm needs swtpm and swtpm-tools"
-  local user dir=/var/lib/swtpm-localca owner
-  # qemu.conf may not exist at all (it does not on this Ubuntu laptop); then
-  # libvirt uses its compiled-in default, tss.
-  user=$(sudo sed -n 's/^[[:space:]]*swtpm_user[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' \
-           /etc/libvirt/qemu.conf 2>/dev/null | tail -1 || true)
-  user=${user:-tss}
-  owner=$(sudo stat -c %U "$dir" 2>/dev/null || echo missing)
-  if [[ "$owner" != "$user" ]]; then
-    say "swtpm: $dir is owned by $owner, libvirt runs swtpm as $user - fixing"
-    sudo install -d -m 0750 -o "$user" -g root "$dir"
-  fi
+volume_exists() { "${VIRSH[@]}" vol-info --pool "$POOL" "$1" >/dev/null 2>&1; }
+
+upload() {   # FILE VOLUME: a file into the pool, replacing any volume of that name
+  local size; size=$(stat -c %s "$1")
+  "${VIRSH[@]}" vol-delete --pool "$POOL" "$2" >/dev/null 2>&1 || true
+  "${VIRSH[@]}" vol-create-as "$POOL" "$2" "$size" --format raw >/dev/null \
+    && "${VIRSH[@]}" vol-upload --pool "$POOL" "$2" "$1" \
+    || die "could not upload $1 into pool $POOL as $2"
 }
 
 ensure_base() {
-  sudo test -f "$BASE" && return 0
+  volume_exists "$BASE_VOL" && return 0
   say "fetching $IMAGE_NAME and verifying its checksum"
   # Self-clearing, as in cmd_check (DEFECTS 6b.14): left set, the trap fires
   # again when a later function returns, where $tmp is undefined.
@@ -106,7 +95,11 @@ ensure_base() {
   curl -fsSL --retry 3 -o "$tmp/CHECKSUM" "$IMAGE_URL/CHECKSUM"
   (cd "$tmp" && grep "($IMAGE_NAME)" CHECKSUM \
      | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c -)
-  sudo install -m 0644 -o libvirt-qemu -g kvm "$tmp/$IMAGE_NAME" "$BASE"
+  say "into pool $POOL as $BASE_VOL"
+  upload "$tmp/$IMAGE_NAME" "$BASE_VOL"
+  # libvirt reads the format from the content on a refresh; the backing
+  # chain below names it qcow2.
+  "${VIRSH[@]}" pool-refresh "$POOL" >/dev/null
 }
 
 ensure_lab() {
@@ -122,23 +115,16 @@ ensure_lab() {
 # rocky9 where the host's libosinfo knows it, else the RHEL 9 entry it is built
 # from: an older osinfo-db does not list Rocky, and virt-install then refuses.
 osinfo_id() {
-  if virt_install --osinfo list 2>/dev/null | grep -qw rocky9; then echo rocky9; else echo rhel9.0; fi
+  if virt-install --osinfo list 2>/dev/null | grep -qw rocky9; then echo rocky9; else echo rhel9.0; fi
 }
 
 # The NoCloud seed: an ISO 9660 volume labelled "cidata" holding user-data and
-# meta-data. cloud-localds makes one; RHEL 9 does not package it, so xorriso
-# or genisoimage make the same thing (DEFECTS 7.21).
+# meta-data, made by the image's xorriso (DEFECTS 7.21: hosts differed in
+# which seed tool they had; the container has the one).
 make_seed() {   # out user-data meta-data
   local out=$1 ud=$2 md=$3 tmp
-  if command -v cloud-localds >/dev/null 2>&1; then cloud-localds "$out" "$ud" "$md"; return; fi
   tmp=$(mktemp -d); cp "$ud" "$tmp/user-data"; cp "$md" "$tmp/meta-data"
-  if command -v xorriso >/dev/null 2>&1; then
-    xorriso -as mkisofs -quiet -output "$out" -volid cidata -joliet -rock "$tmp/user-data" "$tmp/meta-data"
-  elif command -v genisoimage >/dev/null 2>&1; then
-    genisoimage -quiet -output "$out" -volid cidata -joliet -rock "$tmp/user-data" "$tmp/meta-data"
-  else
-    rm -rf "$tmp"; die "no tool to make the cloud-init seed: install cloud-image-utils, xorriso or genisoimage"
-  fi
+  xorriso -as mkisofs -quiet -output "$out" -volid cidata -joliet -rock "$tmp/user-data" "$tmp/meta-data"
   rm -rf "$tmp"
 }
 
@@ -234,7 +220,7 @@ cmd_build() {
   [[ "$role" == cui || "$role" == log ]] || die "--role is cui or log"
   # The host can run a guest (DEFECTS 7.19), and nist-lab exists, created if
   # missing, before anything reads its leases (7.17).
-  "$HERE/host-check.sh" byo >/dev/null || { "$HERE/host-check.sh" byo; die "this host cannot run the BYO lab yet (above)"; }
+  "$HERE/host-check.sh" >/dev/null || { "$HERE/host-check.sh"; die "this host cannot run the lab yet (above)"; }
   "$HERE/lab-network.sh" ensure
   "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && die "$name exists (vm/byo-guest.sh destroy $name first)"
 
@@ -265,18 +251,18 @@ cmd_build() {
   fi
 
   ensure_lab; ensure_base
-  (( tpm )) && ensure_swtpm
   install -d -m 0700 "$dir"; echo "$ip" > "$dir/ip"
   say "cloud-init seed in $dir"
   write_seed "$name" "$dir" "$data_gb" ${users[@]+"${users[@]}"}
 
-  say "disks"
-  sudo qemu-img create -q -f qcow2 -b "$BASE" -F qcow2 "$IMAGES/$name.qcow2" 20G
-  sudo install -m 0644 -o libvirt-qemu -g kvm "$dir/seed.iso" "$IMAGES/$name-seed.iso"
-  local disks=(--disk "path=$IMAGES/$name.qcow2,bus=virtio")
+  say "disks, in pool $POOL"
+  "${VIRSH[@]}" vol-create-as "$POOL" "$name.qcow2" 20G --format qcow2 \
+    --backing-vol "$BASE_VOL" --backing-vol-format qcow2 >/dev/null
+  upload "$dir/seed.iso" "$name-seed.iso"
+  local disks=(--disk "vol=$POOL/$name.qcow2,bus=virtio")
   if (( data_gb > 0 )); then
-    sudo qemu-img create -q -f qcow2 "$IMAGES/$name-data.qcow2" "${data_gb}G"
-    disks+=(--disk "path=$IMAGES/$name-data.qcow2,bus=virtio")
+    "${VIRSH[@]}" vol-create-as "$POOL" "$name-data.qcow2" "${data_gb}G" --format qcow2 >/dev/null
+    disks+=(--disk "vol=$POOL/$name-data.qcow2,bus=virtio")
   fi
 
   say "DHCP pin $mac -> $ip"
@@ -291,24 +277,23 @@ cmd_build() {
   # (DEFECTS 7.19).
   # `hd` first: without a boot order the firmware may try network boot before
   # the disk, which cost ~10 minutes of a silent first boot on 2026-09-25.
-  # The serial console is logged so a slow or failed boot can be read, not
-  # guessed at: /var/log/libvirt/qemu/NAME-serial.log.
+  # A slow or failed boot is read with tools/console-record.sh or
+  # tools/lab-console.sh, through the socket.
   # virt-install gives every UEFI guest an emulated TPM unless told `--tpm
   # none` (virtinst guest.py, _add_default_tpm), so without this a guest built
   # without --tpm had one anyway - and byo-rl9-01 is the no-TPM reference.
   local extra=(--tpm none)
   (( tpm )) && extra=(--tpm "model=tpm-crb,backend.type=emulator,backend.version=2.0")
   say "defining $name"
-  virt_install --connect qemu:///system --name "$name" --memory 3072 --vcpus 2 \
+  virt-install --connect "$NIST_LIBVIRT_URI" --name "$name" --memory 3072 --vcpus 2 \
     --osinfo "$(osinfo_id)" --import --noautoconsole --machine q35 \
     --boot "hd,firmware=efi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
     --features smm.state=on \
     "${disks[@]}" \
-    --disk "path=$IMAGES/$name-seed.iso,device=cdrom,bus=sata" \
+    --disk "vol=$POOL/$name-seed.iso,device=cdrom,bus=sata" \
     --network "network=$NET,mac=$mac,model=virtio" \
     ${extra[@]+"${extra[@]}"} \
-    --graphics none --serial "pty,log.file=/var/log/libvirt/qemu/$name-serial.log" \
-    --console pty,target_type=serial
+    --graphics none --console pty,target_type=serial
 
   ssh-keygen -R "$ip" >/dev/null 2>&1 || true
   wait_ready "$ip"
@@ -357,7 +342,7 @@ cmd_destroy() {
   # Nothing left of it - no domain, no lab directory, no image - is not a
   # refusal but a no-op, so a rebuild after `make teardown` can call this.
   if ! "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && [[ ! -d "$LAB/$name" ]] \
-     && ! sudo test -e "$IMAGES/$name.qcow2"; then
+     && ! volume_exists "$name.qcow2"; then
     [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$name' is not a guest name"
     say "$name does not exist"; return 0
   fi
@@ -372,14 +357,11 @@ cmd_destroy() {
   "${VIRSH[@]}" destroy "$name" >/dev/null 2>&1 || true
   "${VIRSH[@]}" undefine "$name" --nvram --tpm >/dev/null 2>&1 \
     || "${VIRSH[@]}" undefine "$name" --nvram >/dev/null 2>&1 || true
-  # The globs must expand as root: the operator cannot list $IMAGES, so an
-  # unprivileged shell leaves them literal and `rm -f` silently matches
-  # nothing (the first destroy left four snapshot files behind, TPM state
-  # included).
-  sudo bash -c 'cd "$1" && rm -rf -- "$2.qcow2" "$2-data.qcow2" "$2-seed.iso" \
-                  "$2".*.qcow2 "$2"-data.*.qcow2 "$2".*.nvram "$2".*.tpm' _ "$IMAGES" "$name"
-  # And the logs libvirt keeps for it (DEFECTS 7.18).
-  sudo rm -f "/var/log/libvirt/qemu/$name.log" "/var/log/libvirt/qemu/$name-serial.log"
+  # Its volumes, by name in the pool (DEFECTS 7.18). libvirt's own
+  # per-domain log in /var/log/libvirt stays with libvirt, rotated by it.
+  local v; for v in "$name.qcow2" "$name-data.qcow2" "$name-seed.iso"; do
+    "${VIRSH[@]}" vol-delete --pool "$POOL" "$v" >/dev/null 2>&1 || true
+  done
   [[ -n "$mac" && -n "$ip" ]] && "${VIRSH[@]}" net-update "$NET" delete ip-dhcp-host \
     "<host mac='$mac' name='$name' ip='$ip'/>" --live --config >/dev/null 2>&1 || true
   (cd "$ROOT" && ./tools/inventory.py remove "$name") 2>/dev/null || true

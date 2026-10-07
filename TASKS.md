@@ -306,16 +306,16 @@ is proven by fresh runs.
       used it) and `vm/byo-snapshot.sh` (the release run rebuilds from the
       stock image instead of reverting - fresh installs only). They stay in
       git history; DEFECTS records the last commit that held them.
-- [ ] **C2 Every workstation entry point enters the container itself**
+- [x] **C2 Every workstation entry point enters the container itself**
       (`lib/container.sh`); no `./nist` to type, no native path.
-- [ ] **C3 Secrets in an ansible-vault file per inventory**, the vault password
+- [x] **C3 Secrets in an ansible-vault file per inventory**, the vault password
       at a hidden prompt (or a password-file script); ansible answers the SSH
       password factor itself. No exported passwords; environment variables
       only for automation (CI, rehearsals with throwaway secrets).
-- [ ] **C4 Retire the host tooling:** the lab venv, uv, `make tools`,
+- [x] **C4 Retire the host tooling:** the lab venv, uv, `make tools`,
       `tools.sh`, `env.sh`'s exports, the Python checks of `host-check.sh`
       (left: what libvirt reports - KVM, UEFI with Secure Boot, swtpm, memory).
-- [ ] **C5 The lab onto the socket:** `lab-network`, `build-vm`, `byo-guest`,
+- [x] **C5 The lab onto the socket:** `lab-network`, `build-vm`, `byo-guest`,
       `lab-teardown`, `lab-residue`, the portability host and run, the release
       run, `harden-cycle`, `lab-ssh`, `lab-console`/`console.py`,
       `install-log` - pools for ISOs, images and seeds, the console by
@@ -323,7 +323,15 @@ is proven by fresh runs.
       privileged (`sudo`, network namespaces and NAT rules).
 - [ ] **C6 Proof:** fresh `make all` with the collector, the BYO release run
       (rebuild), the bare-metal rehearsal, the container, network and console
-      tests; `make teardown` leaves nothing.
+      tests; `make teardown` leaves nothing. Done so far (DEFECTS 7.37):
+      teardown, the kickstart lab and collector, the BYO directory's
+      migration, the network and console tests. Open: the BYO release run and
+      the bare-metal rehearsal, from the commit.
+- [ ] **C7 A misleading warning on re-apply.** With the CUI and backup
+      volumes already made, `03.08.09 | Warn if there is not enough free
+      space` still says vg_sys has too little room - the space left after
+      making them - though their checks pass. Seen on every re-apply of the
+      kickstart lab, 2026-10-07; not new.
 
 ## Open — the system owner's authoring
 

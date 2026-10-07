@@ -16,28 +16,32 @@ this repository (AGENTS.md, *Doctrine*).
 
 ## On any host
 
-Any Linux host with KVM and memory to spare runs either lab: 8 GiB free for
+Any Linux host with KVM, its hypervisor (libvirt, qemu, swtpm, UEFI
+firmware, dnsmasq), podman or docker, and memory to spare runs either lab -
+the tool itself runs in its container and drives libvirt through its
+socket, as you, without sudo (TASKS C5): 8 GiB free for
 the kickstart pair (4 GiB each while installing), 9 GiB for the three BYO
 guests. Nothing is set up by hand. Every step is a script or a `make` target,
 each does only what is missing, and re-running one is safe.
 
 | To | Run |
 | --- | --- |
-| See whether this host can, and what to install if not | `make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It prints the `apt` or `dnf` command for whatever is missing |
-| Build, harden and assess the kickstart CUI host from a bare clone | `make all`: the host check, the pinned Ansible (`make tools`), the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
+| See whether this host can, and what to install if not | `make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It asks libvirt, and prints the host's `apt`, `dnf` or `pacman` command for whatever is missing |
+| Build, harden and assess the kickstart CUI host from a bare clone | `make all`: the host check, the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
 | Add its collector | `make vm-log && make pki && make apply && make verify` |
-| Build the BYO lab | `vm/byo-lab-init.sh`, `source $NIST_BYO_LAB/env.sh`, then `vm/byo-guest.sh build` per guest (*BYO guests*), or `tools/release-run.sh byo --rebuild`, which builds and cycles all three |
+| Build the BYO lab | `vm/byo-lab-init.sh`, `source $NIST_BYO_LAB/env.sh`, then `vm/byo-guest.sh build` per guest (*BYO guests*), or `tools/release-run.sh byo`, which builds and cycles all three |
 | Get into a hardened guest | `tools/lab-ssh.sh HOST [COMMAND]` (SSH, both factors supplied); `tools/lab-console.sh HOST` (the serial console, when SSH cannot) |
 | See what the labs left on the host | `tools/lab-residue.sh` (`--orphans`: only what belongs to no guest) |
 | Remove | `make destroy`: the kickstart VMs, then `nist-lab` if no guest uses it. `vm/byo-guest.sh destroy NAME`: one BYO guest. `make teardown`: both labs and everything they left, asking first |
 | Prove all of the above | `tools/lab-from-scratch.sh --yes`: teardown, then both labs rebuilt from nothing by these scripts alone |
 
 `make teardown` keeps the inputs a rebuild needs - `.secrets/`, the
-downloaded ISO in `iso/`, and the BYO lab directory's secrets and tooling -
-and removes everything else: guests, disks, snapshots, UEFI variables, TPM
-state, DHCP pins, libvirt logs, host keys, inventory entries, the stand-in
-SIEM, `nist-lab`, the staged ISO and the BYO base image. It finishes by
-running `tools/lab-residue.sh`, and fails if anything is left.
+downloaded ISO in `iso/`, and the BYO lab directory's secrets - and removes
+everything else, through libvirt: guests, their volumes (disks, install and
+seed ISOs, the BYO base image), UEFI variables, TPM state, DHCP pins, host
+keys, inventory entries and `nist-lab` (libvirt keeps its own per-domain
+logs, rotated by it). It finishes by running `tools/lab-residue.sh`, and
+fails if anything is left.
 
 **Into a hardened guest.** After the overlay is applied, SSH wants your key
 *and* the account's password (03.05.03), from a host key already trusted,
@@ -52,8 +56,10 @@ A newer OpenSSH client warns that the connection "is not using a
 post-quantum key exchange": the FIPS policy offers none, and the warning is
 expected.
 
-**When an install stops.** `vm/build-vm.sh` logs the installer's serial
-console to `/var/log/libvirt/qemu/NAME-serial.log` and watches it. Twenty
+**When an install stops.** `vm/build-vm.sh` installs each guest from its own
+install ISO, booted as a CD-ROM - the media a bare-metal machine gets - and
+records the installer's console through libvirt (`tools/console-record.sh`)
+into `reports/runs/build-NAME-UTC/console.log`, and watches it. Twenty
 minutes with no new output (`NIST_INSTALL_STALL_MIN`), or two hours in all
 (`NIST_INSTALL_TIMEOUT_MIN`), and it stops with what the installer said and
 the likely causes, leaving the VM up to inspect. An installer that halts
@@ -124,8 +130,8 @@ second factor.
 
 All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`
 9.8, cloud-init, UEFI with Secure Boot, 3 GB, 2 vCPU); their shapes are
-`BYO_SPEC` in `tools/release-run.sh`, and `release-run.sh byo --rebuild`
-rebuilds all three from the stock image. `byo-rl9-01` and `byo-log-01` were
+`BYO_SPEC` in `tools/release-run.sh`, and `release-run.sh byo` rebuilds all
+three from the stock image, every time. `byo-rl9-01` and `byo-log-01` were
 first built by hand on 2026-09-17 and replaced by script builds on
 2026-09-26, when the release run found the hand-made `byo-rl9-01` snapshot
 unusable (DEFECTS 6b.12). A guest has a TPM only when built with `--tpm`
@@ -158,34 +164,31 @@ Operator-side state lives outside the repository, in
 
 | Path | What |
 | --- | --- |
-| `tools.sh` | The ansible venv and collections on `PATH`, and nothing else — what a kickstart-lab shell sources. |
-| `env.sh` | Source before `apply.sh` / `verify.sh` for the BYO lab (it sources `tools.sh`): the ansible venv, `NIST_BECOME_PASSWORD`, `NIST_GRUB_PASSWORD`, `SSH_ASKPASS` (the second factor once 03.05.03 applies), `NIST_PKI_DIR`. |
+| `env.sh` | Source for the BYO lab. It holds no secret: it names the inventory (`inventory/hosts.yml`), the vault password file (`NIST_VAULT_PASSWORD_FILE`) and `NIST_PKI_DIR`. |
 | `byoadmin_password` | `byoadmin`'s password on every BYO guest: sudo, and the SSH second factor. |
 | `grub_password`, `luks_passphrase` | What the role is given for 03.10.07 and 03.08.09. |
+| `vault_password` | Unlocks `inventory/hosts.vault.yml`, where the tools read the three secrets above from (TASKS C3). |
 | `pki/` | The lab CA and one certificate per host (`tools/lab-pki.sh`). |
 | `NAME/` | One guest's cloud-init seed, its address, and each `--user` account's password. |
-| `askpass.sh`, `wrongpass.sh` | The SSH askpass; a deliberately wrong one for lockout rehearsals. (The scripted serial console used to live here too; it is `tools/console.py` now.) |
-| `venv/`, `collections/` | ansible-core and the collections in `requirements.yml`. |
 
 `vm/byo-lab-init.sh` creates all of it on a new workstation - random
-secrets, the venv at the ansible-core version CI pins, the collections, and
-the four scripts - and only what is missing, so it is safe on a lab in use
-(DEFECTS 7.16). Before it existed these files were made by hand, and nothing
-could rebuild them.
+secrets, the vault, `env.sh` - and only what is missing, so it is safe on a
+lab in use (DEFECTS 7.16). It removes what earlier versions made and the
+container retired: the venv, the collections, `tools.sh` and the askpass
+scripts (TASKS C4).
 
 ### Host problems the scripts handle
 
 Each of these stopped a build once. The fix is in the script, not in a note.
 
 - **`virt-install`: "No module named 'gi'".** `virt-install` needs the system
-  Python's GObject bindings; a `PATH` that puts linuxbrew's (or a venv's)
-  `python3` first breaks it. `byo-guest.sh` always runs it under
-  `/usr/bin/python3`.
+  Python's GObject bindings; a `PATH` that puts a venv's `python3` first
+  breaks it. In the control-plane image the venv is last on `PATH`.
 - **vTPM: "Need read/write rights on statedir /var/lib/swtpm-localca for user
   tss".** libvirt runs swtpm as `tss`; Ubuntu's package leaves the local CA
-  directory owned by `swtpm`. `byo-guest.sh --tpm` re-owns it, once, and says
-  so. `/etc/libvirt/qemu.conf` may not exist; libvirt's default `tss` then
-  applies.
+  directory owned by `swtpm`. It is the host's to fix, once, since the tool no
+  longer touches host files: `sudo install -d -m 0750 -o tss -g root
+  /var/lib/swtpm-localca`.
 - **A pinned address handed to someone else.** dnsmasq will not give a pinned
   address to a new MAC while an unexpired lease holds it for another, and the
   guest silently takes a different address. `byo-guest.sh` derives the MAC
@@ -238,8 +241,8 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   first. `harden-cycle.sh` and `probe.sh` do.
 - **A silent firmware delay.** Without a boot order the firmware tried other
   devices first and the kernel started ~10 minutes after the domain did.
-  `byo-guest.sh` puts `hd` first, and logs the serial console to
-  `/var/log/libvirt/qemu/NAME-serial.log`.
+  `byo-guest.sh` puts `hd` first; a slow boot is read with
+  `tools/console-record.sh` or `tools/lab-console.sh`.
 
 ---
 
@@ -247,11 +250,11 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 
 | Script | Use |
 | --- | --- |
-| `tools/harden-cycle.sh HOST [--snapshot LABEL]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again, optional snapshot. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
-| `vm/host-check.sh [kickstart\|byo\|all]` | Can this host run the lab: KVM, memory, the tools, UEFI firmware with Secure Boot and enrolled keys, libvirt answering; the `apt`/`dnf` command for what is missing. Run by `make vm` and `byo-guest.sh build` (DEFECTS 7.19). |
+| `tools/harden-cycle.sh HOST [--no-probe]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
+| `vm/host-check.sh [kickstart\|byo\|all]` | Can this host run the lab - asked of libvirt through its socket: libvirt as you, KVM, UEFI with Secure Boot, swtpm, the default pool, memory; the host's package command for what is missing (DEFECTS 7.19; TASKS C4). |
 | `vm/lab-network.sh ensure\|destroy\|destroy-if-unused` | `nist-lab` in `qemu:///system`: created only if missing (by both builders), removed only when no guest uses it; warns about forwarding and Docker (DEFECTS 7.17); gives dnsmasq a DNS forwarder when resolv.conf lists none (7.29). `upstream` prints the one it uses. |
 | `vm/lab-teardown.sh [--yes]` | `make teardown`: both labs and everything they left; fails if `lab-residue.sh` still finds anything (DEFECTS 7.18). |
-| `tools/lab-residue.sh [--orphans]` | Read-only: every guest, disk, snapshot, UEFI store, TPM state, log, network and container the labs have on this host, and which are orphans. |
+| `tools/lab-residue.sh [--orphans]` | Read-only, through the libvirt socket: every lab guest, network and pool volume, and which are orphans. UEFI and TPM state go with `undefine --nvram --tpm`; libvirt keeps its own per-domain logs. |
 | `tools/lab-from-scratch.sh --yes` | Teardown, then both labs rebuilt from nothing by the scripts alone, from a bare shell; logs in `reports/runs/from-scratch-UTC/`. |
 | `tools/lab-ssh.sh HOST [COMMAND]` | SSH into a hardened guest with both factors supplied from the inventory and the lab's askpass (DEFECTS 7.20). |
 | `tools/lab-console.sh HOST` | The guest's serial console, naming the account and password file first (DEFECTS 7.20). |
@@ -260,7 +263,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/console-record.sh NAME FILE [SECONDS]` | A guest's serial console, recorded through the libvirt socket across its restarts, in the control-plane container: `virsh console` under util-linux `script` (DEFECTS 7.34). `tools/test-console-record.sh` proves it in minutes on a diskless guest restarted twice. |
 | `tools/spike-container-libvirt.sh [--keep]` | The lab-in-container spike: a fresh install of the real kickstart driven from inside `./nist` through the socket alone - ISO upload, virt-install, SSH, the console recorded - then removed (DEFECTS 7.34). |
 | `tools/rehearse-baremetal.sh [--keep]` | A bare-metal install, rehearsed: `install/iso.sh` builds the ISO, a guest boots it as a plain CD-ROM (UEFI, no TPM, disk known by id), then apply, a reboot that waits for the LUKS passphrase at the console, and verify - as an operator would, with nothing from `.secrets/` (DEFECTS 7.35). |
-| `vm/byo-lab-init.sh` | Create the BYO lab directory on a new workstation: random secrets, the pinned venv and collections, `tools.sh`, `env.sh`, the askpass scripts; only what is missing (DEFECTS 7.16). |
+| `vm/byo-lab-init.sh` | Create the BYO lab directory on a new workstation: random secrets, the lab inventory's vault, `env.sh` (paths only); only what is missing, and it removes what the container retired (DEFECTS 7.16; TASKS C3, C4). |
 | `tools/release-run.sh byo\|kickstart` | The release gate (TASKS R3), one lab at a time, at a committed worktree: every guest to a clean state (BYO: revert to `fresh`, or rebuild with `byo-guest.sh` if it has none; kickstart: reinstall with `build-vm.sh`), `harden-cycle.sh` on the collector and then each CUI host, a final verify of every host, and `summary.md` in `reports/runs/release-LAB-COMMIT-UTC/`. A host passes with `changed=0` and no failure beyond its documented retrofit limits. Destroys and rebuilds lab guests. `--reverify RUN_DIR` repeats only the final assessment at a later commit that changed no role, playbook, overlay or lab script (it refuses otherwise), reusing RUN_DIR's cycles. |
 | `tools/console.py HOST 'cmd' ...` | The guest's serial console, scripted: logs in and runs commands where SSH cannot reach (a locked-out host, boot-time prompts); a module the rehearsals build on. Sends CR line endings and waits for each password prompt before answering, and stops at the first refused authentication — every failure, a cancelled prompt included, counts towards faillock. Needs `pexpect`. |
 | `tools/probe.sh PROBE [HOSTS]` | Run a read-only probe from `tools/probes/` on hosts as root. `6b-evidence` shows the state behind DEFECTS 6b.2–6b.6; run it before and after a fix and diff. The `*-experiment` probes are self-cleaning tests of one behaviour (clevis binding and resealing; the role's bind script under `set -e`, against a bind that fails; rsyslog's peer-name check). |

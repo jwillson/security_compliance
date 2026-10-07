@@ -14,16 +14,20 @@
 #                                   rather than with the kernel check failing
 #
 # NIST_INVENTORY picks the inventory (default inventory/hosts.yml): one per
-# lab, see lib/inventory-env.sh.
+# lab, see lib/inventory-env.sh. Its secrets come from its vault,
+# inventory/NAME.vault.yml (tools/vault.sh); the vault password is asked for
+# once. It runs in the control-plane container, entering it by itself.
 #
 # Any additional arguments are passed through to ansible-playbook.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/container.sh"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 . lib/inventory-env.sh || exit 1
 [[ -f "$NIST_INVENTORY" ]] || {
   echo "error: no inventory at $NIST_INVENTORY." >&2
-  echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
+  echo "  existing host:  ./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo" >&2
+  echo "                  ./tools/vault.sh    (its passwords, encrypted)" >&2
   if [[ -f inventory/kickstart.yml ]]; then
     echo "  the kickstart lab is in inventory/kickstart.yml: make apply / make verify" >&2
   else
@@ -32,12 +36,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
   exit 1
 }
 
-# The role needs these collections; install them on first run.
-if ! ansible-galaxy collection list 2>/dev/null | grep -q 'ansible.posix'; then
-  echo "==> installing required Ansible collections"
-  ansible-galaxy collection install -r requirements.yml
-fi
-
+# The collections the role needs are in the image, at requirements.yml's pins.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/ssh-env.sh"
 nist_seed_known_hosts
 

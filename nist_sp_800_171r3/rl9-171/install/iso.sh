@@ -5,8 +5,9 @@
 # USB stick - and the machine installs itself unattended, wiping the one disk
 # named, then reboots into a host ready for ./apply.sh.
 #
-#   NIST_BECOME_PASSWORD=... install/iso.sh NAME --disk /dev/disk/by-id/ID
+#   install/iso.sh NAME --disk /dev/disk/by-id/ID
 #       [--user cuiadmin] [--key ~/.ssh/id_rsa.pub] [--console tty0|ttyS0|ttyS1]
+#       [--inventory inventory/hosts.yml | --hash-file FILE] [--out FILE]
 #
 # --disk is required and should be a /dev/disk/by-id/ path: the install uses
 # that disk and no other, and on a machine without it, it stops instead of
@@ -14,8 +15,12 @@
 # (`ls -l /dev/disk/by-id/`), or its BMC's storage inventory.
 #
 # The admin account (--user) gets your public key (--key; RSA, which the FIPS
-# policy accepts) and the password in NIST_BECOME_PASSWORD - the same one
-# ./apply.sh then uses for sudo.
+# policy accepts) and the admin password from the inventory's vault
+# (--inventory, default inventory/hosts.yml: its hosts.vault.yml, written by
+# tools/vault.sh) - the password ./apply.sh then uses for sudo and SSH. With
+# no vault it is asked for, without echo; --hash-file gives a crypt hash
+# instead (the kickstart lab's .secrets/admin_password_hash), and
+# NIST_BECOME_PASSWORD is read only for automation.
 #
 # --console is where the installer's screen and, on every later boot, the
 # LUKS passphrase prompt appear (a host with no TPM asks at each boot,
@@ -47,19 +52,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 # The whole of it inside the control-plane image; NIST_* (the password) and
 # ~/.ssh (the key) come along.
-[[ -n "${NIST_IN_CONTAINER:-}" ]] || exec "$ROOT/nist" "$0" "$@"
+. "$ROOT/lib/container.sh"
 cd "$ROOT"
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 name=${1:-}; [[ -n "$name" && "$name" != -* ]] || { sed -n '3,27p' "$0"; exit 2; }; shift
-disk="" user=cuiadmin key="$HOME/.ssh/id_rsa.pub" console=tty0
+disk="" user=cuiadmin key="$HOME/.ssh/id_rsa.pub" console=tty0 inv=inventory/hosts.yml hash_file="" out=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --disk) disk=$2; shift 2 ;;
     --user) user=$2; shift 2 ;;
     --key)  key=$2;  shift 2 ;;
     --console) console=$2; shift 2 ;;
+    --inventory) inv=$2; shift 2 ;;
+    --hash-file) hash_file=$2; shift 2 ;;
+    --out) out=$2; shift 2 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -71,17 +79,35 @@ case "$console" in
 esac
 [[ -n "$disk" ]] || die "--disk is required: the one disk the install wipes, as /dev/disk/by-id/..."
 [[ "$disk" == /dev/disk/by-id/* ]] || echo "warning: --disk $disk is not a /dev/disk/by-id/ path; names like sda can change between boots and machines" >&2
-[[ -n "${NIST_BECOME_PASSWORD:-}" ]] || die "NIST_BECOME_PASSWORD is not set: the admin account's password (and ./apply.sh's sudo password)"
 [[ -f "$key" ]] || die "no public key at $key (--key)"
 [[ "$(awk '{print $1; exit}' "$key")" == ssh-rsa ]] || die "$key is not an RSA key; the FIPS policy refuses others (ssh-keygen -t rsa -b 3072)"
 iso=iso/Rocky-9.8-x86_64-boot.iso
 [[ -f "$iso" ]] || die "$iso missing (make iso)"
-out="iso/${name}-install.iso"
+[[ -n "$out" ]] || out="iso/${name}-install.iso"
 
 work=$(mktemp -d "$ROOT/iso/.baremetal-XXXXXX")
 trap 'rm -rf "$work"' EXIT
 umask 077
-openssl passwd -6 -stdin <<<"$NIST_BECOME_PASSWORD" > "$work/hash"
+# The admin password's crypt hash: given, from the vault, from automation's
+# environment, or asked - never on a command line.
+if [[ -n "$hash_file" ]]; then cp "$hash_file" "$work/hash"
+else
+  vault="${inv%.yml}.vault.yml"
+  if [[ -f "$vault" ]]; then
+    NIST_INVENTORY=$inv . "$ROOT/lib/inventory-env.sh"      # the vault password, once
+    ansible-vault view "$vault" | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["all"]["vars"]["ansible_become_password"], end="")' \
+      | openssl passwd -6 -stdin > "$work/hash"
+    log "admin password from $vault"
+  elif [[ -n "${NIST_BECOME_PASSWORD:-}" ]]; then
+    openssl passwd -6 -stdin <<<"$NIST_BECOME_PASSWORD" > "$work/hash"
+  else
+    [[ -t 0 ]] || die "no vault ($vault), no terminal to ask for the admin password: tools/vault.sh $inv first"
+    IFS= read -rsp "admin password for $name: " pw </dev/tty; echo >&2
+    IFS= read -rsp "again: " pw2 </dev/tty; echo >&2
+    [[ -n "$pw" && "$pw" == "$pw2" ]] || die "empty, or they differ"
+    printf '%s' "$pw" | openssl passwd -6 -stdin > "$work/hash"; unset pw pw2
+  fi
+fi
 "$HERE/render-kickstart.sh" --out "$work/ks.cfg" --name "$name" --disk "$disk" --user "$user" \
   --hash-file "$work/hash" --pubkey-file "$key"
 rm -f "$work/hash"
@@ -114,6 +140,9 @@ bash -c '
 
 mv "$work/out.iso" "$out"; chmod 600 "$out"
 log "wrote $out ($(du -h "$out" | cut -f1)), mode 0600 - it holds the admin password's hash"
+# An operator's next steps; a tool that names --out (vm/build-vm.sh, the
+# rehearsal) takes the ISO on itself.
+[[ "$out" == "iso/${name}-install.iso" ]] || exit 0
 cat <<DONE
 
   1. Attach $out to $name as virtual media (or write it to a USB stick).

@@ -12,6 +12,7 @@
 #   ./verify.sh --requirement 03.05.07  one requirement
 #   ./verify.sh --host rl9-cui-01       one host
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/container.sh"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 HOST_FILTER=""
@@ -33,7 +34,8 @@ done
 . lib/inventory-env.sh || exit 1
 [[ -f "$NIST_INVENTORY" ]] || {
   echo "error: no inventory at $NIST_INVENTORY." >&2
-  echo "  existing host:  cp inventory/hosts.yml.example inventory/hosts.yml && edit" >&2
+  echo "  existing host:  ./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo" >&2
+  echo "                  ./tools/vault.sh    (its passwords, encrypted)" >&2
   if [[ -f inventory/kickstart.yml ]]; then
     echo "  the kickstart lab is in inventory/kickstart.yml: make apply / make verify" >&2
   else

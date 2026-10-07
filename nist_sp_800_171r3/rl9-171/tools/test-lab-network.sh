@@ -17,9 +17,10 @@
 #   tools/test-lab-network.sh
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.." || exit 2
-V=(sudo virsh -c qemu:///system)
+V=(virsh -c "$NIST_LIBVIRT_URI")
 fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
@@ -38,7 +39,7 @@ info=$("${V[@]}" net-info nist-lab-nettest 2>/dev/null)
   && ok "a missing network is defined, started and set to autostart" || bad "rc=$rc: $out"
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 [[ $rc -eq 0 && -z "$(grep '^==>' <<<"$out")" ]] && ok "a second run changes nothing" || bad "second run: rc=$rc: $out"
-if grep -q '^nameserver' /etc/resolv.conf; then
+if grep -q '^nameserver' /host/etc/resolv.conf; then
   [[ -z "$(fwd)" ]] && ok "with nameservers in resolv.conf, no forwarder is added" || bad "forwarders added anyway: $(fwd)"
 fi
 out=$(NIST_RESOLV_CONF="$empty" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
@@ -52,7 +53,7 @@ f=$(fwd)
 out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 [[ $rc -eq 0 && -z "$(grep '^==>' <<<"$out")" ]] && ok "and a second run with them changes nothing" || bad "NIST_LAB_DNS second run: rc=$rc: $out"
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
-if grep -q '^nameserver' /etc/resolv.conf; then
+if grep -q '^nameserver' /host/etc/resolv.conf; then
   [[ $rc -eq 0 && -z "$(fwd)" ]] && ok "with resolv.conf's nameservers back, the forwarders go" || bad "revert: rc=$rc forwarders='$(fwd)': $out"
 fi
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh destroy 2>&1); rc=$?

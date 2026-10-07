@@ -2,12 +2,14 @@
 #
 # What an installer said before it stopped (DEFECTS 7.30). Read-only.
 #
-#   tools/install-log.sh NAME          the lab guest NAME's serial console log,
-#                                      /var/log/libvirt/qemu/NAME-serial.log
+#   tools/install-log.sh NAME          the lab guest NAME's newest install, as
+#                                      vm/build-vm.sh recorded its console:
+#                                      reports/runs/build-NAME-UTC/console.log
 #   tools/install-log.sh FILE          any console log
 #
-# vm/build-vm.sh logs the installer's serial console and calls this when an
-# install stops. The cause is rarely in the last lines: when anaconda gives
+# vm/build-vm.sh records the installer's console (tools/console-record.sh)
+# and calls this when an install stops. It runs in the control-plane
+# container. The cause is rarely in the last lines: when anaconda gives
 # up, the console ends in a page of systemd shutdown messages. So the log is
 # cut where the shutdown began, and from what came before it this prints the
 # lines that name a fault - anaconda's and dracut's errors, a kickstart it
@@ -15,11 +17,15 @@
 # last lines before the shutdown, for context. Terminal escapes are removed.
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 arg=${1:-}
 [[ -n "$arg" ]] || { sed -n '3,15p' "$0"; exit 2; }
 log=$arg
-[[ "$arg" == */* || -f "$arg" ]] || log="/var/log/libvirt/qemu/${arg}-serial.log"
-text=$(sudo cat "$log" 2>/dev/null) || { echo "error: cannot read $log" >&2; exit 1; }
+if [[ "$arg" != */* && ! -f "$arg" ]]; then
+  log=$(ls -td "$ROOT"/reports/runs/build-"$arg"-*/ 2>/dev/null | head -1)console.log
+fi
+text=$(cat "$log" 2>/dev/null) || { echo "error: cannot read $log (no recorded install of $arg?)" >&2; exit 1; }
 text=$(sed -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' -e 's/\x1b[()][A-Za-z0-9]//g' -e 's/\r//g' <<<"$text")
 
 # Where the shutdown began: the first of these, else the end of the log.

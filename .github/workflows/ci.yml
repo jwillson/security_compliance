@@ -70,10 +70,10 @@ jobs:
         run: shellcheck -S error $(git ls-files '*.sh') apply.sh verify.sh
 
   host-python:
-    # Python 3.9 is Rocky/RHEL 9's /usr/bin/python3: the assessor, the POA&M
-    # merge and the check commands run under it on every hardened host, and
-    # every workstation script does on a RHEL 9 control host (DEFECTS 7.21).
-    # CI tested only 3.12, so code that parses only on 3.12 went unnoticed
+    # Python 3.9 is Rocky 9's /usr/bin/python3: the assessor, the POA&M merge
+    # and the check commands run under it on every hardened host. (The
+    # workstation side runs only in the control-plane image, TASKS C2.) CI
+    # tested only 3.12, so code that parses only on 3.12 went unnoticed
     # (issue #14).
     runs-on: ubuntu-24.04
     timeout-minutes: 10

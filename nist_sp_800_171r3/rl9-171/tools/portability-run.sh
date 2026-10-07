@@ -7,10 +7,11 @@
 #   tools/portability-run.sh rocky9|fedora [--keep]
 #
 #   1. copy the repository in, at the committed HEAD (git archive)
-#   2. vm/host-check.sh kickstart, then do what it says: its `dnf install`
-#      line, the libvirt sockets it names, uv's installer; then it must pass
-#   3. make all - tools, catalog, secrets, ISO, the CUI VM (nested), apply,
-#      verify
+#   2. install podman - the tool runs only in its container (TASKS C2) - then
+#      vm/host-check.sh, and do what it says: the hypervisor packages it
+#      names, libvirt's sockets and group, the default pool; then it must pass
+#   3. ./nist make all - catalog, secrets, ISO, the CUI VM (nested), apply,
+#      verify - with nothing of the project on the test host but podman
 #   4. tools/lab-ssh.sh into the hardened guest
 #   5. vm/lab-teardown.sh --yes, which must leave nothing
 #   6. the test host is destroyed (--keep leaves it to inspect)
@@ -19,6 +20,7 @@
 # changes: the result is for a commit.
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
@@ -38,7 +40,7 @@ finish() {
 }
 
 say "test host ptest-$distro"
-if ! sudo virsh -c qemu:///system dominfo "ptest-$distro" >/dev/null 2>&1; then
+if ! virsh -c "$NIST_LIBVIRT_URI" dominfo "ptest-$distro" >/dev/null 2>&1; then
   ./vm/portability-host.sh build "$distro" > "$OUT/host.log" 2>&1 || { bad "the test host did not build (host.log)"; finish; }
 fi
 ip=$(./vm/portability-host.sh address "$distro")
@@ -52,20 +54,22 @@ git -C "$(git rev-parse --show-toplevel)" archive --format=tar HEAD \
       'rm -rf ~/sc && mkdir ~/sc && tar -x -C ~/sc' || { bad "the copy failed"; finish; }
 D='cd ~/sc/nist_sp_800_171r3/rl9-171'
 
-say "host check, and what it says to do"
+say "podman, then the host check, and what it says to do"
+R 'sudo dnf -y -q install podman' > "$OUT/install.log" 2>&1 || { bad "podman did not install (install.log)"; finish; }
 R "$D && ./vm/host-check.sh kickstart" > "$OUT/host-check-1.log" 2>&1
 install=$(sed -n 's/^== install: //p' "$OUT/host-check-1.log")
-[[ -n "$install" ]] && { echo "    $install" | tee -a "$OUT/summary.txt"; R "$install" >> "$OUT/install.log" 2>&1 || bad "its install command failed (install.log)"; }
-# With the packages in, it names the libvirt services to start, if any.
-R "$D && ./vm/host-check.sh kickstart" > "$OUT/host-check-2.log" 2>&1
-start=$(sed -n 's/.*then start it: //p' "$OUT/host-check-2.log" | head -1)
-[[ -n "$start" ]] && { echo "    $start" | tee -a "$OUT/summary.txt"; R "$start" >> "$OUT/install.log" 2>&1; }
-grep -q '^  FAIL  uv not found' "$OUT/host-check-2.log" && { echo "    uv's installer" | tee -a "$OUT/summary.txt"; R 'curl -LsSf https://astral.sh/uv/install.sh | sh' >> "$OUT/install.log" 2>&1; }
-R "$D && ./vm/host-check.sh kickstart" > "$OUT/host-check-3.log" 2>&1 \
-  && ok "the host check passes after doing what it said" || { bad "the host check still fails (host-check-3.log)"; finish; }
+[[ -n "$install" ]] && { echo "    $install" | tee -a "$OUT/summary.txt"; R "${install/install /install -y }" >> "$OUT/install.log" 2>&1 || bad "its install command failed (install.log)"; }
+# What host-check names for libvirt itself: the per-driver sockets (RHEL and
+# Fedora), the libvirt group, the default pool - each an operator's step.
+R 'sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket virtproxyd.socket
+   sudo usermod -aG libvirt ptest
+   sudo virsh pool-info default >/dev/null 2>&1 || { sudo virsh pool-define-as default dir --target /var/lib/libvirt/images      && sudo virsh pool-build default && sudo virsh pool-autostart default && sudo virsh pool-start default; }' >> "$OUT/install.log" 2>&1
+# A new SSH session, so the libvirt group is in force.
+R "$D && ./vm/host-check.sh kickstart" > "$OUT/host-check-2.log" 2>&1 \
+  && ok "the host check passes after doing what it said" || { bad "the host check still fails (host-check-2.log)"; finish; }
 
-say "make all (nested: expect an hour or more)"
-R "$D && make all" > "$OUT/make-all.log" 2>&1 && ok "make all" \
+say "./nist make all (nested: expect an hour or more)"
+R "$D && ./nist make all" > "$OUT/make-all.log" 2>&1 && ok "make all" \
   || { bad "make all (make-all.log)"; tail -20 "$OUT/make-all.log" | sed 's/^/    /'; finish; }
 grep -E 'requirements assessed|satisfied|not satisfied' "$OUT/make-all.log" | tail -5 | sed 's/^/    /' | tee -a "$OUT/summary.txt"
 

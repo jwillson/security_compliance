@@ -11,22 +11,28 @@
 #
 #   tools/test-console-record.sh
 #
-# Needs the boot ISO in the default pool (make vm stages it, or the spike
-# uploads it) and the lab network.
+# Needs the boot ISO (make iso), uploaded into the default pool as a test
+# volume and deleted after. Runs in the control-plane container.
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
-NAME=rl9-rectest-01 URI=qemu:///system ISO=/var/lib/libvirt/images/Rocky-9.8-x86_64-boot.iso
+NAME=rl9-rectest-01 VOL=rl9-rectest-01-boot.iso
 OUT="$ROOT/reports/runs/test-console-record-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
-V() { ./nist virsh -c "$URI" "$@"; }
-V vol-path --pool default "$(basename "$ISO")" >/dev/null 2>&1 || { echo "error: $ISO is not in the default pool (make vm stages it)" >&2; exit 2; }
+V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
+[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || { echo "error: no iso/Rocky-9.8-x86_64-boot.iso (make iso)" >&2; exit 2; }
 V dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - remove it first" >&2; exit 2; }
 
+size=$(stat -c %s iso/Rocky-9.8-x86_64-boot.iso)
+V vol-delete --pool default "$VOL" >/dev/null 2>&1
+V vol-create-as default "$VOL" "$size" --format raw >/dev/null && V vol-upload --pool default "$VOL" iso/Rocky-9.8-x86_64-boot.iso \
+  || { echo "error: could not upload the boot ISO into pool default" >&2; exit 2; }
+ISO=$(V vol-path --pool default "$VOL")
 cat > "$OUT/domain.xml" <<XML
 <domain type='kvm'>
   <name>$NAME</name>
@@ -44,7 +50,7 @@ XML
 cleanup() {
   kill "${rec:-}" 2>/dev/null; wait "${rec:-}" 2>/dev/null
   V destroy "$NAME" >/dev/null 2>&1; V undefine "$NAME" --nvram >/dev/null 2>&1
-  sudo rm -f "/var/log/libvirt/qemu/$NAME.log"
+  V vol-delete --pool default "$VOL" >/dev/null 2>&1
   if ./tools/lab-residue.sh --orphans > "$OUT/residue.txt" 2>&1; then ok "nothing left behind"
   else bad "residue: $(grep orphan "$OUT/residue.txt" | head -3 | tr '\n' ' ')"; fi
   echo "==> $([ $fails -eq 0 ] && echo PASS || echo FAIL): console recording ($fails failed) - $OUT"

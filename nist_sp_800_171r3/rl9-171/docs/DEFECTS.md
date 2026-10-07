@@ -1856,3 +1856,50 @@ public when it had not.*
       flag: always), `byo-guest.sh` saves no `fresh` snapshot, and
       `harden-cycle.sh` loses `--snapshot`. The rest of the container-only
       work is TASKS C2-C6.
+
+- [x] **7.37 The tool ran on the host.** *Owner decision 2026-10-07:* the tool
+      runs only in its container; the host needs podman or docker and, for
+      the lab, the hypervisor - nothing else (TASKS C2-C5). Every workstation
+      entry point enters the control-plane image by itself: one line,
+      `lib/container.sh` (and the same for the Python tools; the Makefile
+      re-runs any target through `./nist` - only `make report`, which opens a
+      file in the host's browser, stays outside). *Secrets (C3):* an
+      ansible-vault file per inventory, `inventory/NAME.vault.yml`, written by
+      `tools/vault.sh` (asked without echo, or `--from DIR` for automation)
+      and read as a second inventory source; the vault password asked once
+      per run and kept in the container's own `/dev/shm`, or named by
+      `NIST_VAULT_PASSWORD_FILE`. Ansible answers sudo and the SSH password
+      factor itself (`ansible_password`, handed to ssh through shared
+      memory); the askpass scripts and every exported password are gone, and
+      `tools/inventory.py tidy` migrates inventories that carried the old
+      environment lookups. *Host tooling retired (C4):* the lab venv, uv,
+      `make tools`, `tools.sh`, `env.sh`'s secrets (it now names paths only);
+      `vm/host-check.sh` asks libvirt (KVM, Secure Boot firmware, swtpm, the
+      pool, memory) and names the host's packages. *The lab onto the socket
+      (C5):* no `sudo` in a workstation script - ISOs, base images, seeds and
+      disks are pool volumes (`vol-upload`, backing volumes, `vol-clone`),
+      consoles are recorded by `tools/console-record.sh`, residue and
+      teardown work through the API (a directory volume - the retired
+      snapshot tool's TPM state - is emptied by making it a temporary pool).
+      `vm/build-vm.sh` now installs a guest from its own install ISO,
+      `install/iso.sh`'s, booted as a CD-ROM: the media a bare-metal machine
+      gets, ejected and deleted after (it holds the password hash). The one
+      privileged tool is `sudo tools/diagnose-lab-net.sh` (`NIST_PRIVILEGED`,
+      a privileged container for network namespaces and NAT rules). Found on
+      the way: an `awk` that exits at its first match, reading a virsh
+      listing under `pipefail`, let virsh die of SIGPIPE writing the listing's
+      last line, and `set -e` ended `build-vm.sh` without a word - the guest
+      installed, never registered; every such awk now reads to the end. And
+      `./nist` mounts the host's own resolv.conf, os-release and resolver
+      files under `/host`, since the container's are podman's. libvirt's own
+      per-domain logs in `/var/log/libvirt/qemu` are out of the container's
+      reach and stay with libvirt, which rotates them. *Proven:* host-check,
+      the lab-network test (12) and the console-recording test in the
+      container; a fresh `vm/build-vm.sh` install through the socket to SSH,
+      its ISO deleted; `tools/lab-from-scratch.sh`: teardown left nothing,
+      `make all` built and hardened the kickstart CUI host (35/34/0/28, 0 of
+      351 failed) and the collector (36/33/0/28, 0 of 351), and
+      `byo-lab-init.sh` migrated the BYO lab directory (vault created; venv,
+      collections, tools.sh and askpass removed). The BYO release run, which
+      refuses an uncommitted tree, and the bare-metal rehearsal through the
+      vault follow from this commit (TASKS C6).

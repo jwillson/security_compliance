@@ -22,12 +22,11 @@
 # never read let the serial buffer fill, and the guest's kernel froze.
 #
 set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -n "${NIST_IN_CONTAINER:-}" ]] || exec "$HERE/../nist" "$0" "$@"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 name=${1:?usage: tools/console-record.sh NAME FILE [SECONDS]} file=${2:?usage: tools/console-record.sh NAME FILE [SECONDS]}
 end=$(( SECONDS + ${3:-7200} ))
-uri=${NIST_LIBVIRT_URI:-qemu:///system}
-domid() { virsh -c "$uri" domid "$name" 2>/dev/null | awk 'NF {print $1; exit}'; }
+uri=$NIST_LIBVIRT_URI
+domid() { virsh -c "$uri" domid "$name" 2>/dev/null | awk 'NF && !f {print $1; f=1}'; }
 note() { echo "$(date -u +%T) $*" >&2; }
 # A session, children first: SIGKILL to `script` alone left its virsh behind,
 # still holding the console, and the next session's attach hung on it.

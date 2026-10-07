@@ -1,63 +1,66 @@
 #!/usr/bin/env bash
 #
-# Build the Rocky Linux 9 CUI reference VM from the kickstart.
-#
-# Produces an unattended install with the install-time controls already in
-# place (partition layout, FIPS, minimal package set). The Ansible role is
+# Build a kickstart-lab guest: the Rocky Linux 9 CUI reference VM, or the log
+# collector. Installed exactly as a bare-metal machine is - from its own
+# install ISO (install/iso.sh), booted as a plain CD-ROM - so the lab proves
+# the media an operator puts on a BMC (TASKS C5). The install-time controls
+# come with it (partition layout, FIPS, minimal package set); the role is
 # applied afterwards by make apply.
 #
 #   ./build-vm.sh                 build the CUI reference VM
 #   ./build-vm.sh --role log      build the log collector (03.03.05c)
 #   ./build-vm.sh --name rl9-cui-02 --disk-gb 60
-#   ./build-vm.sh --destroy       remove the VM and everything it left on the host
+#   ./build-vm.sh --destroy       remove the VM and everything it left in libvirt
 #
-# The install is watched, not waited on forever (DEFECTS 7.17): the installer's
-# serial console is logged to /var/log/libvirt/qemu/NAME-serial.log, and if it
-# prints nothing new for NIST_INSTALL_STALL_MIN minutes (default 20) - the
-# installer stopped at a prompt, usually because the guest cannot reach the
-# mirror - or the install passes NIST_INSTALL_TIMEOUT_MIN (default 120), the
-# build stops with the console's last lines and the likely causes, and leaves
-# the VM up to inspect. NIST_ROCKY_MIRROR replaces the mirror (a local or
-# proxied one). The lab network is created if missing (vm/lab-network.sh).
+# It runs in the control-plane container, through the host's libvirt socket:
+# the ISO goes into the default pool (vol-upload), the disk is a pool volume
+# with a serial the kickstart names it by (/dev/disk/by-id/virtio-NAME), and
+# the console is recorded by tools/console-record.sh - no sudo, no host file.
+# The ISO carries the admin password's hash, so it is ejected and its volume
+# deleted once the guest has installed.
+#
+# The install is watched, not waited on forever (DEFECTS 7.17): if the
+# console prints nothing new for NIST_INSTALL_STALL_MIN minutes (default 20),
+# or the installer halts itself (7.30), or the install passes
+# NIST_INSTALL_TIMEOUT_MIN (default 120), the build stops with what the
+# installer said (tools/install-log.sh) and leaves the VM up to inspect.
+# NIST_ROCKY_MIRROR replaces the mirror. The lab network is created if
+# missing (vm/lab-network.sh).
 #
 # Hosts are added to the kickstart lab's inventory, inventory/kickstart.yml,
-# rather than replacing it, so a second VM does not evict the first. tools/inventory.py owns that file and
-# points the CUI hosts at the collector once one exists.
+# rather than replacing it, so a second VM does not evict the first.
+# tools/inventory.py owns that file and points the CUI hosts at the
+# collector once one exists.
 #
 set -euo pipefail
-
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+cd "$ROOT"
 
 VM_NAME=""
 VM_ROLE="cui"
 # Install-time memory, not steady-state. A collector needs far less RAM than
-# this to run, but the Rocky 9 network installer does not: it unpacks a large
-# initrd and the stage-2 squashfs into RAM before it writes anything. Asking
-# for less makes virt-install override it up to its computed minimum (3072),
-# and at that minimum the install hung at firmware with an idle CPU, zero
+# this to run, but the Rocky 9 installer does not: it unpacks a large initrd
+# and the stage-2 squashfs into RAM before it writes anything. At virt-install's
+# computed minimum (3072) the install hung at firmware with an idle CPU, zero
 # disk writes and a silent serial console. 4096 is the value that installs.
 # A collector is trimmed back to VM_RUNTIME_RAM_MB once the install is done.
 VM_RAM_MB=4096
-# Steady-state allocation for a collector, applied after the install. It only
-# receives and stores records; holding the installer's footprint for the life
-# of the guest costs host RAM for nothing. maxmem is left alone, so `virsh
-# setmem` can raise it again without redefining the domain.
+# Steady-state allocation for a collector, applied after the install. maxmem
+# is left alone, so `virsh setmem` can raise it again.
 VM_RUNTIME_RAM_MB=2048
 VM_VCPUS=2
 VM_DISK_GB=40
-MIRROR="${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}"
 ADMIN_USER="cuiadmin"
 VM_NETWORK="nist-lab"
-LIBVIRT_URI="qemu:///system"
-ISO="$ROOT/iso/Rocky-9.8-x86_64-boot.iso"
+POOL=default
 SECRETS="$ROOT/.secrets"
 # Every guest this builds is a kickstart-lab host: its inventory is that
 # lab's own, whoever runs this - make or a person (DEFECTS 7.33).
-# NIST_INVENTORY names another.
 export NIST_INVENTORY="${NIST_INVENTORY:-inventory/kickstart.yml}"
 DESTROY=0
-: "${IMAGE_DIR:=/var/lib/libvirt/images}"
+V=(virsh -c "$NIST_LIBVIRT_URI")
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -69,10 +72,9 @@ while [[ $# -gt 0 ]]; do
     --ram-mb)   VM_RAM_MB="$2"; shift 2 ;;
     --vcpus)    VM_VCPUS="$2"; shift 2 ;;
     --disk-gb)  VM_DISK_GB="$2"; shift 2 ;;
-    --mirror)   MIRROR="$2"; shift 2 ;;
-    --iso)      ISO="$2"; shift 2 ;;
+    --mirror)   export NIST_ROCKY_MIRROR="$2"; shift 2 ;;
     --destroy)  DESTROY=1; shift ;;
-    -h|--help)  sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,33p' "$0"; exit 0 ;;
     *)          die "unknown argument: $1" ;;
   esac
 done
@@ -82,28 +84,29 @@ case "$VM_ROLE" in
   log) : "${VM_NAME:=rl9-log-01}" ;;
   *)   die "unknown role: $VM_ROLE (expected cui or log)" ;;
 esac
-
-DISK_PATH="$IMAGE_DIR/${VM_NAME}.qcow2"
+[[ "$VM_NAME" =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] || die "'$VM_NAME' is not a guest name (letters, digits, hyphens; 20 at most - it is the disk's serial)"
+ISO_VOL="$VM_NAME-install.iso"
 
 if [[ $DESTROY -eq 1 ]]; then
   # Only a lab guest: a domain attached to nist-lab, or one already gone (its
-  # disk and inventory entry are still cleaned up). `--name` took any libvirt
-  # domain - a typo, a personal VM - and removed it with all its storage
-  # (issue #6).
-  [[ "$VM_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$VM_NAME' is not a guest name (letters, digits, hyphens)"
-  if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1 &&
-     ! sudo virsh -c "$LIBVIRT_URI" domiflist "$VM_NAME" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}'; then
+  # inventory entry and host key are still cleaned up). `--name` took any
+  # libvirt domain - a typo, a personal VM - and removed it with all its
+  # storage (issue #6).
+  if "${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 &&
+     ! "${V[@]}" domiflist "$VM_NAME" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}'; then
     die "'$VM_NAME' is not attached to nist-lab, so it is not a lab guest; refusing to destroy it"
   fi
   log "destroying $VM_NAME"
-  # Everything the guest left on the host, so nothing outlives it (DEFECTS
-  # 7.18): the domain, its disk, UEFI variables and TPM state, the logs
-  # libvirt keeps for it, its host key and its inventory entry.
+  # Everything the guest has in libvirt (DEFECTS 7.18): the domain, its disk
+  # and install ISO volumes, UEFI variables and TPM state; then its host key
+  # and inventory entry. (libvirt's own per-domain log in /var/log/libvirt
+  # stays with libvirt, rotated by it.)
   ip=$("$ROOT/tools/inventory.py" show 2>/dev/null | awk -v n="$VM_NAME" '$1==n {print $2}')
-  sudo virsh -c "$LIBVIRT_URI" destroy "$VM_NAME" 2>/dev/null || true
-  sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --tpm --remove-all-storage 2>/dev/null \
-    || sudo virsh -c "$LIBVIRT_URI" undefine "$VM_NAME" --nvram --remove-all-storage 2>/dev/null || true
-  sudo rm -f "$DISK_PATH" "/var/log/libvirt/qemu/$VM_NAME.log" "/var/log/libvirt/qemu/$VM_NAME-serial.log"
+  "${V[@]}" destroy "$VM_NAME" >/dev/null 2>&1 || true
+  "${V[@]}" undefine "$VM_NAME" --nvram --tpm --remove-all-storage >/dev/null 2>&1 \
+    || "${V[@]}" undefine "$VM_NAME" --nvram --remove-all-storage >/dev/null 2>&1 || true
+  "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1 || true
+  "${V[@]}" vol-delete --pool "$POOL" "$ISO_VOL" >/dev/null 2>&1 || true
   [[ -n "$ip" && -f "$SECRETS/known_hosts" ]] && ssh-keygen -R "$ip" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
   "$ROOT/tools/inventory.py" remove "$VM_NAME" >/dev/null 2>&1 || true
   log "destroyed"
@@ -111,150 +114,63 @@ if [[ $DESTROY -eq 1 ]]; then
 fi
 
 # --- preflight ---------------------------------------------------------------
-[[ -f "$ISO" ]] || die "boot ISO not found: $ISO (run make iso)"
 [[ -d "$SECRETS" ]] || die "missing $SECRETS (run make secrets)"
-for f in admin_password_hash id_rsa.pub; do
+for f in admin_password_hash id_rsa id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
 done
-command -v virt-install >/dev/null || die "virt-install not installed"
-command -v swtpm >/dev/null || die "swtpm not installed (needed for the vTPM)"
+[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.8-x86_64-boot.iso (run make iso)"
 # The lab network: nothing created it on a new host, so the build failed or
-# hung there (DEFECTS 7.17). Defined in qemu:///system - where virt-install
-# below looks - only if missing; never torn down here.
+# hung there (DEFECTS 7.17). Only what is missing is done.
 "$HERE/lab-network.sh" ensure
-
-# The inventory takes this host before the install, not after it: the check
-# used to come only at registration, twenty minutes in, and a refusal there
-# threw the install away (DEFECTS 7.31).
+# The inventory takes this host before the install, not after it (DEFECTS 7.31).
 "$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed: $NIST_INVENTORY is not this lab's - \
 the kickstart lab's own is inventory/kickstart.yml, used unless NIST_INVENTORY names another"
+"${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 && die "domain $VM_NAME already exists - run '$0 --name $VM_NAME --destroy' first"
+pool_path=$("${V[@]}" pool-dumpxml "$POOL" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
+[[ -n "$pool_path" ]] || die "no storage pool '$POOL' in $NIST_LIBVIRT_URI"
 
-if sudo virsh -c "$LIBVIRT_URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
-  die "domain $VM_NAME already exists - run '$0 --destroy' first"
-fi
+# --- the install media: this guest's own ISO ----------------------------------
+OUT="$ROOT/reports/runs/build-$VM_NAME-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
+"$ROOT/install/iso.sh" "$VM_NAME" --disk "/dev/disk/by-id/virtio-$VM_NAME" --console ttyS0 \
+  --user "$ADMIN_USER" --key "$SECRETS/id_rsa.pub" --hash-file "$SECRETS/admin_password_hash" \
+  --out "$OUT/install.iso" || die "the install ISO was not built"
+size=$(stat -c %s "$OUT/install.iso")
+"${V[@]}" vol-delete --pool "$POOL" "$ISO_VOL" >/dev/null 2>&1 || true
+"${V[@]}" vol-create-as "$POOL" "$ISO_VOL" "$size" --format raw >/dev/null \
+  && "${V[@]}" vol-upload --pool "$POOL" "$ISO_VOL" "$OUT/install.iso" \
+  || die "could not upload the install ISO into pool $POOL"
+rm -f "$OUT/install.iso"
+log "install ISO in pool $POOL as $ISO_VOL"
 
-# qemu runs as an unprivileged user that cannot traverse $HOME, so an ISO kept
-# in the project tree is unreadable to it. Stage it into the libvirt image
-# directory, which qemu can always read.
-if [[ "$ISO" != "$IMAGE_DIR"/* ]]; then
-  STAGED="$IMAGE_DIR/$(basename "$ISO")"
-  if ! sudo test -f "$STAGED" || \
-     [[ "$(stat -c %s "$ISO")" != "$(sudo stat -c %s "$STAGED" 2>/dev/null || echo 0)" ]]; then
-    log "staging ISO into $IMAGE_DIR (qemu cannot read it under \$HOME)"
-    sudo cp -f "$ISO" "$STAGED"
-    sudo chmod 0644 "$STAGED"
-  fi
-  ISO="$STAGED"
-fi
-
-# UEFI firmware: a presence check only - `virt-install --boot uefi` lets
-# libvirt pick the image from its firmware descriptors. Paths differ by
-# distro; Ubuntu ships only the 4 MB build (OVMF_CODE_4M.fd), which the list
-# lacked until the kickstart lab was first built on an Ubuntu workstation.
-OVMF=""
-for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd \
-         /usr/share/edk2/ovmf/OVMF_CODE.fd \
-         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
-         /usr/share/OVMF/OVMF_CODE_4M.fd \
-         /usr/share/OVMF/OVMF_CODE.fd; do
-  [[ -f "$c" ]] && { OVMF="$c"; break; }
-done
-[[ -n "$OVMF" ]] || die "no OVMF firmware found - install edk2-ovmf"
-
-# --- render the kickstart ----------------------------------------------------
-OVERLAY_VERSION="$(awk '/^  version:/ {gsub(/"/,"",$2); print $2; exit}' "$ROOT/catalog/overlay-rocky9.yml")"
-
-KS_OUT="$(mktemp -t rl9-cui-XXXXXX.ks)"
-trap 'rm -f "$KS_OUT"' EXIT
-
-"$ROOT/install/render-kickstart.sh" --out "$KS_OUT" --name "$VM_NAME" --disk vda --user "$ADMIN_USER" \
-  --hash-file "$SECRETS/admin_password_hash" --pubkey-file "$SECRETS/id_rsa.pub" --mirror "$MIRROR"
-log "kickstart rendered ($(wc -l < "$KS_OUT") lines, overlay $OVERLAY_VERSION)"
-
-# A kickstart syntax error costs a full install cycle to discover, so validate
-# it up front with the real parser. Rocky 9's pykickstart is authoritative;
-# skip silently if no container runtime is available.
-if command -v podman >/dev/null 2>&1; then
-  log "validating kickstart syntax (pykickstart, RHEL9 dialect)"
-  # Judged by ksvalidator's exit status, and its output captured: `tee
-  # /dev/stderr` reopened stderr, and where stderr is a log file that
-  # truncated it, losing everything the build had logged before (DEFECTS
-  # 7.18); and "any output means failure" mistook image-pull messages.
-  # Fully qualified: RHEL-family hosts enforce short-name resolution, and
-  # with no terminal to ask "rockylinux:9" fails there (Ubuntu maps it to this).
-  ks_out=$(podman run --quiet --rm -v "$KS_OUT:/tmp/candidate.ks:ro,Z" quay.io/rockylinux/rockylinux:9 \
-             bash -c 'dnf -q -y install pykickstart >/dev/null 2>&1 || { echo "pykickstart did not install"; exit 3; }
-                      ksvalidator -v RHEL9 /tmp/candidate.ks' 2>&1) && ks_rc=0 || ks_rc=$?
-  if [[ $ks_rc -eq 0 ]]; then
-    log "kickstart syntax OK"
-  else
-    printf '%s\n' "$ks_out" >&2
-    die "kickstart failed validation (above)"
-  fi
-fi
-
-# --- build -------------------------------------------------------------------
-# rocky9 where the host's libosinfo knows it, else the RHEL 9 entry it is
-# built from: an older osinfo-db does not list Rocky (DEFECTS 7.21).
+# --- install ---------------------------------------------------------------------
 OSINFO=rhel9.0
-sudo virt-install --osinfo list 2>/dev/null | grep -qw rocky9 && OSINFO=rocky9
+virt-install --osinfo list 2>/dev/null | grep -qw rocky9 && OSINFO=rocky9
 log "creating $VM_NAME: ${VM_VCPUS} vCPU, ${VM_RAM_MB} MB RAM, ${VM_DISK_GB} GB disk"
-log "installing from $MIRROR (unattended, expect 15-25 min)"
-
-# The install is watched rather than waited on: with --noautoconsole and no
-# limit, an installer stopped at a prompt (a mirror it cannot reach, a
-# kickstart it will not accept) waited unseen - 48 hours on one host before
-# anyone killed it (DEFECTS 7.17).
-SERIAL_LOG="/var/log/libvirt/qemu/${VM_NAME}-serial.log"
+log "installing from ${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9} (unattended, expect 15-25 min)"
+CONSOLE="$OUT/console.log"
 STALL_MIN="${NIST_INSTALL_STALL_MIN:-20}"
 LIMIT_MIN="${NIST_INSTALL_TIMEOUT_MIN:-120}"
-# The installer's runtime image (install.img, about 1 GB) from the boot ISO,
-# which virt-install attaches as a CD-ROM, not from the mirror: dracut
-# fetches it in one transfer and never retries, and on the owner's Rocky 9
-# host the mirror cut that transfer short - "curl: (18) transfer closed with
-# 741179392 bytes remaining", then "Failed to find a root filesystem" and a
-# halt (DEFECTS 7.32). The ISO was checksum-verified by make iso, and its
-# kernel, initrd and runtime image now all come from the same release.
-# Packages still come from the mirror, where dnf retries each one.
-ISO_LABEL=$(sudo blkid -o value -s LABEL "$ISO" 2>/dev/null || true)
-if [[ -n "$ISO_LABEL" ]]; then STAGE2="inst.stage2=hd:LABEL=${ISO_LABEL// /\\x20}"
-else STAGE2=""; log "no volume label on $ISO: the installer's runtime image will come from the mirror"; fi
-VI_OUT="$(mktemp)"
-sudo rm -f "$SERIAL_LOG"
-sudo virt-install \
-  --connect "$LIBVIRT_URI" \
-  --name "$VM_NAME" \
-  --memory "$VM_RAM_MB" \
-  --vcpus "$VM_VCPUS" \
-  --cpu host-passthrough \
-  --machine q35 \
-  --boot uefi \
+"$ROOT/tools/console-record.sh" "$VM_NAME" "$CONSOLE" $(( LIMIT_MIN * 60 + 600 )) 2> "$OUT/console-record.err" &
+rec=$!
+virt-install --connect "$NIST_LIBVIRT_URI" --name "$VM_NAME" \
+  --memory "$VM_RAM_MB" --vcpus "$VM_VCPUS" --cpu host-passthrough --machine q35 \
+  --boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
   --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb \
-  --disk "path=$DISK_PATH,size=$VM_DISK_GB,format=qcow2,bus=virtio,cache=none,discard=unmap" \
-  --network network=$VM_NETWORK,model=virtio \
-  --graphics none \
-  --serial "pty,log.file=$SERIAL_LOG" \
-  --console pty,target_type=serial \
-  --os-variant "$OSINFO" \
-  --location "$ISO" \
-  --initrd-inject "$KS_OUT" \
-  --extra-args "inst.ks=file:/$(basename "$KS_OUT") inst.repo=$MIRROR/BaseOS/x86_64/os/ ${STAGE2} inst.text ip=dhcp console=ttyS0,115200n8" \
-  --noautoconsole \
-  --wait -1 > "$VI_OUT" 2>&1 &
+  --disk "pool=$POOL,size=$VM_DISK_GB,format=qcow2,bus=virtio,serial=$VM_NAME,cache=none,discard=unmap" \
+  --cdrom "$pool_path/$ISO_VOL" \
+  --network "network=$VM_NETWORK,model=virtio" --graphics none \
+  --console pty,target_type=serial --os-variant "$OSINFO" \
+  --noautoconsole --wait -1 > "$OUT/virt-install.log" 2>&1 &
 vi_pid=$!
-
-log "watching the install: the console is logged to $SERIAL_LOG"
+log "watching the install: the console is recorded in $CONSOLE"
 started=$SECONDS last_size=-1 last_change=$SECONDS why=""
-# ps, not kill -0: the job is sudo, a root process, which kill -0 cannot probe.
-while ps -p "$vi_pid" >/dev/null 2>&1; do
+while kill -0 "$vi_pid" 2>/dev/null; do
   sleep 30
-  size=$(sudo stat -c %s "$SERIAL_LOG" 2>/dev/null || echo 0)
+  size=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0)
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
   # The kickstart ends with `reboot`; an installer that halts or powers off
-  # has given up, and qemu stays up with nothing more to say - which read as
-  # a 20-minute stall blamed on the network (DEFECTS 7.30). Stop at once.
-  halted=$(sudo grep -c -E 'reboot: (System halted|Power down)' "$SERIAL_LOG" 2>/dev/null || true)
-  if (( ${halted:-0} > 0 )); then
+  # has given up, and qemu stays up with nothing more to say (DEFECTS 7.30).
+  if grep -aqE 'reboot: (System halted|Power down)' "$CONSOLE" 2>/dev/null; then
     why="the installer halted itself after $(( (SECONDS - started) / 60 )) minutes, before installing: anaconda gave up"; break
   fi
   if (( SECONDS - last_change > STALL_MIN * 60 )); then
@@ -265,57 +181,48 @@ while ps -p "$vi_pid" >/dev/null 2>&1; do
   fi
 done
 if [[ -n "$why" ]]; then
-  sudo kill "$vi_pid" 2>/dev/null || true
-  echo "error: $why. What the installer said (tools/install-log.sh $VM_NAME):" >&2
-  "$ROOT/tools/install-log.sh" "$SERIAL_LOG" 2>&1 | sed 's/^/  /' >&2
+  kill "$vi_pid" 2>/dev/null || true; kill "$rec" 2>/dev/null || true
+  echo "error: $why. What the installer said (tools/install-log.sh $CONSOLE):" >&2
+  "$ROOT/tools/install-log.sh" "$CONSOLE" 2>&1 | sed 's/^/  /' >&2
   cat >&2 <<EOF
 If an error above names the kickstart, a disk or a package, that is the
-cause. Otherwise run tools/diagnose-lab-net.sh: it tests each layer between a guest and the
-mirror (the host's resolver, libvirt's dnsmasq, the guests' DNS, NAT, the
-mirror) and names the one that fails. Likely causes, most common first:
-  - the guest cannot reach $MIRROR: no forwarding on this host, a firewall
-    or Docker dropping traffic from virbr17, no DNS, or a proxy required
-    (vm/lab-network.sh warns about the first two; NIST_ROCKY_MIRROR=URL uses
-    another mirror)
-  - the installer rejected the kickstart and is waiting for an answer
-The VM is left running to inspect:  sudo virsh -c $LIBVIRT_URI console $VM_NAME
+cause. Otherwise run tools/diagnose-lab-net.sh: it tests each layer between a
+guest and the mirror and names the one that fails.
+The VM is left running to inspect:  ./tools/lab-console.sh $VM_NAME
 Remove it afterwards:               $0 --name $VM_NAME --role $VM_ROLE --destroy
 EOF
-  rm -f "$VI_OUT"; exit 1
+  exit 1
 fi
-if ! wait "$vi_pid"; then
-  cat "$VI_OUT" >&2; rm -f "$VI_OUT"
-  die "virt-install failed; the console is in $SERIAL_LOG"
-fi
-rm -f "$VI_OUT"
-
+wait "$vi_pid" || { cat "$OUT/virt-install.log" >&2; kill "$rec" 2>/dev/null; die "virt-install failed (its log: $OUT/virt-install.log)"; }
 log "install finished; waiting for the VM to boot"
 
-# virt-install --wait returns when the domain shuts down after install. The
-# kickstart ends with `reboot`, so the domain should come back up on its own;
-# start it if libvirt left it down.
+# virt-install restarts the guest after its install; start it if it did not.
 for _ in $(seq 1 30); do
-  state="$(sudo virsh -c "$LIBVIRT_URI" domstate "$VM_NAME" 2>/dev/null || echo unknown)"
+  state="$("${V[@]}" domstate "$VM_NAME" 2>/dev/null || echo unknown)"
   [[ "$state" == "running" ]] && break
-  sudo virsh -c "$LIBVIRT_URI" start "$VM_NAME" >/dev/null 2>&1 || true
+  "${V[@]}" start "$VM_NAME" >/dev/null 2>&1 || true
   sleep 5
 done
+# The install media holds the admin password's hash: out, and gone. (The awk
+# here, as everywhere a virsh listing is read under pipefail, reads to the end:
+# one that exited at its match left virsh writing into a closed pipe, and its
+# SIGPIPE ended this script without a word, the guest installed but never
+# registered.)
+cd_dev=$("${V[@]}" domblklist "$VM_NAME" --details 2>/dev/null | awk '$2=="cdrom" && !f {print $3; f=1}')
+[[ -n "$cd_dev" ]] && "${V[@]}" change-media "$VM_NAME" "$cd_dev" --eject --live --config >/dev/null 2>&1 || true
+"${V[@]}" vol-delete --pool "$POOL" "$ISO_VOL" >/dev/null 2>&1 && log "install ISO ejected and deleted"
 
 log "resolving guest address"
 IP=""
 for _ in $(seq 1 60); do
-  IP="$(sudo virsh -c "$LIBVIRT_URI" domifaddr "$VM_NAME" --source lease 2>/dev/null \
-        | awk '/ipv4/ {split($4,a,"/"); print a[1]; exit}')"
+  IP="$("${V[@]}" domifaddr "$VM_NAME" --source lease 2>/dev/null | awk '/ipv4/ && !f {split($4,a,"/"); print a[1]; f=1}')"
   [[ -n "$IP" ]] && break
   sleep 5
 done
-[[ -n "$IP" ]] || die "could not determine the guest IP; check 'virsh console $VM_NAME'"
-
+[[ -n "$IP" ]] || die "could not determine the guest IP (./tools/lab-console.sh $VM_NAME)"
 log "guest is at $IP"
 
 # --- register in the Ansible inventory ---------------------------------------
-# Adds or updates this host; other hosts already there are left alone. A log
-# host additionally becomes the collector every CUI host forwards to.
 "$ROOT/tools/inventory.py" add "$VM_NAME" --ip "$IP" --user "$ADMIN_USER" --role "$VM_ROLE"
 log "inventory now:"
 "$ROOT/tools/inventory.py" show
@@ -323,9 +230,7 @@ log "inventory now:"
 # A freshly installed guest has a new host key. DHCP hands addresses out
 # again, so an entry recorded for this address belongs to a guest that no
 # longer exists: forget it, then record this guest's key once its sshd
-# answers - it was created moments ago on the isolated lab network. Before
-# this, a reused address failed with "REMOTE HOST IDENTIFICATION HAS CHANGED"
-# at the first apply, and the wait below gave up silently (DEFECTS 7.24).
+# answers (DEFECTS 7.24).
 touch "$SECRETS/known_hosts"; chmod 600 "$SECRETS/known_hosts"
 ssh-keygen -R "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
 log "waiting for SSH"
@@ -342,7 +247,8 @@ for _ in $(seq 1 60); do
   fi
   sleep 5
 done
-(( ssh_up )) || die "no SSH to $ADMIN_USER@$IP after 5 minutes (sudo virsh -c $LIBVIRT_URI console $VM_NAME)"
+kill "$rec" 2>/dev/null || true
+(( ssh_up )) || die "no SSH to $ADMIN_USER@$IP after 5 minutes (./tools/lab-console.sh $VM_NAME)"
 
 # The forwarding advice only applies when there is no collector yet.
 if [[ "$VM_ROLE" == "log" ]]; then
@@ -368,8 +274,8 @@ fi
 # Give back the memory the installer needed and the guest does not.
 if [[ "$VM_ROLE" == "log" && "$VM_RUNTIME_RAM_MB" -lt "$VM_RAM_MB" ]]; then
   log "trimming $VM_NAME to ${VM_RUNTIME_RAM_MB} MB (the installer needed ${VM_RAM_MB})"
-  sudo virsh -c "$LIBVIRT_URI" setmem "$VM_NAME" "${VM_RUNTIME_RAM_MB}M" \
-    --config --live 2>/dev/null || log "could not trim memory; leaving at ${VM_RAM_MB} MB"
+  "${V[@]}" setmem "$VM_NAME" "${VM_RUNTIME_RAM_MB}M" --config --live >/dev/null 2>&1 \
+    || log "could not trim memory; leaving at ${VM_RAM_MB} MB"
 fi
 
 cat <<DONE
@@ -380,6 +286,7 @@ cat <<DONE
   Inventory: $NIST_INVENTORY
   SSH:       ./tools/lab-ssh.sh $VM_NAME      (both factors, as apply does)
   Console:   ./tools/lab-console.sh $VM_NAME  (when SSH cannot reach it)
+  Install:   $OUT (its console, recorded)
 
   Once hardened, 03.05.03 requires publickey AND password; tools/lab-ssh.sh
   supplies both, a plain \`ssh\` only the key.

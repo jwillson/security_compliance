@@ -41,30 +41,23 @@ why.
 ## Quick start
 
 ```bash
-make all        # host check → tools → catalog → secrets → ISO → VM → apply → verify
+make all        # host check → catalog → secrets → ISO → VM → apply → verify
 ```
 
-`make all` runs from a bare clone on any Linux host with KVM and 8 GiB of
-memory free: `make host-check` names anything missing and the `apt`/`dnf`
-command for it, `make tools` builds the pinned Ansible, and the lab network
-is created if missing. The lab, getting into a hardened guest, and removing
-everything again (`make teardown`) are [docs/LAB.md](docs/LAB.md), *On any
-host*.
+**The tool runs only in its container.** The workstation needs podman or
+docker, and nothing of this project: every command enters the control-plane
+image by itself - a pinned Ubuntu 26.04 image with the Ansible, the libvirt
+client and the ISO tools this project uses (`container/Containerfile`). Use
+`./nist make all` where `make` is not installed; `./nist bash` is a shell
+inside it. It runs as you, on the host network, with the repository, `~/.ssh`
+and the BYO lab directory mounted where they are.
 
-**With nothing installed but podman or docker**, every command that does
-not build VMs runs inside the control-plane container, a pinned Ubuntu 26.04
-image with the Ansible this project pins (`container/Containerfile`):
-
-```bash
-./nist make validate                  # built on first use
-./nist ./apply.sh --check --diff      # and every other command, the same way
-./nist ./verify.sh --failed-only
-```
-
-`./nist` runs as you, on the host network, with the repository, `~/.ssh` and
-the BYO lab directory mounted where they are, so inventories, keys and the
-second-factor helper work unchanged. Building lab VMs still needs the host's
-virtualisation tools (`make host-check`).
+For the lab, the host also needs the hypervisor - KVM, libvirt, qemu, swtpm,
+UEFI firmware, dnsmasq - and 8 GiB of memory free. The tool drives libvirt
+through its socket, as you, without sudo: `make host-check` asks libvirt
+what is missing and names the packages, and the lab network is created if
+missing. The lab, getting into a hardened guest, and removing everything
+again (`make teardown`) are [docs/LAB.md](docs/LAB.md), *On any host*.
 
 Or step by step:
 
@@ -219,25 +212,24 @@ exactly the tasks implementing Password Management and nothing else.
 
 The role is not VM-specific, and neither the VM targets nor `.secrets/` are
 prerequisites. Point the inventory at any Rocky 9 host reachable over SSH
-with sudo, and supply the two secrets the role consumes from your own
-environment:
+with sudo, and put its secrets in the inventory's vault - asked for without
+echo, encrypted with ansible-vault, never exported or typed on a command line:
 
 ```bash
-cp inventory/hosts.yml.example inventory/hosts.yml
-$EDITOR inventory/hosts.yml
-export NIST_BECOME_PASSWORD=...  # sudo, if the host asks for one
-export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
-export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
+./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
+./tools/vault.sh                 # admin password, GRUB password, LUKS passphrase
 ./apply.sh --check --diff        # dry run; completes on a host never applied
-./apply.sh && ./verify.sh
+./apply.sh && ./verify.sh        # each asks for the vault password once
 ```
 
-Without `NIST_GRUB_PASSWORD` the bootloader is left as it is and
-`pe-07-grub-password` is reported as a deviation; without
-`NIST_LUKS_PASSPHRASE` on a host with room for the CUI volumes, 03.08.09 and
-03.13.08 are skipped and reported. Neither aborts the run. The lab build
-supplies both from `.secrets/` (`make secrets`), which the role reads only
-when the environment says nothing.
+The vault, `inventory/hosts.vault.yml`, holds the admin account's password
+(sudo, and the SSH password factor, which Ansible answers itself), the GRUB
+superuser's (03.10.07) and the LUKS passphrase (03.08.09). Leave the
+passphrase empty and, on a host with room for the CUI volumes, 03.08.09 and
+03.13.08 are skipped and reported; neither aborts the run. For automation,
+`NIST_VAULT_PASSWORD_FILE` names a file or a password-manager script that
+prints the vault password. The lab build supplies its own from `.secrets/`
+(`make secrets`).
 
 **What a retrofit reports.** Proven against a stock Rocky 9.8 GenericCloud
 guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
@@ -385,9 +377,10 @@ The toolchain generates **RSA-3072**. Bring your own key only if it is RSA
 
 **Key-only automation stops working.** 03.05.03 sets
 `AuthenticationMethods publickey,password`, so one factor is not enough.
-`lib/ssh-env.sh` supplies the password factor via `SSH_ASKPASS` — the
-automation authenticates with two factors like any operator, rather than the
-control being switched off for it. Set `nist_mfa_enforce_pubkey: false` only if
+Ansible answers the password factor itself, from the host's
+`ansible_password` (the vault, or the lab's `.secrets/`), handing it to ssh
+through shared memory - the automation authenticates with two factors like
+any operator, rather than the control being switched off for it. Set `nist_mfa_enforce_pubkey: false` only if
 your operators have not enrolled keys.
 
 **Host key checking cannot be disabled.** OpenSSH refuses to send a password to
@@ -482,7 +475,7 @@ rl9-171/
 ├── vm/                          the lab
 │   ├── build-vm.sh              unattended kickstart VM build (the reference lab)
 │   ├── byo-guest.sh             stock GenericCloud guest: the "host you already have" lab
-│   ├── byo-lab-init.sh          the BYO lab directory and the pinned Ansible (make tools)
+│   ├── byo-lab-init.sh          the BYO lab directory: its secrets, its vault, env.sh
 │   ├── host-check.sh            can this host run the lab, and what to install
 │   ├── lab-network.sh           the lab network: created if missing, removed when unused
 │   ├── lab-teardown.sh          make teardown: both labs and all they left
@@ -547,13 +540,10 @@ and records the gap; 03.01.11 and 03.13.09 report it. That path is not
 exercised on a lab host: the role applies security errata, which bring any
 host that can reach its repositories to 9.9.
 
-Control workstation: for a host you bring, `ansible-core` ≥ 2.14 and
-`python3-yaml` (the collections install on the first `./apply.sh`). For the
-labs, `make host-check` checks and names the rest - KVM, libvirt and
-`virt-install`, `qemu-img`, `swtpm`, UEFI firmware with Secure Boot and
-enrolled keys, Python >= 3.12 with venv (or `uv`), `poppler-utils`, and a cloud-init seed tool for BYO;
-`podman` is optional (kickstart validation, the stand-in SIEM) - and `make
-tools` builds the pinned Ansible. Target: reachable over SSH, with sudo.
+Control workstation: podman or docker - the tool runs in its own image.
+For the labs, the host's hypervisor too: KVM, libvirt, qemu, swtpm, UEFI
+firmware with Secure Boot, dnsmasq; `make host-check` asks libvirt for each
+and names the packages. Target: reachable over SSH, with sudo.
 
 ---
 

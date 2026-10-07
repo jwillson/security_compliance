@@ -18,15 +18,15 @@
 #   9  probe after       and the difference from step 1
 #
 # Everything is written to reports/runs/HOST-UTC/ (gitignored), and a summary
-# is printed at the end. Source the lab's env.sh first. For a BYO inventory,
-# NIST_LUKS_PASSPHRASE is taken from $NIST_BYO_LAB/luks_passphrase when unset,
-# so a host with a volume group gets its LUKS volumes (03.08.09 / 03.13.08).
+# is printed at the end. For the BYO lab, source its env.sh first: the
+# passwords, the GRUB password and the LUKS passphrase come from the
+# inventory's vault (TASKS C3). Runs in the control-plane container.
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 cd "$ROOT"
 # ssh-env, not just inventory-env: this script runs ansible itself (probes,
 # the reboot), and once 03.05.03 is applied every connection needs the second
@@ -57,12 +57,6 @@ say() { echo "==> $*" | tee -a "$SUMMARY"; }
 recap() { grep -E "^$host +:" "$1" | tail -1 | sed 's/  */ /g'; }
 die() { say "STOPPED: $*"; echo "logs: $RUN"; exit 1; }
 
-# Only for hosts you brought: a lab inventory's role reads .secrets/luks_passphrase
-# itself, and handing it the BYO lab's passphrase would mix the two labs.
-if [[ "$NIST_INVENTORY_KIND" == byo && -z "${NIST_LUKS_PASSPHRASE:-}" && -f "$LAB/luks_passphrase" ]]; then
-  NIST_LUKS_PASSPHRASE=$(cat "$LAB/luks_passphrase"); export NIST_LUKS_PASSPHRASE
-  say "NIST_LUKS_PASSPHRASE taken from $LAB/luks_passphrase"
-fi
 say "cycle on $host ($(inv "$host" ansible_host)) at $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- . || echo '+uncommitted'); logs in $RUN"
 
 step() {  # name logfile command...   -> returns the command's status

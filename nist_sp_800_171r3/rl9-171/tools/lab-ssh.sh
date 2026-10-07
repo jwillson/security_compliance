@@ -15,10 +15,14 @@
 # typed, and nothing wrong is offered: three failed attempts lock the account
 # (03.01.08). `sudo` on the host asks for the same password.
 #
-# For the BYO lab, source $NIST_BYO_LAB/env.sh first (it sets the askpass).
-# When SSH cannot reach the host at all, use tools/lab-console.sh.
+# The password comes from the host's ansible_password - the kickstart lab's
+# .secrets/admin_password, or the inventory's vault (for the BYO lab, source
+# $NIST_BYO_LAB/env.sh first: it names the vault password file) - through a
+# one-run askpass in the container's own RAM. Runs in the control-plane
+# container. When SSH cannot reach the host at all, use tools/lab-console.sh.
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.." || exit 2
 host=${1:?usage: tools/lab-ssh.sh HOST [COMMAND...]}; shift
@@ -38,6 +42,10 @@ print(v.get("ansible_host", ""), v.get("ansible_user", ""),
 [[ -n "${addr:-}" ]] || { echo "error: $host is not in $NIST_INVENTORY" >&2; exit 2; }
 mkdir -p "$(dirname "$kh")"; touch "$kh"; chmod 600 "$kh"
 ssh-keygen -F "$addr" -f "$kh" >/dev/null 2>&1 || ssh-keyscan -H "$addr" >> "$kh" 2>/dev/null
+# The knowledge factor: answered from the inventory, never typed or exported.
+if askpass=$(nist_askpass_for "$host"); then
+  export SSH_ASKPASS="$askpass" SSH_ASKPASS_REQUIRE=force
+fi
 exec ssh -i "$key" -o UserKnownHostsFile="$kh" -o StrictHostKeyChecking=yes \
   -o PreferredAuthentications=publickey,password -o NumberOfPasswordPrompts=1 \
   "$user@$addr" "$@"

@@ -21,12 +21,16 @@ Roles:
           hardened by the same overlay - and additionally receives.
 
 Connections:
-    lab   a host vm/build-vm.sh built: the lab key, sudo password and
-          known_hosts under .secrets/ (the default).
+    lab   a host vm/build-vm.sh built: the lab key, admin password (for
+          sudo and as the SSH password factor, which ansible answers itself)
+          and known_hosts under .secrets/ (the default).
     byo   a host you already have (vm/byo-guest.sh, or real hardware): the
-          operator's own key (--key, default ~/.ssh/id_rsa), the sudo
-          password from NIST_BECOME_PASSWORD, and the operator's known_hosts.
-          Nothing is read from .secrets/.
+          operator's own key (--key, default ~/.ssh/id_rsa) and known_hosts;
+          the passwords come from the inventory's vault,
+          inventory/NAME.vault.yml (tools/vault.sh; TASKS C3), never from the
+          environment. Nothing is read from .secrets/.
+
+Runs in the control-plane container, entering it when started outside.
 """
 from __future__ import annotations
 
@@ -34,6 +38,12 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
+# The tool runs only in its container (TASKS C2): from outside, run this again
+# inside, through ./nist, as lib/container.sh does for the shell tools.
+if not os.environ.get("NIST_IN_CONTAINER"):
+    _nist = str(Path(__file__).resolve().parent.parent / "nist")
+    os.execv(_nist, [_nist, os.path.abspath(sys.argv[0])] + sys.argv[1:])
 
 try:
     import yaml
@@ -64,6 +74,11 @@ CONNECTIONS["lab"] = {
     "ansible_become_method": "sudo",
     "ansible_become_password":
         "{{ lookup('file', playbook_dir + '/.secrets/admin_password') | trim }}",
+    # The SSH password factor (03.05.03), answered by ansible itself: it hands
+    # the password to ssh through shared memory, so no askpass script and no
+    # environment carries it.
+    "ansible_password":
+        "{{ lookup('file', playbook_dir + '/.secrets/admin_password') | trim }}",
     "ansible_ssh_common_args":
         "-o StrictHostKeyChecking=yes "
         "-o UserKnownHostsFile={{ playbook_dir }}/.secrets/known_hosts",
@@ -71,8 +86,10 @@ CONNECTIONS["lab"] = {
 CONNECTIONS["byo"] = {
     "ansible_become": True,
     "ansible_become_method": "sudo",
-    "ansible_become_password": "{{ lookup('env', 'NIST_BECOME_PASSWORD') }}",
+    # No passwords here: a host variable would outrank the vault's group
+    # variables (ansible_become_password, ansible_password).
 }
+LEGACY_BECOME = "{{ lookup('env', 'NIST_BECOME_PASSWORD') }}"
 
 
 def load() -> dict:
@@ -80,6 +97,16 @@ def load() -> dict:
         return {"cui_hosts": {"hosts": {}}}
     data = yaml.safe_load(INVENTORY.read_text()) or {}
     data.setdefault("cui_hosts", {}).setdefault("hosts", {})
+    # Inventories written before the vault (TASKS C3): a BYO host's password
+    # from the environment would shadow the vault's, and a lab host lacked
+    # the SSH password ansible now answers itself.
+    for host in data["cui_hosts"]["hosts"].values():
+        if not host:
+            continue
+        if host.get("ansible_become_password") == LEGACY_BECOME:
+            del host["ansible_become_password"]
+        if ".secrets/" in str(host.get("ansible_ssh_private_key_file", "")):
+            host.setdefault("ansible_password", CONNECTIONS["lab"]["ansible_password"])
     return data
 
 
@@ -178,6 +205,17 @@ def cmd_remove(args) -> int:
     return 0
 
 
+def cmd_tidy(args) -> int:
+    """Rewrite the inventory if load() migrated anything; quiet otherwise."""
+    if not INVENTORY.exists():
+        return 0
+    before = yaml.safe_load(INVENTORY.read_text()) or {}
+    data = load()
+    if data != before:
+        save(data)
+    return 0
+
+
 def cmd_show(args) -> int:
     data = load()
     cui = data["cui_hosts"]["hosts"]
@@ -218,6 +256,9 @@ def main() -> int:
     r = sub.add_parser("remove", help="remove a host")
     r.add_argument("name")
     r.set_defaults(fn=cmd_remove)
+
+    t = sub.add_parser("tidy", help="bring an older inventory up to date (lib/inventory-env.sh runs it)")
+    t.set_defaults(fn=cmd_tidy)
 
     s = sub.add_parser("show", help="list hosts and their forwarding")
     s.set_defaults(fn=cmd_show)

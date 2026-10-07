@@ -1,39 +1,40 @@
 #!/usr/bin/env bash
 #
 # Create the BYO lab's operator directory, $NIST_BYO_LAB (default
-# ~/.local/share/nist-byo-lab): the Ansible tooling and the files env.sh
-# reads, which docs/LAB.md described but no script created (DEFECTS 7.16,
-# issue #15). Run once on a new workstation, before vm/byo-guest.sh build.
+# ~/.local/share/nist-byo-lab), and the lab inventory's vault (DEFECTS 7.16,
+# issue #15; TASKS C3, C4). Run once on a workstation, before
+# vm/byo-guest.sh build.
 #
-#   vm/byo-lab-init.sh               everything below
-#   vm/byo-lab-init.sh --tools-only  the Ansible venv, collections and
-#                                    tools.sh only - what `make tools` runs for
-#                                    the kickstart lab, which needs no BYO
-#                                    secrets
+#   vm/byo-lab-init.sh
 #
-# Creates only what is missing and never overwrites a file, so it is safe on
-# a lab already in use. Secrets are random, written 0600, and never printed:
+# Creates only what is missing and never overwrites a secret, so it is safe on
+# a lab already in use. The lab's secrets are random, written 0600, never
+# printed, and live only here:
 #   byoadmin_password   sudo on every BYO guest, and the SSH second factor
-#   grub_password       given to the role for 03.10.07
-#   luks_passphrase     given to the role for 03.08.09 (harden-cycle reads it)
-# Tooling, with no secrets: venv/ (ansible-core at the version CI pins, via
-# uv), collections/ (requirements.yml), tools.sh. Then env.sh (reads the
-# secrets from the files above, never holds them), askpass.sh (answers the
-# second factor from byoadmin_password) and wrongpass.sh (a deliberately
-# wrong one, for the lockout rehearsals). Guests get the operator's own
-# RSA key, $NIST_BYO_KEY (default ~/.ssh/id_rsa) - RSA, since the FIPS policy
-# refuses ed25519 (README).
+#   grub_password       the GRUB superuser's (03.10.07)
+#   luks_passphrase     the CUI volumes' (03.08.09)
+#   vault_password      unlocks inventory/hosts.vault.yml, the vault the tools
+#                       read those three from (written by tools/vault.sh)
+# and env.sh, which holds no secret: it names the vault password file
+# (NIST_VAULT_PASSWORD_FILE), the lab's PKI directory and the inventory, for a
+# shell that runs the BYO lab. Guests get the operator's own RSA key,
+# $NIST_BYO_KEY (default ~/.ssh/id_rsa) - RSA, since the FIPS policy refuses
+# ed25519 (README).
+#
+# Retired, and removed from a lab directory made before (TASKS C4): the
+# Ansible venv, its collections and tools.sh - the tool runs in its container,
+# which carries the pinned Ansible - and the askpass scripts, now that ansible
+# answers the SSH password factor itself.
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
-ANSIBLE_CORE=2.21.4      # the version .github/workflows/ci.yml pins
 say() { echo "==> $*"; }
 made() { echo "    created $1"; }
 
-tools_only=0; [[ "${1:-}" == --tools-only ]] && tools_only=1
-install -d -m 0700 "$LAB"
+install -d -m 0700 "$LAB" "$LAB/pki"
 umask 077
 
 secret() {   # name length
@@ -41,89 +42,41 @@ secret() {   # name length
   head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$2" > "$LAB/$1"
   made "$1 (random, 0600)"
 }
-if (( ! tools_only )); then
-  say "secrets in $LAB"
-  secret byoadmin_password 24
-  secret grub_password 24
-  secret luks_passphrase 32
+say "secrets in $LAB"
+secret byoadmin_password 24
+secret grub_password 24
+secret luks_passphrase 32
+secret vault_password 32
+
+# The lab's vault: the same secrets, encrypted, where every tool reads them.
+# tools/vault.sh takes them from files named for it, staged in the
+# container's own RAM.
+vault="$ROOT/inventory/hosts.vault.yml"
+if [[ ! -f "$vault" ]]; then
+  stage=$(mktemp -d -p /dev/shm)
+  cp "$LAB/byoadmin_password" "$stage/admin_password"
+  cp "$LAB/grub_password" "$stage/grub_password"
+  cp "$LAB/luks_passphrase" "$stage/luks_passphrase"
+  NIST_VAULT_PASSWORD_FILE="$LAB/vault_password" "$ROOT/tools/vault.sh" inventory/hosts.yml --from "$stage" >/dev/null
+  rm -rf "$stage"
+  made "inventory/hosts.vault.yml (ansible-vault; its password in $LAB/vault_password)"
 fi
 
-say "tooling"
-if [[ ! -x "$LAB/venv/bin/ansible-playbook" ]]; then
-  # ansible-core 2.21 needs Python >= 3.12 on the control side. A system
-  # Python that new builds the venv with its own venv and pip; uv only when
-  # there is none - it brings its own Python, which is how RHEL 9 (python3 is
-  # 3.9) gets one without a package. uv used to be required (DEFECTS 7.26).
-  PY=""
-  for p in python3 python3.14 python3.13 python3.12; do
-    command -v "$p" >/dev/null 2>&1 || continue
-    "$p" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 12))' 2>/dev/null && { PY=$(command -v "$p"); break; }
-  done
-  UV=$(command -v uv || ls "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" 2>/dev/null | head -1 || true)
-  if [[ -n "$PY" ]]; then
-    "$PY" -m venv "$LAB/venv"
-    "$LAB/venv/bin/pip" install -q "ansible-core==$ANSIBLE_CORE" pyyaml
-  elif [[ -n "$UV" ]]; then
-    "$UV" venv -q --python 3.12 "$LAB/venv"
-    "$UV" pip install -q --python "$LAB/venv/bin/python" "ansible-core==$ANSIBLE_CORE" pyyaml
-  else
-    echo "error: needs Python >= 3.12 with venv (Ubuntu: python3-venv; RHEL 9: dnf install python3.12 python3.12-pip) or uv" >&2; exit 2
-  fi
-  made "venv/ (ansible-core $ANSIBLE_CORE, $("$LAB/venv/bin/python" --version))"
-fi
-if [[ ! -d "$LAB/collections/ansible_collections" ]]; then
-  ANSIBLE_COLLECTIONS_PATH="$LAB/collections" \
-    "$LAB/venv/bin/ansible-galaxy" collection install -p "$LAB/collections" -r "$ROOT/requirements.yml" >/dev/null
-  made "collections/"
-fi
-
-write() {   # name mode - content on stdin
-  if [[ -e "$LAB/$1" ]]; then cat >/dev/null; return 0; fi
-  cat > "$LAB/$1"; chmod "$2" "$LAB/$1"; made "$1"
-}
-say "scripts"
-write tools.sh 0600 <<EOF
-# The Ansible tooling for either lab, and nothing else: no secrets.
-# Source this alone for the kickstart lab (with NIST_INVENTORY set);
-# env.sh sources it and adds the BYO lab's secrets. Written by vm/byo-lab-init.sh.
-export PATH=$LAB/venv/bin:\$PATH
-export ANSIBLE_COLLECTIONS_PATH=$LAB/collections
-EOF
-if (( tools_only )); then say "done: source $LAB/tools.sh, or run make, which puts it on PATH"; exit 0; fi
-write env.sh 0600 <<EOF
-# Source from nist_sp_800_171r3/rl9-171 before ./apply.sh or ./verify.sh
-# against the BYO lab. Reads its secrets from this directory; holds none.
-# Written by vm/byo-lab-init.sh.
-. $LAB/tools.sh
-export NIST_BECOME_PASSWORD="\$(cat $LAB/byoadmin_password)"
-# 03.10.07: the BYO hosts' GRUB superuser password.
-export NIST_GRUB_PASSWORD="\$(cat $LAB/grub_password)"
-# 03.05.03: the knowledge factor once sshd enforces publickey,password.
-export SSH_ASKPASS=$LAB/askpass.sh
-export SSH_ASKPASS_REQUIRE=force
-# 03.03.05c over TLS: the CA and per-host certificates (tools/lab-pki.sh).
-export NIST_PKI_DIR=$LAB/pki
-# The BYO lab's inventory: make's own default is the kickstart lab's.
+# env.sh: paths only, no secret. Rewritten each time: it once exported the
+# secrets themselves.
+cat > "$LAB/env.sh" <<EOF
+# Source from nist_sp_800_171r3/rl9-171 before the tools, for the BYO lab.
+# Written by vm/byo-lab-init.sh. It holds no secret: it names where they are.
 export NIST_INVENTORY=inventory/hosts.yml
+export NIST_VAULT_PASSWORD_FILE=$LAB/vault_password
+export NIST_PKI_DIR=$LAB/pki
 EOF
-# An env.sh written before the inventory was chosen by the lab gets the line
-# (DEFECTS 7.33); write() never touches an existing file.
-if ! grep -q '^export NIST_INVENTORY=' "$LAB/env.sh"; then
-  printf '%s\n' "# The BYO lab's inventory: make's own default is the kickstart lab's." \
-    "export NIST_INVENTORY=inventory/hosts.yml" >> "$LAB/env.sh"
-  made "env.sh: NIST_INVENTORY"
-fi
-write askpass.sh 0700 <<'EOF'
-#!/usr/bin/env bash
-# The SSH askpass for the BYO lab: the knowledge factor once 03.05.03 applies.
-exec cat "$(dirname "$(readlink -f "$0")")/byoadmin_password"
-EOF
-write wrongpass.sh 0700 <<'EOF'
-#!/bin/sh
-# A deliberately wrong askpass, for the lockout rehearsals (03.01.08).
-echo not-the-password
-EOF
-install -d -m 0700 "$LAB/pki"
+chmod 600 "$LAB/env.sh"
+say "env.sh: the inventory, the vault password file and the PKI directory - no secrets"
+
+for old in venv collections tools.sh askpass.sh wrongpass.sh; do
+  if [[ -e "$LAB/$old" ]]; then rm -rf "${LAB:?}/$old"; echo "    removed $old (retired: the tool runs in its container)"; fi
+done
 
 key="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
 [[ -f "$key.pub" ]] || echo "note: no $key.pub - create an RSA key (ssh-keygen -t rsa -b 3072) or set NIST_BYO_KEY before vm/byo-guest.sh build"

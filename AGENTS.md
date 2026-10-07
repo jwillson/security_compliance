@@ -116,18 +116,25 @@ make help                        # the whole pipeline
 ./verify.sh --failed-only        # assess, show deviations only
 ```
 
-Hardening an existing host needs neither the VM targets nor `.secrets/`. The
-role reads its two secrets from `NIST_GRUB_PASSWORD` (03.10.07) and
-`NIST_LUKS_PASSPHRASE` (03.08.09) first, and from `.secrets/` only as the lab
-fallback; unset, the control is skipped with a warning and reported, and the
-run does not abort. `./apply.sh --check --diff` completes on a host that has
+The tool runs only in its control-plane container: every entry point enters
+it by itself (`lib/container.sh`), and the host needs podman or docker and,
+for the lab, the hypervisor - nothing else (owner decision 2026-10-07, TASKS
+C). Never add a host-side tool or a `sudo` to a workstation script; libvirt
+is reached through its socket.
+
+Hardening an existing host needs neither the VM targets nor `.secrets/`. Its
+secrets - the admin password, the GRUB password (03.10.07), the LUKS
+passphrase (03.08.09) - live in the inventory's ansible-vault file
+(`tools/vault.sh`), asked for without echo; never tell an operator to export
+a password. An unset LUKS passphrase skips the control with a warning and a
+reported deviation; the run does not abort. `./apply.sh --check --diff` completes on a host that has
 never been applied: a task that needs a package or unit an earlier task
 provides is skipped in check mode only while that prerequisite is outstanding
 (the idiom is explained at the top of `roles/nist_800_171/tasks/main.yml`).
 
 ```bash
-cp inventory/hosts.yml.example inventory/hosts.yml   # edit for your host
-export NIST_BECOME_PASSWORD=... NIST_GRUB_PASSWORD=...
+./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo
+./tools/vault.sh                                     # its secrets, encrypted
 ./apply.sh --check --diff && ./apply.sh && ./verify.sh
 ```
 

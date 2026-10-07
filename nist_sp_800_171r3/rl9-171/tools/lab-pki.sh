@@ -16,6 +16,7 @@
 # HOST.crt/HOST.key from its own PKI in the same directory layout, and never
 # needs this script. RSA-3072 and SHA-256 are FIPS-approved (03.13.11).
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 
 DIR="${NIST_PKI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.secrets/pki}"
 FROM_INVENTORY=0

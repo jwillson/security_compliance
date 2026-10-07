@@ -26,8 +26,15 @@
 # relabelling ~/.ssh for a container would stop the host's own sshd from
 # reading authorized_keys on Fedora and RHEL.
 #
-# Building and driving lab VMs still needs the host's virtualisation tools
-# (make host-check); this runs everything else.
+# It is the only way the tool runs (TASKS C2): every workstation entry point
+# enters it by itself (lib/container.sh), so this is rarely typed. The lab is
+# driven from here too, through the host's libvirt socket; the host needs the
+# hypervisor (KVM, libvirt, qemu, swtpm, UEFI firmware, dnsmasq) and nothing of
+# this project.
+#
+# Run as root with NIST_PRIVILEGED=1 it is privileged, for the one tool that
+# needs it: tools/diagnose-lab-net.sh, which puts a network namespace on the
+# lab bridge and reads the NAT rules.
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,6 +65,16 @@ mounts=(-v "$REPO:$REPO")
 read -r -a extra <<<"${NIST_CONTAINER_MOUNTS:-}"
 mounts+=(${extra[@]+"${extra[@]}"})
 [[ -d "$HOME/.ssh" ]] && mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
+# Where the host resolves names, read-only, for vm/lab-network.sh's DNS
+# forwarder (DEFECTS 7.29): the host's own resolv.conf - what libvirt's
+# dnsmasq reads; the container's is podman's - and systemd-resolved's and
+# NetworkManager's files.
+[[ -e /etc/resolv.conf ]] && mounts+=(-v "$(readlink -f /etc/resolv.conf):/host/etc/resolv.conf:ro")
+# Which distribution the host is, for vm/host-check.sh's package advice.
+[[ -e /etc/os-release ]] && mounts+=(-v "$(readlink -f /etc/os-release):/host/etc/os-release:ro")
+for d in /run/systemd/resolve /run/NetworkManager; do
+  [[ -d "$d" ]] && mounts+=(-v "$d:/host$d:ro")
+done
 [[ -d "$LAB" ]] && mounts+=(-v "$LAB:$LAB")
 # Ansible's own state goes to /tmp: inside the container $HOME exists only as
 # the mount point for ~/.ssh, and ~/.ansible could not be created there - the
@@ -83,9 +100,14 @@ if (( uid == 0 )); then user=()
 elif [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id --group-add keep-groups)
 else user=(--user "$uid:$gid"); for g in $(id -G); do user+=(--group-add "$g"); done; fi
 tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
+priv=()
+if [[ "${NIST_PRIVILEGED:-}" == 1 ]]; then
+  (( uid == 0 )) || { echo "error: NIST_PRIVILEGED needs root (sudo)" >&2; exit 2; }
+  priv=(--privileged)
+fi
 
 # --init: a small init as PID 1 forwards signals, so a command run here
 # stops when told to; as PID 1 itself it ignored SIGTERM and outlived the
 # tool that started it (DEFECTS 7.34).
-exec "$RT" run --rm --init "${tty[@]}" --network host --security-opt label=disable "${user[@]}" \
+exec "$RT" run --rm --init "${tty[@]}" ${priv[@]+"${priv[@]}"} --network host --security-opt label=disable "${user[@]}" \
   "${mounts[@]}" "${envs[@]}" -w "$PWD" "$image" "$@"

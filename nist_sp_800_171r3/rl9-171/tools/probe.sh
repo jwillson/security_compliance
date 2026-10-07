@@ -13,6 +13,7 @@
 # Probes must not change the host. Source the lab's env.sh first.
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 

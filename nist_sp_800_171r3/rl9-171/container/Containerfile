@@ -5,7 +5,9 @@
 # python3-libvirt), which drives the host's hypervisor through its socket
 # (the lab-in-container spike, DEFECTS 7.34) - and what builds a bare-metal
 # install ISO (install/iso.sh: xorriso, mtools, implantisomd5,
-# pykickstart's ksvalidator; DEFECTS 7.35). A workstation needs only podman
+# pykickstart's ksvalidator; DEFECTS 7.35), the console driver's pexpect, and
+# nft/iptables, which sudo tools/diagnose-lab-net.sh reads the NAT rules with
+# in its privileged run (TASKS C5). A workstation needs only podman
 # or docker to harden and assess hosts: ./nist make validate, ./nist
 # ./apply.sh, ./nist ./verify.sh.
 #
@@ -21,7 +23,8 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       python3 python3-venv python3-yaml poppler-utils openssh-client git make \
       curl ca-certificates openssl iproute2 gawk sed coreutils findutils procps \
-      virt-install libvirt-clients cpio mtools isomd5sum \
+      virt-install libvirt-clients cpio mtools isomd5sum python3-pexpect \
+      nftables iptables \
  && rm -rf /var/lib/apt/lists/*
 
 # ansible-core in its own venv, at the pinned version; the collections at the

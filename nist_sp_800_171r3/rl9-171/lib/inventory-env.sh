@@ -36,11 +36,41 @@ case "$NIST_INVENTORY" in
 esac
 export NIST_INVENTORY
 export ANSIBLE_INVENTORY="$NIST_INVENTORY"
+[ -f "$NIST_INVENTORY" ] && python3 "$NIST_ROOT/tools/inventory.py" tidy
+
+# Secrets (TASKS C3): an ansible-vault file beside the inventory,
+# inventory/NAME.vault.yml (tools/vault.sh writes it), holding the admin
+# password - sudo's and the SSH password factor, which ansible answers itself
+# - the GRUB password and the LUKS passphrase as group variables. It is a
+# second inventory source, so every ansible call decrypts it. The vault
+# password comes from NIST_VAULT_PASSWORD_FILE (a file, or an executable that
+# prints it - a password manager) or is asked for once, without echo, and
+# kept for this run in the container's own /dev/shm, which goes with it.
+# No password is ever exported or typed on a command line.
+NIST_VAULT="${NIST_INVENTORY%.yml}.vault.yml"
+export NIST_VAULT
+if [ -f "$NIST_VAULT" ]; then
+  if [ -n "${NIST_VAULT_PASSWORD_FILE:-}" ]; then
+    export ANSIBLE_VAULT_PASSWORD_FILE="$NIST_VAULT_PASSWORD_FILE"
+  elif [ -z "${ANSIBLE_VAULT_PASSWORD_FILE:-}" ]; then
+    if [ ! -t 0 ]; then
+      echo "error: $NIST_VAULT is locked and there is no terminal to ask for its" >&2
+      echo "  password: run interactively, or set NIST_VAULT_PASSWORD_FILE" >&2
+      return 1 2>/dev/null || exit 1
+    fi
+    _vp=$(mktemp -p /dev/shm nist-vault.XXXXXX)
+    IFS= read -rsp "vault password for $(basename "$NIST_VAULT"): " _pw </dev/tty; echo >&2
+    printf '%s' "$_pw" > "$_vp"; unset _pw
+    export ANSIBLE_VAULT_PASSWORD_FILE="$_vp"
+    unset _vp
+  fi
+  export ANSIBLE_INVENTORY="$NIST_INVENTORY,$NIST_VAULT"
+fi
 
 # Without ansible-inventory the kind below reads "empty" and verify.sh went
 # on to a Python traceback and "no hosts in group cui_hosts" (issue #14).
 command -v ansible-inventory >/dev/null 2>&1 || {
-  echo "error: ansible-inventory is not on PATH - install ansible-core, or source your lab's tools.sh/env.sh" >&2
+  echo "error: ansible-inventory is not on PATH - this runs in the control-plane image (./nist)" >&2
   return 2 2>/dev/null || exit 2
 }
 

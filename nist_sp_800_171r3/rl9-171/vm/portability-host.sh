@@ -12,16 +12,19 @@
 # The guest is ptest-DISTRO, user `ptest` with the operator's key
 # ($NIST_BYO_KEY.pub, default ~/.ssh/id_rsa.pub) and passwordless sudo - a
 # test workstation, not a lab target; nothing hardens it. Its network is
-# nist-ptest (virbr180, 192.168.180.0/24, NAT). Images are downloaded once to
-# the libvirt image directory, checked against the distribution's published
-# SHA-256, and copied for each guest. tools/portability-run.sh drives it.
-# `destroy` removes the guest, its disk and logs, and the network once no
-# ptest guest is left; make teardown removes them too.
+# nist-ptest (virbr180, 192.168.180.0/24, NAT). Images are downloaded once,
+# checked against the distribution's published SHA-256, and kept as a volume
+# in the default pool; each guest's disk is a clone of it. It runs in the
+# control-plane container, through the libvirt socket (TASKS C5).
+# tools/portability-run.sh drives it. `destroy` removes the guest and its
+# volumes, and the network and the image once no ptest guest is left; make
+# teardown removes them too.
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-V=(sudo virsh -c qemu:///system)
-IMAGES=/var/lib/libvirt/images
+V=(virsh -c "$NIST_LIBVIRT_URI")
+POOL=default
 KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
 NET=nist-ptest BRIDGE=virbr180 SUBNET=192.168.180
 say() { echo "==> $*"; }
@@ -61,8 +64,15 @@ XML
   "${V[@]}" net-start "$NET" >/dev/null
 }
 
+upload() {   # FILE VOLUME into the pool
+  local size; size=$(stat -c %s "$1")
+  "${V[@]}" vol-delete --pool "$POOL" "$2" >/dev/null 2>&1 || true
+  "${V[@]}" vol-create-as "$POOL" "$2" "$size" --format raw >/dev/null && "${V[@]}" vol-upload --pool "$POOL" "$2" "$1" \
+    || die "could not upload $1 into pool $POOL"
+}
+
 address() {
-  "${V[@]}" domifaddr "$name" --source lease 2>/dev/null | awk '/ipv4/ {split($4,a,"/"); print a[1]; exit}'
+  "${V[@]}" domifaddr "$name" --source lease 2>/dev/null | awk '/ipv4/ && !f {split($4,a,"/"); print a[1]; f=1}'
 }
 
 build() {
@@ -72,8 +82,8 @@ build() {
     || die "nested virtualisation is off on this host (kvm_intel/kvm_amd nested=1)"
   local urls url sums base cache work seed
   mapfile -t urls < <(image_url); url=${urls[0]}; sums=${urls[1]}
-  base=$(basename "$url"); cache="$IMAGES/ptest-base-$distro.qcow2"
-  if ! sudo test -f "$cache"; then
+  base=$(basename "$url"); cache="ptest-base-$distro.qcow2"
+  if ! "${V[@]}" vol-info --pool "$POOL" "$cache" >/dev/null 2>&1; then
     say "downloading $base"
     work=$(mktemp -d)
     curl -fL --retry 3 -o "$work/$base" "$url"
@@ -81,12 +91,13 @@ build() {
     want=$(grep -E "^SHA256 \($base\)" "$work/CHECKSUM" | awk '{print $NF}')
     [[ -n "$want" ]] || die "no SHA-256 for $base in $(basename "$sums")"
     echo "$want  $work/$base" | sha256sum -c --quiet - || die "$base does not match its published SHA-256"
-    sudo cp "$work/$base" "$cache"; rm -rf "$work"
+    upload "$work/$base" "$cache"; rm -rf "$work"
+    "${V[@]}" pool-refresh "$POOL" >/dev/null
   fi
   ensure_network
-  say "disk for $name (80 GiB)"
-  sudo qemu-img convert -O qcow2 "$cache" "$IMAGES/$name.qcow2"
-  sudo qemu-img resize -q "$IMAGES/$name.qcow2" 80G
+  say "disk for $name (80 GiB), a clone of the image"
+  "${V[@]}" vol-clone --pool "$POOL" "$cache" "$name.qcow2" >/dev/null
+  "${V[@]}" vol-resize --pool "$POOL" "$name.qcow2" 80G >/dev/null
   seed=$(mktemp -d)
   cat > "$seed/user-data" <<EOF
 #cloud-config
@@ -101,35 +112,37 @@ growpart: {mode: auto, devices: ["/"]}
 resize_rootfs: true
 EOF
   printf 'instance-id: %s\nlocal-hostname: %s\n' "$name" "$name" > "$seed/meta-data"
-  if command -v cloud-localds >/dev/null 2>&1; then cloud-localds "$seed/seed.iso" "$seed/user-data" "$seed/meta-data"
-  else xorriso -as mkisofs -quiet -output "$seed/seed.iso" -volid cidata -joliet -rock "$seed/user-data" "$seed/meta-data"; fi
-  sudo cp "$seed/seed.iso" "$IMAGES/$name-seed.iso"; rm -rf "$seed"
+  xorriso -as mkisofs -quiet -output "$seed/seed.iso" -volid cidata -joliet -rock "$seed/user-data" "$seed/meta-data"
+  upload "$seed/seed.iso" "$name-seed.iso"; rm -rf "$seed"
   say "defining $name: 14 GiB, 4 vCPU, nested"
-  sudo virt-install --connect qemu:///system --name "$name" --memory 14336 --vcpus 4 \
+  virt-install --connect "$NIST_LIBVIRT_URI" --name "$name" --memory 14336 --vcpus 4 \
     --cpu host-passthrough --osinfo linux2022 --import --noautoconsole \
-    --disk "path=$IMAGES/$name.qcow2,bus=virtio" --disk "path=$IMAGES/$name-seed.iso,device=cdrom" \
+    --disk "vol=$POOL/$name.qcow2,bus=virtio" --disk "vol=$POOL/$name-seed.iso,device=cdrom" \
     --network "network=$NET,model=virtio" --graphics none \
-    --serial "pty,log.file=/var/log/libvirt/qemu/$name-serial.log" --console pty,target_type=serial >/dev/null
+    --console pty,target_type=serial >/dev/null
   local i ip=""
   for i in $(seq 1 60); do ip=$(address); [[ -n "$ip" ]] && break; sleep 5; done
-  [[ -n "$ip" ]] || die "$name has no address after 5 minutes (/var/log/libvirt/qemu/$name-serial.log)"
+  [[ -n "$ip" ]] || die "$name has no address after 5 minutes (./tools/lab-console.sh $name)"
   for i in $(seq 1 60); do
     ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
       "ptest@$ip" 'test -f /var/lib/cloud/instance/boot-finished' 2>/dev/null && { say "$name ready at $ip"; return 0; }
     sleep 5
   done
-  die "$name did not finish cloud-init (/var/log/libvirt/qemu/$name-serial.log)"
+  die "$name did not finish cloud-init (./tools/lab-console.sh $name)"
 }
 
 destroy() {
   "${V[@]}" destroy "$name" >/dev/null 2>&1 || true
   "${V[@]}" undefine "$name" --nvram >/dev/null 2>&1 || "${V[@]}" undefine "$name" >/dev/null 2>&1 || true
-  sudo rm -f "$IMAGES/$name.qcow2" "$IMAGES/$name-seed.iso" "/var/log/libvirt/qemu/$name.log" "/var/log/libvirt/qemu/$name-serial.log"
+  "${V[@]}" vol-delete --pool "$POOL" "$name.qcow2" >/dev/null 2>&1 || true
+  "${V[@]}" vol-delete --pool "$POOL" "$name-seed.iso" >/dev/null 2>&1 || true
   say "removed $name"
   if ! "${V[@]}" list --all --name | grep -q '^ptest-'; then
     "${V[@]}" net-destroy "$NET" >/dev/null 2>&1 || true
     "${V[@]}" net-undefine "$NET" >/dev/null 2>&1 || true
-    sudo rm -f "$IMAGES"/ptest-base-*.qcow2
+    local v; for v in $("${V[@]}" vol-list --pool "$POOL" 2>/dev/null | awk '$1 ~ /^ptest-base-/ {print $1}'); do
+      "${V[@]}" vol-delete --pool "$POOL" "$v" >/dev/null 2>&1 || true
+    done
     say "removed $NET and the cached images"
   fi
 }

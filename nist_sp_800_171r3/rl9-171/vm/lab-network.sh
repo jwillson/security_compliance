@@ -28,9 +28,11 @@
 # waits for a mirror it cannot name (DEFECTS 7.29). So when resolv.conf lists
 # no nameserver, the network is given a forwarder this host does answer from:
 # the first of systemd-resolved's stub, a resolver on 127.0.0.1 or ::1, then
-# the servers resolvectl and NetworkManager know - IPv6 and a router's
-# link-local address advertised by RA included - that resolves the mirror's
-# name (lib/dnsq.py asks each).
+# the servers in systemd-resolved's and NetworkManager's files - IPv6 and a
+# router's link-local address advertised by RA included - that resolves the
+# mirror's name (lib/dnsq.py asks each). It runs in the control-plane
+# container (TASKS C5): libvirt through its socket, the host's resolver files
+# as ./nist mounts them under /host.
 # NIST_LAB_DNS="IP ..." chooses instead (keep it set wherever you run make).
 # A changed forwarder is applied at once if no guest is on the network, and
 # otherwise when it next starts.
@@ -40,6 +42,7 @@
 # daemons that RHEL 9 and Fedora use).
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Name, bridge and subnet come from the XML, the one place they are defined.
 # NIST_LAB_NETWORK_XML points elsewhere only to test this on a throwaway
@@ -49,22 +52,21 @@ NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$XML" | head -1)
 BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
 SUBNET=$(sed -n "s:.*<ip address='\([0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*'.*:\1:p" "$XML" | head -1)
 [[ -n "$NET" && -n "$BRIDGE" && -n "$SUBNET" ]] || { echo "error: cannot read name, bridge and subnet from $XML" >&2; exit 2; }
-RESOLV="${NIST_RESOLV_CONF:-/etc/resolv.conf}"   # another file only for tools/test-lab-network.sh
+# The host's resolv.conf - what libvirt's dnsmasq reads (another file only for
+# tools/test-lab-network.sh).
+RESOLV="${NIST_RESOLV_CONF:-/host/etc/resolv.conf}"
 PROBE_NAME=$(sed -E 's#^[a-z]+://([^/:]+).*#\1#' <<<"${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}")
-V=(sudo virsh -c qemu:///system)
+V=(virsh -c "$NIST_LIBVIRT_URI")
 say()  { echo "==> $*"; }
 warn() { echo "warning: $*" >&2; }
 die()  { echo "error: $*" >&2; exit 1; }
 
 candidates() {   # resolvers this host might use, best first, one per line
   printf '%s\n' 127.0.0.53 127.0.0.1 ::1
-  command -v resolvectl >/dev/null 2>&1 && resolvectl dns 2>/dev/null | sed 's/^[^:]*: *//' | tr ' ' '\n'
-  # nmcli -t escapes the colons in a value; a link-local server is only
-  # usable with its interface, which nmcli gives as GENERAL.DEVICE.
-  command -v nmcli >/dev/null 2>&1 && nmcli -t -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show 2>/dev/null \
-    | awk '{ k = $0; sub(/:.*/, "", k); v = $0; sub(/^[^:]*:/, "", v); gsub(/\\/, "", v) }
-           k == "GENERAL.DEVICE" { dev = v; next }
-           k ~ /^IP[46]\.DNS/ && v != "" { if (v ~ /^fe80/ && v !~ /%/) v = v "%" dev; print v }'
+  # The upstream servers the host's resolvers know, from their own files
+  # (systemd-resolved's uplink list; NetworkManager's, stub or not).
+  cat /host/run/systemd/resolve/resolv.conf /host/run/NetworkManager/no-stub-resolv.conf \
+      /host/run/NetworkManager/resolv.conf 2>/dev/null | awk '/^nameserver/ {print $2}'
 }
 
 upstreams() {   # the forwarders dnsmasq needs - none while resolv.conf names a server
@@ -151,12 +153,12 @@ and the servers resolvectl and NetworkManager know). Fix the host's DNS, or name
   # forever at a console prompt nobody sees.
   [[ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" == 1 ]] \
     || warn "net.ipv4.ip_forward is 0: the guests cannot reach the internet (libvirt normally sets it; something reset it)"
-  if { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; } && command -v iptables >/dev/null 2>&1; then
-    if sudo iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP'; then
-      warn "Docker is installed and the FORWARD policy is DROP: traffic from $BRIDGE to the internet may be dropped. \
-If an install stalls fetching from the mirror, allow it: sudo iptables -I DOCKER-USER -i $BRIDGE -j ACCEPT; \
+  # Docker sets the FORWARD policy to DROP. Reading the rules needs root, so
+  # its bridge is what is looked for (sudo tools/diagnose-lab-net.sh reads them).
+  if ip link show docker0 >/dev/null 2>&1; then
+    warn "Docker runs on this host, and it usually sets the FORWARD policy to DROP: traffic from $BRIDGE to the internet may be dropped. \
+If an install stalls fetching from the mirror, allow it on the host: sudo iptables -I DOCKER-USER -i $BRIDGE -j ACCEPT; \
 sudo iptables -I DOCKER-USER -o $BRIDGE -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
-    fi
   fi
 }
 

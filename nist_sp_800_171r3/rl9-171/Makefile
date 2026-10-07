@@ -9,15 +9,24 @@ ROCKY_MIRROR := $(or $(NIST_ROCKY_MIRROR),https://dl.rockylinux.org/pub/rocky/9)
 ISO_URL := $(ROCKY_MIRROR)/isos/x86_64/Rocky-9.8-x86_64-boot.iso
 ISO     := iso/Rocky-9.8-x86_64-boot.iso
 
-# The pinned Ansible tooling (make tools) is on PATH for every target, so a
-# new host needs nothing installed by hand beyond what vm/host-check.sh names.
-NIST_BYO_LAB ?= $(HOME)/.local/share/nist-byo-lab
-# Not inside the control-plane container (./nist): it brings its own, and the
-# host's venv would not run there.
+# Every target runs in the control-plane container (TASKS C2): run outside
+# it, make runs again inside, through ./nist, with the same goals - so a host
+# needs podman or docker and, for the lab, the hypervisor; nothing else. Only
+# `make report` stays outside: it opens a file in the host's browser.
 ifndef NIST_IN_CONTAINER
-export PATH := $(NIST_BYO_LAB)/venv/bin:$(PATH)
-export ANSIBLE_COLLECTIONS_PATH := $(NIST_BYO_LAB)/collections
+GOALS := $(or $(MAKECMDGOALS),help)
+ifeq ($(GOALS),report)
+report:
+	@latest=$$(ls -t reports/*.html 2>/dev/null | head -1); \
+	 [ -n "$$latest" ] && { echo "opening $$latest"; xdg-open "$$latest" 2>/dev/null || echo "$$latest"; } \
+	 || echo "no reports yet - run make verify"
+else
+.PHONY: $(GOALS) _container
+$(GOALS): _container ; @:
+_container:
+	@./nist make $(MAKECMDGOALS)
 endif
+else
 
 # The inventory is the lab's, chosen here rather than by the operator: these
 # targets build, apply to and assess the kickstart lab, whose hosts are in
@@ -28,7 +37,7 @@ endif
 NIST_INVENTORY ?= inventory/kickstart.yml
 export NIST_INVENTORY
 
-.PHONY: help catalog catalog-present catalog-check secrets pki iso vm vm-log apply verify report clean destroy teardown host-check tools validate test all
+.PHONY: help catalog catalog-present catalog-check secrets pki iso vm vm-log apply verify clean destroy teardown host-check validate test all
 
 help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
@@ -48,21 +57,16 @@ help:
 	@echo "  make verify      assess all 97 requirements on the target"
 	@echo "  make report      open the newest HTML assessment report"
 	@echo "  make host-check  can this host run the lab, and what to install if not"
-	@echo "  make tools       the pinned ansible-core and collections (make all does it)"
 	@echo "  make destroy     remove the kickstart VMs, and the lab network if unused"
 	@echo "  make teardown    remove both labs and everything they left (asks first)"
 	@echo "  make clean       remove generated reports (keeps the ISO and secrets)"
 
 # From a bare host: check it, build the tooling, then the reference VM, harden
 # it and assess it. The lab network is created on the way (vm/lab-network.sh).
-all: host-check tools catalog-present secrets iso vm apply verify
+all: host-check catalog-present secrets iso vm apply verify
 
 host-check:
 	./vm/host-check.sh kickstart
-
-# ansible-core and the collections, at the versions CI pins.
-tools:
-	./vm/byo-lab-init.sh --tools-only
 
 catalog: catalog/requirements.json
 
@@ -111,12 +115,7 @@ pki:
 	  open('.secrets/admin_password','w').write(''.join(secrets.choice(a) for _ in range(24))+chr(10)); \
 	  open('.secrets/luks_passphrase','w').write(''.join(secrets.choice(a) for _ in range(40))+chr(10))"
 	@openssl passwd -6 -stdin < .secrets/admin_password > .secrets/admin_password_hash
-	@printf '%s\n' '#!/usr/bin/env bash' \
-	  '# Supplies the knowledge factor for hosts enforcing 03.05.03 MFA' \
-	  '# (sshd AuthenticationMethods publickey,password).' \
-	  'exec cat "$$(dirname "$$(readlink -f "$$0")")/admin_password"' \
-	  > .secrets/askpass.sh
-	@chmod 600 .secrets/* && chmod 700 .secrets/askpass.sh
+	@chmod 600 .secrets/*
 	@echo "generated .secrets/ (keep out of version control)"
 
 iso: $(ISO)
@@ -146,13 +145,8 @@ apply: catalog-present
 verify:
 	./verify.sh
 
-report:
-	@latest=$$(ls -t reports/*.html 2>/dev/null | head -1); \
-	 [ -n "$$latest" ] && { echo "opening $$latest"; xdg-open "$$latest" 2>/dev/null || echo "$$latest"; } \
-	 || echo "no reports yet - run make verify"
-
-# Both labs and everything they left on this host - guests, disks, snapshots,
-# firmware and TPM state, logs, the lab network, the staged ISO - keeping only
+# Both labs and everything they left in libvirt - guests, their volumes,
+# firmware and TPM state, the lab network, base images - keeping only
 # the inputs a rebuild needs (.secrets/, iso/, the BYO lab's secrets). Asks
 # first. tools/lab-residue.sh lists what is there at any time.
 teardown:
@@ -171,3 +165,5 @@ destroy:
 clean:
 	rm -rf reports/*.json reports/*.html
 	@echo "cleaned (ISO, catalog, secrets and inventories kept)"
+
+endif

@@ -19,8 +19,7 @@
 #   4. the way out: forwarding, a NAT rule for the lab subnet, and Docker's
 #      FORWARD DROP policy;
 #   5. the mirror itself, over HTTPS from the host;
-#   6. DNS inside a podman container, as the kickstart validator runs;
-#   7. the guests' own path, from inside the lab network: a throwaway network
+#   6. the guests' own path, from inside the lab network: a throwaway network
 #      namespace on the lab bridge, at an address DHCP never hands out, that
 #      resolves the mirror through the guests' DNS server and fetches from it -
 #      a small file, then 8 MB, which a path MTU problem (a VPN) lets the
@@ -34,6 +33,15 @@
 # No pipefail: several tests pipe into `grep -q`, whose early exit would
 # fail the pipeline with the writer's SIGPIPE and read as a failure.
 set -u
+# The one tool that runs privileged (TASKS C5): it puts a network namespace on
+# the lab bridge and reads the host's NAT rules, which need root. Run it with
+# sudo; it enters the control-plane container as root, privileged, on the
+# host's network, with the host's resolver files under /host.
+if [[ -z "${NIST_IN_CONTAINER:-}" ]]; then
+  [[ $(id -u) -eq 0 ]] || { echo "error: run it with sudo: it needs root for network namespaces and the NAT rules" >&2; exit 2; }
+  export NIST_PRIVILEGED=1
+fi
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 XML="$HERE/../vm/nist-lab-network.xml"
 NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$XML" | head -1)
@@ -50,20 +58,18 @@ dnsq() { python3 "$HERE/../lib/dnsq.py" "$@"; }   # SERVER NAME -> first A recor
 echo "== the path from a $NET guest to $MIRROR"
 
 echo "1. the host's resolver"
-[[ -L /etc/resolv.conf ]] && info "/etc/resolv.conf -> $(readlink -f /etc/resolv.conf)"
-ns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
+# The host's own resolv.conf - what libvirt's dnsmasq reads - as ./nist mounts it.
+ns=$(awk '/^nameserver/ {print $2}' /host/etc/resolv.conf 2>/dev/null | tr '\n' ' ')
 info "nameservers: ${ns:-none}"
 [[ "$ns" == "127.0.0.53 " ]] && info "only the systemd-resolved stub: right for this host and for libvirt's dnsmasq (which runs here), wrong for anything that copies resolv.conf into its own network (see 6)"
-if addr=$(getent hosts "$HOST" | awk '{print $1; exit}') && [[ -n "$addr" ]]; then ok "this host resolves $HOST ($addr)"
+if addr=$(getent hosts "$HOST" | awk '!f {print $1; f=1}') && [[ -n "$addr" ]]; then ok "this host resolves $HOST ($addr)"
 else bad "this host cannot resolve $HOST - fix the host's DNS first; nothing below can work"; fi
 if [[ -z "$ns" ]]; then
   # libvirt's dnsmasq takes its upstream servers from resolv.conf alone; the
   # host may resolve by another way, which is what this shows (DEFECTS 7.29).
-  info "how this host resolves without one - nsswitch hosts:$(awk '/^hosts:/ {$1 = ""; print}' /etc/nsswitch.conf 2>/dev/null)"
-  systemctl is-active --quiet systemd-resolved 2>/dev/null && info "systemd-resolved is running: $(resolvectl dns 2>/dev/null | tr '\n' ';')"
-  command -v nmcli >/dev/null 2>&1 && info "NetworkManager's DNS servers: $(nmcli -t -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show 2>/dev/null | grep -E '^IP[46]\.DNS' | cut -d: -f2- | tr -d '\\' | xargs)"
-  info "listening on port 53 here: $(sudo ss -Hlun 'sport = :53' 2>/dev/null | awk '{print $4}' | xargs)"
-  live=$(sudo virsh -c qemu:///system net-dumpxml "$NET" 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | sed -E "s/.*(addr='|server=)//; s/'$//" | xargs)
+  info "how this host resolves without one - systemd-resolved's servers: $(awk '/^nameserver/ {print $2}' /host/run/systemd/resolve/resolv.conf 2>/dev/null | xargs); NetworkManager's: $(cat /host/run/NetworkManager/no-stub-resolv.conf /host/run/NetworkManager/resolv.conf 2>/dev/null | awk '/^nameserver/ {print $2}' | xargs)"
+  info "listening on port 53 here: $(ss -Hlun 'sport = :53' 2>/dev/null | awk '{print $4}' | xargs)"
+  live=$(virsh -c "$NIST_LIBVIRT_URI" net-dumpxml "$NET" 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | sed -E "s/.*(addr='|server=)//; s/'$//" | xargs)
   if up=$("$HERE/../vm/lab-network.sh" upstream 2>/dev/null); then
     if [[ -n "$live" ]]; then ok "$NET forwards DNS to $live (this host answers from $up)"
     else bad "resolv.conf lists no nameserver and $NET has no forwarder, so its dnsmasq refuses every guest query (layer 3): vm/lab-network.sh ensure gives it $up - at once if no guest is on it, else when it next starts"; fi
@@ -71,12 +77,11 @@ if [[ -z "$ns" ]]; then
 fi
 
 echo "2. libvirt's dnsmasq for $NET"
-command -v dnsmasq >/dev/null 2>&1 && ok "dnsmasq installed" \
-  || bad "dnsmasq not installed: libvirt cannot serve DHCP or DNS to the guests (apt/dnf/pacman install dnsmasq)"
-info_out=$(sudo virsh -c qemu:///system net-info "$NET" 2>/dev/null)
-if grep -q 'Active: *yes' <<<"$info_out"; then ok "$NET is active"
-else bad "$NET is not active (vm/lab-network.sh ensure)"; fi
-pgrep -f "dnsmasq.*/$NET.conf" >/dev/null && ok "its dnsmasq is running" || bad "no dnsmasq running for $NET (sudo virsh -c qemu:///system net-destroy $NET; net-start $NET)"
+info_out=$(virsh -c "$NIST_LIBVIRT_URI" net-info "$NET" 2>/dev/null)
+# An active network means libvirt started its dnsmasq (a missing dnsmasq
+# fails the start, which vm/lab-network.sh reports).
+if grep -q 'Active: *yes' <<<"$info_out"; then ok "$NET is active, its dnsmasq with it"
+else bad "$NET is not active (vm/lab-network.sh ensure; without dnsmasq installed on the host it cannot start)"; fi
 
 echo "3. the guests' DNS: $GW, as a guest asks it"
 if r=$(dnsq "$GW" "$HOST"); then ok "$GW resolves $HOST ($r)"
@@ -84,10 +89,10 @@ else bad "$GW does not resolve $HOST ($r): dnsmasq cannot reach the host's upstr
 
 echo "4. the way out"
 [[ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" == 1 ]] && ok "forwarding on" || bad "net.ipv4.ip_forward is 0"
-if sudo nft list ruleset 2>/dev/null | grep -q "$SUBNET\.0/24" || sudo iptables -t nat -S 2>/dev/null | grep -q "$SUBNET\.0/24"; then
+if nft list ruleset 2>/dev/null | grep -q "$SUBNET\.0/24" || iptables -t nat -S 2>/dev/null | grep -q "$SUBNET\.0/24"; then
   ok "a NAT rule for $SUBNET.0/24"
 else bad "no NAT rule for $SUBNET.0/24 (libvirt adds it when $NET starts; a firewall reload can drop it - restart the network)"; fi
-if sudo iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; }; then
+if iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; }; then
   bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (vm/lab-network.sh prints the rules)"
 fi
 
@@ -110,13 +115,7 @@ elif (( v4 )); then
 elif (( v6 )); then ok "$MIRROR answers over IPv6 only"
 else bad "$MIRROR does not answer over IPv4 or IPv6: a proxy (https_proxy), a firewall, or the mirror - NIST_ROCKY_MIRROR=URL uses another (https://mirrors.rockylinux.org/mirrormanager/mirrors lists them)"; fi
 
-echo "6. DNS inside a container (the kickstart validator)"
-if command -v podman >/dev/null 2>&1; then
-  if out=$(sudo podman run --quiet --rm quay.io/rockylinux/rockylinux:9 getent hosts "$HOST" 2>&1) && [[ -n "$out" ]]; then ok "a podman container resolves $HOST"
-  else bad "a podman container cannot resolve $HOST: it copied a resolver it cannot reach (the systemd-resolved stub?) - $(tail -1 <<<"$out")"; fi
-else info "podman not installed: no kickstart validation, nothing to test"; fi
-
-echo "7. the guests' own path: from inside $NET"
+echo "6. the guests' own path: from inside $NET"
 # What the host can reach, a guest may not: the guests go out through the
 # lab bridge and NAT, where firewalld, Docker or a VPN's MTU can stop them
 # while the host's own curl works (DEFECTS 7.28). A namespace on the bridge
@@ -125,16 +124,16 @@ echo "7. the guests' own path: from inside $NET"
 NS=nistdiag$$ VETH=nd$$ PROBE=$SUBNET.250
 BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
 if ip link show "$BRIDGE" >/dev/null 2>&1; then
-  cleanup_ns() { sudo ip netns del "$NS" 2>/dev/null; sudo ip link del "$VETH" 2>/dev/null; sudo rm -rf "/etc/netns/$NS"; }
+  cleanup_ns() { ip netns del "$NS" 2>/dev/null; ip link del "$VETH" 2>/dev/null; rm -rf "/etc/netns/$NS"; }
   trap cleanup_ns EXIT
-  if ! { sudo ip netns add "$NS" && sudo ip link add "$VETH" type veth peer name eth0 netns "$NS" \
-         && sudo ip link set "$VETH" master "$BRIDGE" up \
-         && sudo ip -n "$NS" addr add "$PROBE/24" dev eth0 && sudo ip -n "$NS" link set eth0 up \
-         && sudo ip -n "$NS" link set lo up && sudo ip -n "$NS" route add default via "$GW"; }; then
+  if ! { ip netns add "$NS" && ip link add "$VETH" type veth peer name eth0 netns "$NS" \
+         && ip link set "$VETH" master "$BRIDGE" up \
+         && ip -n "$NS" addr add "$PROBE/24" dev eth0 && ip -n "$NS" link set eth0 up \
+         && ip -n "$NS" link set lo up && ip -n "$NS" route add default via "$GW"; }; then
     bad "could not set up the test namespace on $BRIDGE - this says nothing about the network itself"
   else
-  sudo mkdir -p "/etc/netns/$NS"; echo "nameserver $GW" | sudo tee "/etc/netns/$NS/resolv.conf" >/dev/null
-  inside() { sudo ip netns exec "$NS" "$@"; }
+  mkdir -p "/etc/netns/$NS"; echo "nameserver $GW" | tee "/etc/netns/$NS/resolv.conf" >/dev/null
+  inside() { ip netns exec "$NS" "$@"; }
   sleep 2
   resolved=0 pin=()
   if inside getent hosts "$HOST" >/dev/null 2>&1; then ok "from $PROBE, $HOST resolves through $GW"; resolved=1

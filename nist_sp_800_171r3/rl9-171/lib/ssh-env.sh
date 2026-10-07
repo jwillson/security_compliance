@@ -3,9 +3,11 @@
 #
 # 03.05.03 Multi-factor authentication: a hardened host requires
 # `AuthenticationMethods publickey,password`. The key is the possession factor;
-# SSH_ASKPASS supplies the knowledge factor, so the automation authenticates
-# with two factors like any other operator rather than the control being
-# switched off for it.
+# the knowledge factor is the account's password, which ansible answers
+# itself from ansible_password - the lab's .secrets/admin_password, or the
+# inventory's vault (TASKS C3) - handing it to ssh through shared memory. So
+# the automation authenticates with two factors like any other operator, and
+# no askpass script or environment variable carries the password.
 #
 # OpenSSH refuses to send a password to a host whose key it has not verified
 # ("Password authentication is disabled to avoid man-in-the-middle attacks"),
@@ -21,18 +23,21 @@
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/lib/inventory-env.sh" || return 1 2>/dev/null || exit 1
 
-# The knowledge factor. A lab inventory's hosts were built with the lab admin
-# password, so the lab askpass supplies it; for hosts you brought, the
-# operator's own SSH_ASKPASS is left alone (unset, a key-only login still
-# works until 03.05.03 is applied).
-if [ "$NIST_INVENTORY_KIND" = lab ]; then
-  if [ ! -x "$ROOT_DIR/.secrets/askpass.sh" ]; then
-    echo "error: $NIST_INVENTORY holds lab hosts but .secrets/askpass.sh is missing (make secrets)" >&2
-    return 1 2>/dev/null || exit 1
-  fi
-  export SSH_ASKPASS="$ROOT_DIR/.secrets/askpass.sh"
-  export SSH_ASKPASS_REQUIRE=force
-fi
+# A direct ssh (tools/lab-ssh.sh, tools/console.py) has no ansible to answer
+# for it: this writes a one-run askpass for HOST into the container's own
+# /dev/shm, printing the password ansible_password gives that host, and
+# echoes its path.
+nist_askpass_for() {
+  local f pw
+  # Rendered by ansible (a lab host's is a lookup, a vault's is encrypted);
+  # debug runs on the controller and connects to nothing.
+  pw=$(ansible "$1" -m ansible.builtin.debug -a 'msg={{ ansible_password | default("") }}' -o 2>/dev/null \
+       | python3 -c 'import json,sys; l=sys.stdin.read(); print(json.loads(l.split("=>",1)[1]).get("msg",""), end="")') || return 1
+  [ -n "$pw" ] || return 1
+  f=$(mktemp -p /dev/shm nist-askpass.XXXXXX)
+  printf '#!/bin/sh\ncat <<"EOF"\n%s\nEOF\n' "$pw" > "$f"; chmod 700 "$f"
+  echo "$f"
+}
 
 # "address<TAB>known_hosts file" for every cui_hosts member: the file its own
 # connection names (UserKnownHostsFile in ansible_ssh_common_args - the lab's

@@ -53,25 +53,20 @@ cd nist_sp_800_171r3/rl9-171
 make validate        # catalog <-> overlay <-> checks agree; no host needed
 ```
 
-To harden and assess hosts you already have, the workstation needs only
-podman or docker: `./nist` runs any command inside the control-plane
-container (`./nist make validate`, `./nist ./apply.sh`, `./nist ./verify.sh`;
-README, *Quick start*). The rest of this section is for running the labs,
-which build VMs on this host.
+The workstation needs podman or docker and nothing of this project: the
+tool runs only in its control-plane container, and every command - `make`,
+`./apply.sh`, `./verify.sh`, the tools - enters it by itself (README, *Quick
+start*; `./nist make ...` where `make` is not installed). The rest of this
+section is for running the labs, which build VMs on this host.
 
-Check the host first; it names what is missing and the `apt`, `dnf` or
-`pacman` command to install it, and installs nothing itself:
+For the lab the host also needs the hypervisor. Check it first: this asks
+libvirt, through its socket, for KVM, Secure Boot firmware, an emulated TPM,
+the default pool and memory, names the host's `apt`, `dnf` or `pacman`
+command for what is missing, and installs nothing itself:
 
 ```bash
-make host-check      # KVM, memory, libvirt, virt-install, swtpm, Secure Boot firmware, Python >= 3.12
-make tools           # the pinned ansible-core and collections (make all does it)
+make host-check      # libvirt as you, KVM, Secure Boot firmware, swtpm, the pool, memory
 ```
-
-`make tools` builds the Ansible this project pins (`vm/byo-lab-init.sh
---tools-only`, into `$NIST_BYO_LAB`, default `~/.local/share/nist-byo-lab`),
-and every `make` target puts it on `PATH`. To harden a host you brought with
-no lab at all, any `ansible-core` >= 2.14 with `python3-yaml` on `PATH` does;
-the collections install on the first `./apply.sh`.
 
 `make catalog` re-extracts `catalog/requirements.json` from
 `NIST.SP.800-171r3.pdf` and reproduces the committed file byte for byte. You
@@ -83,23 +78,29 @@ only need it if you change the extractor or substitute a different revision.
 
 ### An existing Rocky 9 host
 
-Neither the VM targets nor `.secrets/` are prerequisites. The role consumes
-two secrets, and a host you bring supplies them from the environment:
+Neither the VM targets nor `.secrets/` are prerequisites. A host you bring
+goes into the inventory, and its secrets into the inventory's vault - asked
+for without echo, encrypted with ansible-vault, never exported or typed on a
+command line (TASKS C3):
 
 ```bash
-cp inventory/hosts.yml.example inventory/hosts.yml
-$EDITOR inventory/hosts.yml
-export NIST_BECOME_PASSWORD=...  # sudo, if the host asks for one
-export NIST_GRUB_PASSWORD=...    # 03.10.07 bootloader superuser
-export NIST_LUKS_PASSPHRASE=...  # 03.08.09, only if the host has free VG space
+./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
+./tools/vault.sh     # the admin password (sudo and SSH), the GRUB password, the LUKS passphrase
 ```
 
-The GRUB superuser is `root` with `NIST_GRUB_PASSWORD`: GRUB asks for both to
+`./apply.sh` and `./verify.sh` ask for the vault password once per run, and
+Ansible answers sudo and the SSH password factor from it. For automation,
+`NIST_VAULT_PASSWORD_FILE` names a file, or a script that prints the vault
+password (a password manager). To read the vault back:
+`./nist ansible-vault view inventory/hosts.vault.yml`; to change a secret,
+`./tools/vault.sh inventory/hosts.yml --force`.
+
+The GRUB superuser is `root` with the vault's GRUB password: GRUB asks for both to
 edit a boot entry or reach its shell, never to boot one - every BLS entry is
 `--unrestricted`, and the role checks that before it sets a password and
 leaves the boot path alone if one is not (`pe-07-boot-entries-unrestricted`).
-To recover a host whose GRUB password is lost, boot normally, then re-apply
-with a new `NIST_GRUB_PASSWORD` (`--tags 03.10.07`); to remove it, empty
+To recover a host whose GRUB password is lost, boot normally, then put a new
+one in the vault and re-apply (`--tags 03.10.07`); to remove it, empty
 `/boot/grub2/user.cfg`.
 
 With a TPM, the passphrase is not what opens the CUI volumes day to day: the
@@ -115,9 +116,9 @@ BMC's, for a remote machine - at each reboot, `./apply.sh --reboot`
 included. `tools/probes/hardware.sh` tells you beforehand which kind of
 host you have.
 
-Leave one unset and the control it feeds is skipped with a warning and
-reported by `./verify.sh` as a deviation; the run does not abort. `.secrets/`
-is read only when the environment says nothing, which is how the lab works.
+Leave the LUKS passphrase empty and the control it feeds is skipped with a
+warning and reported by `./verify.sh` as a deviation; the run does not abort.
+The kickstart lab keeps its own secrets in `.secrets/` instead (`make secrets`).
 
 Install-time controls the role cannot retrofit — a separate `/var/log/audit`
 filesystem, FIPS from first boot — will be reported as deviations rather than
@@ -139,9 +140,10 @@ ssh HOST sudo bash -s < tools/probes/hardware.sh
 #    firmware must be UEFI; note Secure Boot, the TPM, and the disk's
 #    /dev/disk/by-id/ name - the one disk the install will wipe.
 
-# 2. Its install ISO (written 0600 under iso/: it holds the admin password's hash):
+# 2. Its secrets, then its install ISO (written 0600 under iso/: it holds the
+#    admin password's hash, taken from the vault):
 make iso
-export NIST_BECOME_PASSWORD=...           # the admin account's password, and sudo's
+./tools/vault.sh
 ./install/iso.sh HOST --disk /dev/disk/by-id/ID [--console tty0|ttyS1] [--key ~/.ssh/id_rsa.pub]
 ```
 
@@ -153,7 +155,6 @@ export NIST_BECOME_PASSWORD=...           # the admin account's password, and su
 
 ```bash
 ./tools/inventory.py add HOST --ip ADDRESS --user cuiadmin --connection byo --key ~/.ssh/id_rsa
-export NIST_GRUB_PASSWORD=... NIST_LUKS_PASSPHRASE=...
 ./apply.sh --limit HOST --reboot && ./verify.sh --host HOST
 ```
 
@@ -239,21 +240,22 @@ time you hit it.
 | Symptom | Cause | What to do |
 |---|---|---|
 | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` | FIPS policy (03.13.11) excludes ed25519 | Use RSA >= 3072 or ECDSA P-256/384. `make secrets` generates RSA-3072. |
-| Key alone no longer authenticates; you are asked for a password | 03.05.03 sets `AuthenticationMethods publickey,password` | Expected. Source `lib/ssh-env.sh`, or type the password from `.secrets/admin_password`. See below. |
+| Key alone no longer authenticates; you are asked for a password | 03.05.03 sets `AuthenticationMethods publickey,password` | Expected. `./tools/lab-ssh.sh HOST` answers both factors; see below. |
 | Host key changed after the first apply | 03.13.10 removes the weak DSA/ECDSA host keys | Expected once. `apply.sh` re-records it on success. `verify.sh` never does — an *unexpected* change stays an error. |
 | `ping` times out | firewalld default zone target is DROP (03.13.06) | Not a fault. The host is reachable on its permitted services. |
 | `last`, `lastlog`, `w` need root | `wtmp`/`btmp`/`lastlog` are audit information under 03.03.08a, mode 0600 | Use `sudo`. |
 
-### Anything outside apply.sh / verify.sh needs the SSH environment
+### A plain ssh needs both factors
 
 This is the first thing that will confuse you, and it is the control working.
 
 After `./apply.sh`, `sshd -T` reports
 `authenticationmethods publickey,password` (03.05.03). Your key authenticates
-as factor one and sshd then demands factor two. `apply.sh` and `verify.sh`
-source `lib/ssh-env.sh`, which points `SSH_ASKPASS` at `.secrets/askpass.sh`
-and sets `SSH_ASKPASS_REQUIRE=force` so ssh uses it even with a terminal
-attached. Nothing else does.
+as factor one and sshd then demands factor two. The tools answer it through
+Ansible, from the host's `ansible_password` - the vault, or the kickstart
+lab's `.secrets/admin_password` - handed to ssh through shared memory; and
+`./tools/lab-ssh.sh HOST` gives an interactive session with both factors
+answered the same way. A plain `ssh` does neither.
 
 So a plain `ssh` prompts you for the admin password:
 
@@ -262,18 +264,15 @@ cuiadmin@10.0.0.10: Permission denied (password).     # with BatchMode
 cuiadmin@10.0.0.10's password:                        # without
 ```
 
-and a bare `ansible` fails with
-`Timeout waiting for privilege escalation prompt`.
-
-Use the scripts, which supply the second factor from the inventory and the
-lab's askpass, so nothing is typed and nothing wrong is offered (three wrong
-passwords lock the account, 03.01.08):
+Use the tools, which take the second factor from the inventory - so nothing
+is typed and nothing wrong is offered (three wrong passwords lock the
+account, 03.01.08):
 
 ```bash
 ./tools/lab-ssh.sh rl9-cui-01                         # a shell
 ./tools/lab-ssh.sh rl9-cui-01 'sudo systemctl status auditd'
 ./tools/lab-console.sh rl9-cui-01                     # the serial console, when SSH cannot
-bash -c '. lib/ssh-env.sh; ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'
+NIST_INVENTORY=inventory/kickstart.yml ./nist ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"
 ```
 
 Both find the host in whichever lab's inventory lists it. What you must not do is
@@ -545,11 +544,12 @@ one: ports no `authorized-ports.d` fragment declares are removed on apply.
 
 ## When you are locked out
 
-Console access is the way back in. On a lab guest:
+Console access is the way back in - on a lab guest through libvirt, on a
+bare-metal machine its BMC's (serial-over-LAN or virtual KVM):
 
 ```bash
-sudo virsh -c qemu:///system console rl9-cui-01
-sudo virsh -c qemu:///system console rl9-log-01   # the collector
+./tools/lab-console.sh rl9-cui-01
+./tools/lab-console.sh rl9-log-01   # the collector
 ```
 
 `./tools/inventory.py show` lists the guests and their addresses.
@@ -639,11 +639,12 @@ So change it, then update the stored copy, then run anything else:
    same day.
 2. Change it on the host, over one interactive session:
    `ssh <user>@<host>` (key, then the current password) and `passwd`.
-3. At once, update where the workstation keeps it: `NIST_BECOME_PASSWORD`
-   and whatever your `SSH_ASKPASS` reads (BYO lab: `$NIST_BYO_LAB/byoadmin_password`;
-   kickstart lab: `.secrets/admin_password`). One password for several
-   hosts means changing it on each before updating the copy - or give each
-   host its own.
+3. At once, update where the workstation keeps it: the inventory's vault
+   (`./tools/vault.sh INVENTORY --force`; the BYO lab: its
+   `$NIST_BYO_LAB/byoadmin_password`, then `vm/byo-lab-init.sh` after
+   removing `inventory/hosts.vault.yml`; the kickstart lab:
+   `.secrets/admin_password`). One password for several hosts means changing
+   it on each before updating the copy - or give each host its own.
 4. `./verify.sh --host <host> --requirement 03.05.12`: the connection
    works with the new factor and `ia-12-exempt-rotated` passes.
 

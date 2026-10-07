@@ -15,10 +15,11 @@ pending prompt left by an earlier session is cancelled, never answered: an
 empty answer is a failed authentication and counts towards faillock
 (DEFECTS 3.2).
 
-The login password is read from $NIST_CONSOLE_PASSWORD, else from
-$NIST_BYO_LAB/byoadmin_password (default ~/.local/share/nist-byo-lab). Set
-CONSOLE_TRANSCRIPT=<file> to keep the raw console output. Needs pexpect
-(python3-pexpect, or `uv pip install pexpect` in the lab venv).
+The login password is read from $NIST_CONSOLE_PASSWORD (automation), else
+from $NIST_BYO_LAB/byoadmin_password (default ~/.local/share/nist-byo-lab).
+Set CONSOLE_TRANSCRIPT=<file> to keep the raw console output. Runs in the
+control-plane container (python3-pexpect is in the image), through the
+libvirt socket; started outside, it enters the container itself.
 
 Moved into the repository from the lab directory on 2026-09-26 (AGENTS.md,
 Doctrine), where it had been written for the Phase 3 rehearsals and knew only
@@ -30,7 +31,14 @@ import os
 import re
 import sys
 
-import pexpect
+# The tool runs only in its container (TASKS C2): from outside, run this again
+# inside, through ./nist. As a module (imported by a rehearsal) it is already
+# inside.
+if __name__ == "__main__" and not os.environ.get("NIST_IN_CONTAINER"):
+    _nist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nist")
+    os.execv(_nist, [_nist, os.path.abspath(sys.argv[0])] + sys.argv[1:])
+
+import pexpect  # noqa: E402 - after the container entry, which needs only the stdlib
 
 LAB = os.environ.get("NIST_BYO_LAB", os.path.expanduser("~/.local/share/nist-byo-lab"))
 PROMPT = "NISTCONSOLE> "
@@ -59,7 +67,7 @@ class Console:
     def __init__(self, host: str, user: str = "byoadmin", timeout: int = 90):
         self.host, self.user = host, user
         self.login_prompt = f"{host} login: "   # getty's; 'Last login:' must not match
-        self.c = pexpect.spawn("virsh", ["-c", "qemu:///system", "console", host, "--force"],
+        self.c = pexpect.spawn("virsh", ["-c", os.environ.get("NIST_LIBVIRT_URI", "qemu:///system"), "console", host, "--force"],
                                encoding="utf-8", timeout=timeout)
         self.c.logfile_read = open(os.environ.get("CONSOLE_TRANSCRIPT", "/dev/null"), "a")
         self.c.expect("Escape character")
