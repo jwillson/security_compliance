@@ -32,7 +32,8 @@ RUN apt-get update \
 COPY requirements.yml /tmp/requirements.yml
 RUN python3 -m venv /opt/ansible \
  && /opt/ansible/bin/pip install --no-cache-dir "ansible-core==${ANSIBLE_CORE}" "pyyaml==${PYYAML}" "pykickstart==${PYKICKSTART}" \
- && /opt/ansible/bin/ansible-galaxy collection install -p /opt/collections -r /tmp/requirements.yml \
+ && ANSIBLE_COLLECTIONS_PATH=/opt/collections \
+    /opt/ansible/bin/ansible-galaxy collection install -p /opt/collections -r /tmp/requirements.yml \
  && rm /tmp/requirements.yml
 
 # The venv last: virt-install runs `#!/usr/bin/env python3` and needs the

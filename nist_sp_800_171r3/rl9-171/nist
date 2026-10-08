@@ -64,7 +64,10 @@ mounts=(-v "$REPO:$REPO")
 # uploaded into a pool) adds "-v SRC:DST:ro ..." here.
 read -r -a extra <<<"${NIST_CONTAINER_MOUNTS:-}"
 mounts+=(${extra[@]+"${extra[@]}"})
-[[ -d "$HOME/.ssh" ]] && mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
+# Made if missing (0700, as ssh wants it): unmounted, a key ssh-keygen wrote
+# inside stayed inside and went with the container.
+install -d -m 0700 "$HOME/.ssh"
+mounts+=(-v "$HOME/.ssh:$HOME/.ssh")
 # Where the host resolves names, read-only, for vm/lab-network.sh's DNS
 # forwarder (DEFECTS 7.29): the host's own resolv.conf - what libvirt's
 # dnsmasq reads; the container's is podman's - and systemd-resolved's and
@@ -109,8 +112,11 @@ if [[ "${NIST_PRIVILEGED:-}" == 1 ]]; then
   priv=(--privileged)
 fi
 
+# The command is looked for first: catatonit, the init, reported a missing
+# one as "failed to exec pid1: No such file or directory".
 # --init: a small init as PID 1 forwards signals, so a command run here
 # stops when told to; as PID 1 itself it ignored SIGTERM and outlived the
 # tool that started it (DEFECTS 7.34).
 exec "$RT" run --rm --init "${tty[@]}" ${priv[@]+"${priv[@]}"} --network host --security-opt label=disable "${user[@]}" \
-  "${mounts[@]}" "${envs[@]}" -w "$PWD" "$image" "$@"
+  "${mounts[@]}" "${envs[@]}" -w "$PWD" "$image" \
+  sh -c 'command -v "$1" >/dev/null 2>&1 || { echo "error: no command \"$1\" in the control-plane image (./nist bash for a shell)" >&2; exit 127; }; exec "$@"' nist "$@"
