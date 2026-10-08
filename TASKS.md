@@ -321,12 +321,10 @@ is proven by fresh runs.
       `install-log` - pools for ISOs, images and seeds, the console by
       `tools/console-record.sh`, no `sudo`. `diagnose-lab-net.sh` alone runs
       privileged (`sudo`, network namespaces and NAT rules).
-- [ ] **C6 Proof:** fresh `make all` with the collector, the BYO release run
-      (rebuild), the bare-metal rehearsal, the container, network and console
-      tests; `make teardown` leaves nothing. Done so far (DEFECTS 7.37):
-      teardown, the kickstart lab and collector, the BYO directory's
-      migration, the network and console tests. Open: the BYO release run and
-      the bare-metal rehearsal, from the commit.
+- [x] **C6 Proof.** Teardown to nothing, the kickstart lab and collector
+      (0 of 351 failed each), the BYO release run (PASS, as native), the
+      bare-metal rehearsal through the vault (0 of 351), the container,
+      network and console tests - all in the container (DEFECTS 7.37).
 - [ ] **C7 A misleading warning on re-apply.** With the CUI and backup
       volumes already made, `03.08.09 | Warn if there is not enough free
       space` still says vg_sys has too little room - the space left after

@@ -38,13 +38,16 @@ if [[ -n "$host" ]]; then
   # =3) is kept in reports/runs/, its authentication lines shown, since the
   # one-line message rarely names the cause. A failed attempt can earn a
   # sshd PerSourcePenalties lockout (RUNBOOK, "When you are locked out").
-  out=$(./nist ansible "$host" -b -m ansible.builtin.command -a "id -u" </dev/null 2>&1)
+  # Through lib/ssh-env.sh, as every tool runs ansible: it adds the
+  # inventory's vault, without which a host you brought has no password for
+  # the second factor (a bare `ansible` offered none, and was refused).
+  out=$(./nist bash -c '. lib/ssh-env.sh && ansible "$1" -b -m ansible.builtin.command -a "id -u"' _ "$host" </dev/null 2>&1)
   if grep -qE "^$host \| CHANGED.*" <<<"$out" && grep -qx 0 <<<"$out"; then
     ok "ad-hoc ansible -b reaches $host from inside, as root"
   else
     bad "ad-hoc ansible -b: $(grep -m1 -E 'msg|UNREACHABLE|FAILED' <<<"$out")"
     mkdir -p reports/runs; trace=reports/runs/test-container-adhoc-$(date -u +%Y%m%dT%H%M%SZ).log
-    ./nist ansible "$host" -b -m ansible.builtin.command -a "id -u" -vvvv -e ansible_ssh_verbosity=3 </dev/null >"$trace" 2>&1
+    ./nist bash -c '. lib/ssh-env.sh && ansible "$1" -b -m ansible.builtin.command -a "id -u" -vvvv -e ansible_ssh_verbosity=3' _ "$host" </dev/null >"$trace" 2>&1
     echo "      trace: $trace"
     grep -E 'debug1: (Authentications|Next auth|Server accepts|Authenticated|Offering|read_passphrase|Entering|Sending command|mux)|ssh_askpass|Permission denied|BECOME|msg' "$trace" | tail -25 | sed 's/^/      /'
   fi

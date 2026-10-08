@@ -272,7 +272,7 @@ account, 03.01.08):
 ./tools/lab-ssh.sh rl9-cui-01                         # a shell
 ./tools/lab-ssh.sh rl9-cui-01 'sudo systemctl status auditd'
 ./tools/lab-console.sh rl9-cui-01                     # the serial console, when SSH cannot
-NIST_INVENTORY=inventory/kickstart.yml ./nist ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"
+./nist bash -c '. lib/ssh-env.sh && ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'   # ansible by hand: the inventory and its vault
 ```
 
 Both find the host in whichever lab's inventory lists it. What you must not do is

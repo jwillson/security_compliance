@@ -1900,6 +1900,16 @@ public when it had not.*
       `make all` built and hardened the kickstart CUI host (35/34/0/28, 0 of
       351 failed) and the collector (36/33/0/28, 0 of 351), and
       `byo-lab-init.sh` migrated the BYO lab directory (vault created; venv,
-      collections, tools.sh and askpass removed). The BYO release run, which
-      refuses an uncommitted tree, and the bare-metal rehearsal through the
-      vault follow from this commit (TASKS C6).
+      collections, tools.sh and askpass removed). Then, from `b2e6259`: the
+      BYO release run - three guests rebuilt from the stock image, cycled
+      with every secret from the vault - PASS, the results identical to the
+      last native run (byo-log-01 and byo-rl9-01 34/30/5/28, 9 failed, the
+      stock layout's known limits; byo-rl9-02 35/33/1/28, 2), and
+      lab-from-scratch ended with no orphan; the bare-metal rehearsal through
+      the vault - the ISO's admin password from it, ansible answering every
+      factor, the no-TPM reboot stopping for the passphrase - PASS,
+      35/34/0/28, 0 of 351 failed; `tools/test-container.sh byo-rl9-02` PASS
+      (10/10), its ad-hoc check now through `lib/ssh-env.sh` as every tool
+      runs ansible: a bare `./nist ansible` has no vault, offered no
+      password for the second factor, and was refused (one faillock strike,
+      aged out).
