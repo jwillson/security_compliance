@@ -99,7 +99,10 @@ mounts+=(-v "$passwd:/etc/passwd:ro")
 if (( uid == 0 )); then user=()
 elif [[ "$(basename "$RT")" == podman ]]; then user=(--userns=keep-id --group-add keep-groups)
 else user=(--user "$uid:$gid"); for g in $(id -G); do user+=(--group-add "$g"); done; fi
-tty=(); [[ -t 0 && -t 1 ]] && tty=(-it)
+# stdin always (-i), so a command can be fed - `./nist ssh HOST sudo bash -s
+# < tools/probes/hardware.sh` got nothing without it; a terminal only when
+# there is one.
+tty=(-i); [[ -t 0 && -t 1 ]] && tty=(-it)
 priv=()
 if [[ "${NIST_PRIVILEGED:-}" == 1 ]]; then
   (( uid == 0 )) || { echo "error: NIST_PRIVILEGED needs root (sudo)" >&2; exit 2; }

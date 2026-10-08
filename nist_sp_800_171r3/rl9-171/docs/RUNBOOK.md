@@ -135,14 +135,15 @@ one machine; the workstation needs only podman or docker (it runs in the
 control-plane image).
 
 ```bash
-# 1. What the machine offers, if it runs any Linux now (read-only):
-ssh HOST sudo bash -s < tools/probes/hardware.sh
+# 1. What the machine offers, if it runs any Linux now (read-only; no root needed):
+./nist ssh USER@HOST bash -s < tools/probes/hardware.sh
 #    firmware must be UEFI; note Secure Boot, the TPM, and the disk's
 #    /dev/disk/by-id/ name - the one disk the install will wipe.
 
 # 2. Its secrets, then its install ISO (written 0600 under iso/: it holds the
-#    admin password's hash, taken from the vault):
-make iso
+#    admin password's hash, taken from the vault). An RSA key first, if you
+#    have none: ./nist ssh-keygen -t rsa -b 3072
+make iso                                  # ./nist make iso, where make is not installed
 ./tools/vault.sh
 ./install/iso.sh HOST --disk /dev/disk/by-id/ID [--console tty0|ttyS1] [--key ~/.ssh/id_rsa.pub]
 ```

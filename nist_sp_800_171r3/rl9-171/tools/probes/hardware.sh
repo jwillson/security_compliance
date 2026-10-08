@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # What a machine offers the controls that depend on hardware, before it is
-# installed or hardened (DEFECTS 7.35). Read-only, as root.
+# installed or hardened (DEFECTS 7.35). Read-only; root is not needed.
 #
-#   tools/probe.sh hardware HOST                 a host in an inventory
-#   ssh HOST sudo bash -s < tools/probes/hardware.sh   any Linux, before it is one
+#   tools/probe.sh hardware HOST                          a host in an inventory
+#   ./nist ssh USER@HOST bash -s < tools/probes/hardware.sh   any Linux, before it is one
 #
 # Firmware mode, Secure Boot (03.08.09: the LUKS keys seal to it), the TPM
 # (whether they can be sealed at all - without one, every boot waits for the
@@ -39,7 +39,9 @@ if have lshw; then
   [[ -n "$sec" ]] && say lshw-security "$sec"
 fi
 
-if have dmidecode; then
+# dmidecode reads the firmware tables only as root; /sys/class/dmi says the
+# same to anyone.
+if have dmidecode && [[ $(id -u) -eq 0 ]]; then
   say system "$(dmidecode -s system-manufacturer 2>/dev/null) $(dmidecode -s system-product-name 2>/dev/null)"
   say bios "$(dmidecode -s bios-vendor 2>/dev/null) $(dmidecode -s bios-version 2>/dev/null) ($(dmidecode -s bios-release-date 2>/dev/null))"
 else

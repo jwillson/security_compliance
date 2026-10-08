@@ -286,7 +286,8 @@ CUI volumes ask for the passphrase at every boot (ODP-REVIEW I5).
 
 - [ ] **B1 Probe the spare machine.** `tools/probes/hardware.sh` (committed):
       firmware mode, Secure Boot, TPM, board and BIOS, disks by id. If it runs
-      Linux now: `ssh HOST sudo bash -s < tools/probes/hardware.sh`. Its disk
+      Linux now: `./nist ssh USER@HOST bash -s < tools/probes/hardware.sh`
+      (no root needed). Its disk
       id is the `--disk` of B2.
 - [ ] **B2 A bare-metal install ISO.** `install/iso.sh`, the kickstart
       from `install/render-kickstart.sh`, built in the control-plane image.
