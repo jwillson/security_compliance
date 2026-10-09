@@ -211,6 +211,23 @@ def agent_key() -> None:
         sys.exit(f"error: the SSH agent holds no key it can use: {FIPS_KEY_HINT}")
 
 
+def forget_host_key(ip: str, connection: str) -> None:
+    """Adding a host is the moment its key is trusted: an older key recorded
+    for the address - a machine reinstalled, or a lab address handed out
+    again - is forgotten, and the next connection records the current one
+    (lib/ssh-env.sh). Kept, it made StrictHostKeyChecking refuse the host
+    with "REMOTE HOST IDENTIFICATION HAS CHANGED", and the operator had to
+    run ssh-keygen -R by hand."""
+    import subprocess
+    kh = ROOT / ".secrets" / "known_hosts" if connection == "lab" else Path.home() / ".ssh" / "known_hosts"
+    if not kh.exists():
+        return
+    if subprocess.run(["ssh-keygen", "-F", ip, "-f", str(kh)], capture_output=True).returncode == 0:
+        subprocess.run(["ssh-keygen", "-R", ip, "-f", str(kh)], capture_output=True)
+        Path(str(kh) + ".old").unlink(missing_ok=True)   # ssh-keygen's copy, the old key in it
+        print(f"forgot the host key recorded for {ip} in {kh}; the next connection records its current one")
+
+
 def cmd_add(args) -> int:
     data = load()
     host = dict(CONNECTIONS[args.connection])
@@ -235,6 +252,7 @@ def cmd_add(args) -> int:
 
     rewire(data)
     save(data)
+    forget_host_key(args.ip, args.connection)
     print(f"{args.name} ({args.role}) -> {INVENTORY.relative_to(ROOT)}")
     return 0
 

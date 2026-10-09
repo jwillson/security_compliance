@@ -1951,3 +1951,13 @@ public when it had not.*
       `NIST_LAB_DNS=IP` still chooses. *Proven* by `./nist test-lab-network`
       (13/13): a mirror name nothing resolves stands in for a host whose
       resolver the container cannot see, and the forwarder stays.
+- [x] **7.40 A reinstalled machine was refused for its new host key.** After a
+      fresh install the host has new SSH host keys; the one recorded for its
+      address made StrictHostKeyChecking refuse it ("REMOTE HOST
+      IDENTIFICATION HAS CHANGED"), and the operator had to run `ssh-keygen
+      -R` by hand. *Fix:* `./nist inventory add` - the moment a host is
+      trusted - forgets the key recorded for the address in the file its
+      connection uses (`.secrets/known_hosts`, or `~/.ssh/known_hosts`), and
+      ssh-keygen's `.old` copy holding it, and says so; the next connection
+      records the current key. *Proven* on a TEST-NET address with a planted
+      entry: forgotten, no `.old` left.

@@ -185,6 +185,14 @@ Without a TPM, the reboot in step 4 waits for the LUKS passphrase at that
 console. `tools/rehearse-baremetal.sh` is this procedure in the lab - a guest
 booted from the ISO alone, UEFI, no TPM - and proves it end to end.
 
+**Reinstalling a machine you already have** is the same procedure: probe it
+while it still runs (its UEFI mode and the system disk's by-id name), back
+up what you need from that disk, build its ISO, boot it. Only the named disk
+is wiped. Then register it again with `./nist inventory add` - which forgets
+the host key recorded for its address, so the reinstalled machine's new key
+is taken on the next connection instead of being refused as a changed
+identity - and apply. The install uses DHCP.
+
 ### The reference VM
 
 ```bash
