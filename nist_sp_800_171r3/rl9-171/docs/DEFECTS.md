@@ -1913,3 +1913,30 @@ public when it had not.*
       runs ansible: a bare `./nist ansible` has no vault, offered no
       password for the second factor, and was refused (one faillock strike,
       aged out).
+
+- [x] **7.38 The boundary was invisible, and `python3` and `make` were still
+      host tools.** Each script entered the container by itself, so
+      `./apply.sh` looked like a host script, and `tools/inventory.py` needed
+      the host's `python3` to read the lines that hand it over (`make`, the
+      host's `make`). The owner asked why they still ran outside. *Fix:*
+      `./nist` is the one command run on the host, with subcommands - `apply`,
+      `verify`, `inventory`, `vault`, `iso`, `lab-ssh`, `lab-console`,
+      `build-vm`, `host-check`, `teardown`, `residue`, `sudo ./nist diagnose`
+      and the rest (`./nist help`); `./nist make TARGET` and any program in
+      the image (`./nist ssh-keygen`) as before. The docs and every hint a
+      script prints use these forms; the scripts keep their own entry line
+      as a safety net only. A missing command is named plainly (catatonit,
+      the init, said "failed to exec pid1"); `~/.ssh` is made if missing,
+      since a key generated into an unmounted one went with the container.
+      *Existing keys (the owner's question):* a host's key is any file under
+      `~/.ssh` (`--key ~/.ssh/NAME`) or one the operator's SSH agent holds
+      (`--key agent`: `./nist` hands the agent's socket to the container,
+      so a private key kept elsewhere or on a hardware token never enters
+      it). `./nist inventory add` and `./nist iso` refuse a key the role's
+      FIPS policy will reject - anything but RSA >= 3072 and ECDSA P-256/384
+      - instead of letting it lock the admin out at the first apply.
+      *Proven:* `./nist help`; `./nist inventory show`, `./nist host-check`,
+      `./nist verify --host byo-rl9-02` (PASS) from the host; with a
+      throwaway agent: its keys seen inside, an ed25519-only agent and an
+      ed25519 key file refused, an RSA-3072 agent key accepted (no key file
+      written to the inventory), `./nist iso --key agent` built.

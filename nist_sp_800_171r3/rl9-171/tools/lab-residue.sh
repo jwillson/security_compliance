@@ -48,7 +48,7 @@ fi
 for pool in $("${V[@]}" pool-list --name 2>/dev/null); do
   for f in $("${V[@]}" vol-list --pool "$pool" 2>/dev/null | awk 'NR > 2 && NF {print $1}'); do
     case "$f" in
-      Rocky-*-boot.iso) show iso "$pool/$f" "staged by an older build-vm.sh; make teardown removes it" ;;
+      Rocky-*-boot.iso) show iso "$pool/$f" "staged by an older build-vm.sh; ./nist teardown removes it" ;;
       rocky9-genericcloud-base.qcow2) show base "$pool/$f" "BYO base image" ;;
       ptest-base-*.qcow2) show base "$pool/$f" "portability test image" ;;
       *) lab_name "$f" || continue; show volume "$pool/$f" "$(owner_of "$f")" ;;

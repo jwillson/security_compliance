@@ -114,18 +114,18 @@ if [[ $DESTROY -eq 1 ]]; then
 fi
 
 # --- preflight ---------------------------------------------------------------
-[[ -d "$SECRETS" ]] || die "missing $SECRETS (run make secrets)"
+[[ -d "$SECRETS" ]] || die "missing $SECRETS (./nist make secrets)"
 for f in admin_password_hash id_rsa id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
 done
-[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.8-x86_64-boot.iso (run make iso)"
+[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.8-x86_64-boot.iso (./nist make iso)"
 # The lab network: nothing created it on a new host, so the build failed or
 # hung there (DEFECTS 7.17). Only what is missing is done.
 "$HERE/lab-network.sh" ensure
 # The inventory takes this host before the install, not after it (DEFECTS 7.31).
 "$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed: $NIST_INVENTORY is not this lab's - \
 the kickstart lab's own is inventory/kickstart.yml, used unless NIST_INVENTORY names another"
-"${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 && die "domain $VM_NAME already exists - run '$0 --name $VM_NAME --destroy' first"
+"${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 && die "domain $VM_NAME already exists - run './nist build-vm --name $VM_NAME --destroy' first"
 pool_path=$("${V[@]}" pool-dumpxml "$POOL" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
 [[ -n "$pool_path" ]] || die "no storage pool '$POOL' in $NIST_LIBVIRT_URI"
 
@@ -182,14 +182,14 @@ while kill -0 "$vi_pid" 2>/dev/null; do
 done
 if [[ -n "$why" ]]; then
   kill "$vi_pid" 2>/dev/null || true; kill "$rec" 2>/dev/null || true
-  echo "error: $why. What the installer said (tools/install-log.sh $CONSOLE):" >&2
+  echo "error: $why. What the installer said (./nist install-log $VM_NAME):" >&2
   "$ROOT/tools/install-log.sh" "$CONSOLE" 2>&1 | sed 's/^/  /' >&2
   cat >&2 <<EOF
 If an error above names the kickstart, a disk or a package, that is the
-cause. Otherwise run tools/diagnose-lab-net.sh: it tests each layer between a
+cause. Otherwise run sudo ./nist diagnose: it tests each layer between a
 guest and the mirror and names the one that fails.
-The VM is left running to inspect:  ./tools/lab-console.sh $VM_NAME
-Remove it afterwards:               $0 --name $VM_NAME --role $VM_ROLE --destroy
+The VM is left running to inspect:  ./nist lab-console $VM_NAME
+Remove it afterwards:               ./nist build-vm --name $VM_NAME --destroy
 EOF
   exit 1
 fi
@@ -219,7 +219,7 @@ for _ in $(seq 1 60); do
   [[ -n "$IP" ]] && break
   sleep 5
 done
-[[ -n "$IP" ]] || die "could not determine the guest IP (./tools/lab-console.sh $VM_NAME)"
+[[ -n "$IP" ]] || die "could not determine the guest IP (./nist lab-console $VM_NAME)"
 log "guest is at $IP"
 
 # --- register in the Ansible inventory ---------------------------------------
@@ -248,16 +248,16 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 kill "$rec" 2>/dev/null || true
-(( ssh_up )) || die "no SSH to $ADMIN_USER@$IP after 5 minutes (./tools/lab-console.sh $VM_NAME)"
+(( ssh_up )) || die "no SSH to $ADMIN_USER@$IP after 5 minutes (./nist lab-console $VM_NAME)"
 
 # The forwarding advice only applies when there is no collector yet.
 if [[ "$VM_ROLE" == "log" ]]; then
   NEXT_HINT="
-  This host receives forwarded audit records. make pki && make apply
+  This host receives forwarded audit records. ./nist make pki && ./nist make apply
   configures both halves: every CUI host forwards, and this one listens.
   Then 03.03.05c is verified rather than reported MANUAL:
 
-             make verify
+             ./nist make verify
 "
 elif "$ROOT/tools/inventory.py" show 2>/dev/null | grep -q ' log '; then
   NEXT_HINT=""
@@ -267,7 +267,7 @@ else
   there is nowhere to forward to, so the assessor reports it MANUAL. Build
   the collector and re-apply to close that:
 
-             make vm-log && make pki && make apply
+             ./nist make vm-log && ./nist make pki && ./nist make apply
 "
 fi
 
@@ -284,14 +284,14 @@ cat <<DONE
   Address:   $IP
   User:      $ADMIN_USER  (password in .secrets/admin_password)
   Inventory: $NIST_INVENTORY
-  SSH:       ./tools/lab-ssh.sh $VM_NAME      (both factors, as apply does)
-  Console:   ./tools/lab-console.sh $VM_NAME  (when SSH cannot reach it)
+  SSH:       ./nist lab-ssh $VM_NAME      (both factors, as apply does)
+  Console:   ./nist lab-console $VM_NAME  (when SSH cannot reach it)
   Install:   $OUT (its console, recorded)
 
-  Once hardened, 03.05.03 requires publickey AND password; tools/lab-ssh.sh
+  Once hardened, 03.05.03 requires publickey AND password; ./nist lab-ssh
   supplies both, a plain \`ssh\` only the key.
 
-  Next:      make apply          apply the 800-171r3 overlay
-             make verify         assess the host against all 97 requirements
+  Next:      ./nist make apply   apply the 800-171r3 overlay
+             ./nist make verify  assess the host against all 97 requirements
 $NEXT_HINT
 DONE

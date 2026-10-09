@@ -11,7 +11,7 @@
 #
 #   tools/test-console-record.sh
 #
-# Needs the boot ISO (make iso), uploaded into the default pool as a test
+# Needs the boot ISO (./nist make iso), uploaded into the default pool as a test
 # volume and deleted after. Runs in the control-plane container.
 #
 set -uo pipefail
@@ -25,7 +25,7 @@ fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
 V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
-[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || { echo "error: no iso/Rocky-9.8-x86_64-boot.iso (make iso)" >&2; exit 2; }
+[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || { echo "error: no iso/Rocky-9.8-x86_64-boot.iso (./nist make iso)" >&2; exit 2; }
 V dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - remove it first" >&2; exit 2; }
 
 size=$(stat -c %s iso/Rocky-9.8-x86_64-boot.iso)

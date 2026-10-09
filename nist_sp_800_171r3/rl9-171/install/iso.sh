@@ -79,8 +79,29 @@ case "$console" in
 esac
 [[ -n "$disk" ]] || die "--disk is required: the one disk the install wipes, as /dev/disk/by-id/..."
 [[ "$disk" == /dev/disk/by-id/* ]] || echo "warning: --disk $disk is not a /dev/disk/by-id/ path; names like sda can change between boots and machines" >&2
-[[ -f "$key" ]] || die "no public key at $key (--key)"
-[[ "$(awk '{print $1; exit}' "$key")" == ssh-rsa ]] || die "$key is not an RSA key; the FIPS policy refuses others (ssh-keygen -t rsa -b 3072)"
+# The admin's key: a public key file, or `agent` - the first key the host's
+# SSH agent holds (./nist forwards it) that the FIPS policy accepts. After
+# 03.13.11 the host takes RSA >= 3072 and ECDSA P-256/384 only; anything
+# else would lock the admin out at the first apply.
+fips_key() {   # one public key line on stdin -> 0 if the hardened host accepts it
+  local l t bits; IFS= read -r l; t=${l%% *}
+  case "$t" in
+    ecdsa-sha2-nistp256|ecdsa-sha2-nistp384) return 0 ;;
+    ssh-rsa) bits=$(ssh-keygen -lf - <<<"$l" | awk '{print $1}'); (( bits >= 3072 )) ;;
+    *) return 1 ;;
+  esac
+}
+pubkey=$(mktemp)
+if [[ "$key" == agent ]]; then
+  [[ -n "${SSH_AUTH_SOCK:-}" ]] || die "--key agent, but no SSH agent reached the container: run ssh-agent on the host, ssh-add the key, and run ./nist from that shell"
+  while IFS= read -r l; do fips_key <<<"$l" && { printf '%s\n' "$l" > "$pubkey"; break; }; done < <(ssh-add -L 2>/dev/null)
+  [[ -s "$pubkey" ]] || die "the SSH agent holds no RSA >= 3072 or ECDSA P-256/384 key: ./nist ssh-keygen -t rsa -b 3072, then ssh-add it"
+else
+  [[ -f "$key" ]] || die "no public key at $key (--key; it must be under ~/.ssh, or use --key agent)"
+  fips_key < "$key" || die "$key: the FIPS policy accepts RSA >= 3072 and ECDSA P-256/384 only - another key would lock the admin out after the first apply (./nist ssh-keygen -t rsa -b 3072)"
+  cp "$key" "$pubkey"
+fi
+key_given=$key; key=$pubkey
 iso=iso/Rocky-9.8-x86_64-boot.iso
 [[ -f "$iso" ]] || die "$iso missing (make iso)"
 [[ -n "$out" ]] || out="iso/${name}-install.iso"
@@ -149,7 +170,7 @@ cat <<DONE
   2. Boot it in UEFI mode. It installs unattended - wiping ${disk} - and
      reboots into Rocky 9; detach the media then.
   3. From this workstation:
-       ./tools/inventory.py add $name --ip ADDRESS --user $user --connection byo --key ${key%.pub}
-       ./apply.sh --limit $name --reboot && ./verify.sh --host $name
+       ./nist inventory add $name --ip ADDRESS --user $user --connection byo --key $([[ "$key_given" == agent ]] && echo agent || echo "${key_given%.pub}")
+       ./nist apply --limit $name --reboot && ./nist verify --host $name
   Then delete $out.
 DONE

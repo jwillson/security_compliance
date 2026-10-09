@@ -55,7 +55,7 @@ say() { echo "==> $(date -u +%H:%M) $*" | tee -a "$OUT/summary.txt"; }
 
 cleanup() {
   [[ -n "${rec:-}" ]] && kill "$rec" 2>/dev/null
-  (( keep )) && { say "kept $NAME (--keep): ./tools/lab-ssh.sh $NAME; remove with ./vm/build-vm.sh --name $NAME --destroy"; return; }
+  (( keep )) && { say "kept $NAME (--keep): ./nist lab-ssh $NAME; remove with ./nist build-vm --name $NAME --destroy"; return; }
   say "removing $NAME and what it left"
   "${V[@]}" destroy "$NAME" >/dev/null 2>&1
   "${V[@]}" undefine "$NAME" --nvram --remove-all-storage >/dev/null 2>&1

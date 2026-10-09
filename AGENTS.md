@@ -18,9 +18,9 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
 ## Source of truth
 
 - **Requirements**: `rl9-171/catalog/requirements.json` — *generated*, never
-  hand-edited. `make catalog` re-extracts it from
-  `rl9-171/NIST.SP.800-171r3.pdf`; `make catalog-check` proves it still
-  reproduces byte for byte. `make validate` reads the tracked copy and never
+  hand-edited. `./nist make catalog` re-extracts it from
+  `rl9-171/NIST.SP.800-171r3.pdf`; `./nist make catalog-check` proves it still
+  reproduces byte for byte. `./nist make validate` reads the tracked copy and never
   rebuilds it.
 - **Mapping and policy**: `rl9-171/catalog/overlay-rocky9.yml` — what Rocky 9
   enforces for each requirement, what it cannot, and the ODP values. This is
@@ -28,13 +28,13 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
 - ODPs live in two blocks of the overlay and nowhere else.
   `odp:` (32) are values the host enforces: the role applies them and the checks
   assert them via `{odp.name}`, so they cannot drift. Never hardcode one in a
-  task or a check; `make validate` fails on a machine ODP no check asserts.
+  task or a check; `./nist make validate` fails on a machine ODP no check asserts.
   `odp_organizational:` (62, across 49 requirements) are the assignments no host
   setting can satisfy. Nothing substitutes them and no check asserts them; they
   render into `/etc/nist-800-171/organizational-requirements.md`. Each is keyed
   to the requirement that asks for the parameter. Every value was reviewed and
   accepted by the owner on 2026-09-18 (`rl9-171/docs/ODP-REVIEW.md`).
-- `make validate` must pass: it confirms the catalog, the overlay and the
+- `./nist make validate` must pass: it confirms the catalog, the overlay and the
   checks all agree. Run it after editing any of the three.
 
 ## Hard rules
@@ -46,14 +46,14 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
   green report must not imply the system is authorized. 28 requirements are
   purely organizational; the assessor reports them `NOT_APPLICABLE(host)`.
   A `technical` entry may not carry a `residual` and every machine ODP must
-  be asserted by a check; `make validate` enforces both.
+  be asserted by a check; `./nist make validate` enforces both.
 - Verification reads **effective** state, not the file the role wrote:
   `sshd -T` over `sshd_config`, `sysctl -n` over `/etc/sysctl.d/`,
   `auditctl -l` over `rules.d`, `systemctl is-enabled` over unit files. Every
   check declares exactly one assertion and reports expected next to observed.
-- `./apply.sh` changes the target. Only run it against a host you intend to
+- `./nist apply` changes the target. Only run it against a host you intend to
   harden or a throwaway Rocky 9 VM. Never against the machine you write on.
-  `./apply.sh --check --diff` is the dry run; `./verify.sh` is read-only.
+  `./nist apply --check --diff` is the dry run; `./nist verify` is read-only.
 - Never commit key material (`.secrets/`), live inventories, ISOs, qcow2
   images, or generated reports. The repo's history is clean of all of these —
   keep it that way.
@@ -107,13 +107,13 @@ it — do not point those back at `TASKS.md`.
 
 ```bash
 cd nist_sp_800_171r3/rl9-171
-make validate                    # catalog <-> overlay <-> checks agree
-make test                        # unit tests: assessor and validator
-make catalog-check               # catalog still reproduces from the PDF
-make help                        # the whole pipeline
+./nist make validate                    # catalog <-> overlay <-> checks agree
+./nist make test                        # unit tests: assessor and validator
+./nist make catalog-check               # catalog still reproduces from the PDF
+./nist make help                        # the whole pipeline
 
-./apply.sh --check --diff        # dry run against inventory/hosts.yml
-./verify.sh --failed-only        # assess, show deviations only
+./nist apply --check --diff        # dry run against inventory/hosts.yml
+./nist verify --failed-only        # assess, show deviations only
 ```
 
 The tool runs only in its control-plane container: every entry point enters
@@ -127,19 +127,19 @@ secrets - the admin password, the GRUB password (03.10.07), the LUKS
 passphrase (03.08.09) - live in the inventory's ansible-vault file
 (`tools/vault.sh`), asked for without echo; never tell an operator to export
 a password. An unset LUKS passphrase skips the control with a warning and a
-reported deviation; the run does not abort. `./apply.sh --check --diff` completes on a host that has
+reported deviation; the run does not abort. `./nist apply --check --diff` completes on a host that has
 never been applied: a task that needs a package or unit an earlier task
 provides is skipped in check mode only while that prerequisite is outstanding
 (the idiom is explained at the top of `roles/nist_800_171/tasks/main.yml`).
 
 ```bash
-./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo
-./tools/vault.sh                                     # its secrets, encrypted
-./apply.sh --check --diff && ./apply.sh && ./verify.sh
+./nist inventory add HOST --ip ADDRESS --user ADMIN --connection byo
+./nist vault                                     # its secrets, encrypted
+./nist apply --check --diff && ./nist apply && ./nist verify
 ```
 
 One inventory per lab, chosen by the lab's own tools: `make` and
-`vm/build-vm.sh` use `inventory/kickstart.yml`; `./apply.sh`, `./verify.sh`
+`vm/build-vm.sh` use `inventory/kickstart.yml`; `./nist apply`, `./nist verify`
 and the BYO lab use `inventory/hosts.yml`; `NIST_INVENTORY` overrides. Do not
 make the operator export it. `lib/inventory-env.sh` refuses an inventory that
 mixes kickstart-lab hosts (`.secrets/` key) with hosts you brought — each needs
@@ -147,5 +147,5 @@ its own second SSH factor, and the wrong one is a faillock strike
 (`rl9-171/docs/LAB.md`, *Two labs on one workstation*).
 
 `site.yml` has two plays: the overlay over `cui_hosts`, then
-`nist_log_collector` over `log_hosts`. `./tools/inventory.py show` lists the
+`nist_log_collector` over `log_hosts`. `./nist inventory show` lists the
 hosts and where each forwards its records.

@@ -72,7 +72,7 @@ if [[ -z "$ns" ]]; then
   live=$(virsh -c "$NIST_LIBVIRT_URI" net-dumpxml "$NET" 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | sed -E "s/.*(addr='|server=)//; s/'$//" | xargs)
   if up=$("$HERE/../vm/lab-network.sh" upstream 2>/dev/null); then
     if [[ -n "$live" ]]; then ok "$NET forwards DNS to $live (this host answers from $up)"
-    else bad "resolv.conf lists no nameserver and $NET has no forwarder, so its dnsmasq refuses every guest query (layer 3): vm/lab-network.sh ensure gives it $up - at once if no guest is on it, else when it next starts"; fi
+    else bad "resolv.conf lists no nameserver and $NET has no forwarder, so its dnsmasq refuses every guest query (layer 3): ./nist lab-network ensure gives it $up - at once if no guest is on it, else when it next starts"; fi
   else bad "resolv.conf lists no nameserver and no resolver this host might use answers for $HOST - fix the host's DNS, or NIST_LAB_DNS=IP for vm/lab-network.sh"; fi
 fi
 
@@ -81,7 +81,7 @@ info_out=$(virsh -c "$NIST_LIBVIRT_URI" net-info "$NET" 2>/dev/null)
 # An active network means libvirt started its dnsmasq (a missing dnsmasq
 # fails the start, which vm/lab-network.sh reports).
 if grep -q 'Active: *yes' <<<"$info_out"; then ok "$NET is active, its dnsmasq with it"
-else bad "$NET is not active (vm/lab-network.sh ensure; without dnsmasq installed on the host it cannot start)"; fi
+else bad "$NET is not active (./nist lab-network ensure; without dnsmasq installed on the host it cannot start)"; fi
 
 echo "3. the guests' DNS: $GW, as a guest asks it"
 if r=$(dnsq "$GW" "$HOST"); then ok "$GW resolves $HOST ($r)"
@@ -93,7 +93,7 @@ if nft list ruleset 2>/dev/null | grep -q "$SUBNET\.0/24" || iptables -t nat -S 
   ok "a NAT rule for $SUBNET.0/24"
 else bad "no NAT rule for $SUBNET.0/24 (libvirt adds it when $NET starts; a firewall reload can drop it - restart the network)"; fi
 if iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; }; then
-  bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (vm/lab-network.sh prints the rules)"
+  bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (./nist lab-network ensure prints the rules)"
 fi
 
 echo "5. the mirror, over IPv4 and IPv6 separately"
@@ -155,7 +155,7 @@ if ip link show "$BRIDGE" >/dev/null 2>&1; then
   else bad "from $PROBE nothing comes from $MIRROR${pin:+ even with its address given}, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi
   fi
   cleanup_ns; trap - EXIT
-else bad "$BRIDGE does not exist (vm/lab-network.sh ensure)"; fi
+else bad "$BRIDGE does not exist (./nist lab-network ensure)"; fi
 
 (( fails )) && { echo "== $fails layer(s) failing - the first is usually the cause"; exit 1; }
 echo "== every layer works; if an install still stalls, read its console: /var/log/libvirt/qemu/NAME-serial.log"

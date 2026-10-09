@@ -79,5 +79,5 @@ for old in venv collections tools.sh askpass.sh wrongpass.sh; do
 done
 
 key="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
-[[ -f "$key.pub" ]] || echo "note: no $key.pub - create an RSA key (ssh-keygen -t rsa -b 3072) or set NIST_BYO_KEY before vm/byo-guest.sh build"
-say "done: source $LAB/env.sh, then vm/byo-guest.sh build NAME --ip 192.168.171.N"
+[[ -f "$key.pub" ]] || echo "note: no $key.pub - create an RSA key (./nist ssh-keygen -t rsa -b 3072) or set NIST_BYO_KEY before ./nist byo-guest build"
+say "done: source $LAB/env.sh, then ./nist byo-guest build NAME --ip 192.168.171.N"

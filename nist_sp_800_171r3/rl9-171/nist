@@ -1,40 +1,37 @@
 #!/usr/bin/env bash
 #
-# Run any command of this toolkit inside its control-plane container, so the
-# workstation needs only podman or docker (DEFECTS 7.23):
+# nist - the one command of this toolkit that runs on the host. Everything
+# else runs inside its control-plane container, which this starts; the host
+# needs bash and podman or docker, and for the lab the hypervisor - nothing of
+# this project (TASKS C2, C8).
 #
-#   ./nist make validate              ./nist ./apply.sh --check --diff
-#   ./nist make test                  ./nist ./verify.sh --failed-only
-#   ./nist bash                       a shell inside it
-#   ./nist --rebuild COMMAND...       rebuild the image first
+#   ./nist help                       the commands below
+#   ./nist COMMAND [ARGS...]          one of them
+#   ./nist make TARGET                any make target (make all, make validate...)
+#   ./nist bash                       a shell inside the container
+#   ./nist ANY-PROGRAM [ARGS...]      any program in the image (ansible-vault, ssh...)
+#   ./nist --rebuild ...              rebuild the image first
 #
 # The image (container/Containerfile: Ubuntu 26.04, pinned ansible-core and
-# collections) is built on first use and tagged by a hash of what it is built
-# from, so a change to the Containerfile or requirements.yml builds a new one.
-# The container runs as you, on the host network (it reaches targets as the
-# host does), with these mounted at the same paths so inventories, keys and
-# askpass scripts resolve unchanged: the repository, ~/.ssh, and the BYO lab
-# directory ($NIST_BYO_LAB). NIST_* and SSH_ASKPASS* pass through.
+# collections, the libvirt client, the ISO tools) is built on first use and
+# tagged by a hash of what it is built from, so a change to the Containerfile
+# or requirements.yml builds a new one. The container runs as you, on the
+# host network (it reaches targets as the host does), with the repository,
+# ~/.ssh and the BYO lab directory ($NIST_BYO_LAB) mounted at their own paths,
+# and the host's libvirt socket. NIST_* pass through.
 #
 # ssh takes the home directory from the passwd entry, not $HOME, so the
 # container gets one for you with your home: the image's own uid 1000
 # ("ubuntu", /home/ubuntu) would otherwise send it to a known_hosts that does
-# not exist, and an unknown host key is asked about through SSH_ASKPASS -
-# which answers with a password, and ssh asks again, forever (DEFECTS 7.23).
+# not exist (DEFECTS 7.23).
 #
 # SELinux labelling is off for this container rather than :Z on the mounts:
 # relabelling ~/.ssh for a container would stop the host's own sshd from
 # reading authorized_keys on Fedora and RHEL.
 #
-# It is the only way the tool runs (TASKS C2): every workstation entry point
-# enters it by itself (lib/container.sh), so this is rarely typed. The lab is
-# driven from here too, through the host's libvirt socket; the host needs the
-# hypervisor (KVM, libvirt, qemu, swtpm, UEFI firmware, dnsmasq) and nothing of
-# this project.
-#
-# Run as root with NIST_PRIVILEGED=1 it is privileged, for the one tool that
-# needs it: tools/diagnose-lab-net.sh, which puts a network namespace on the
-# lab bridge and reads the NAT rules.
+# `diagnose` alone runs privileged, and must be run as root (sudo ./nist
+# diagnose): it puts a network namespace on the lab bridge and reads the NAT
+# rules. (NIST_PRIVILEGED=1 is what it sets.)
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +42,55 @@ LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 
 rebuild=0
 [[ "${1:-}" == --rebuild ]] && { rebuild=1; shift; }
-(( $# )) || { sed -n '3,25p' "$0"; exit 2; }
+
+# The commands: each a script inside the repository, run in the container.
+# (The scripts enter the container by themselves too, but this is the way
+# in: it needs no python3 or make on the host.)
+COMMANDS='
+apply|apply.sh|harden hosts: --limit HOST, --check --diff, --tags ID, --reboot
+verify|verify.sh|assess hosts: --host HOST, --failed-only, --requirement ID
+inventory|tools/inventory.py|add / remove / check / show hosts in the inventory
+vault|tools/vault.sh|an inventory'"'"'s secrets, encrypted (ansible-vault)
+iso|install/iso.sh|a bare-metal install ISO for one machine (--disk /dev/disk/by-id/...)
+probe|tools/probe.sh|a read-only probe from tools/probes/ on inventory hosts
+lab-ssh|tools/lab-ssh.sh|SSH into a hardened host, both factors answered
+lab-console|tools/lab-console.sh|a lab guest'"'"'s serial console
+host-check|vm/host-check.sh|can this host run the lab (asks libvirt)
+build-vm|vm/build-vm.sh|a kickstart-lab guest (--role log: the collector; --destroy)
+byo-lab-init|vm/byo-lab-init.sh|the BYO lab'"'"'s directory and vault
+byo-guest|vm/byo-guest.sh|a BYO lab guest: build / check / destroy
+lab-network|vm/lab-network.sh|the lab network: ensure / destroy / upstream
+teardown|vm/lab-teardown.sh|remove both labs and all they left
+residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans)
+diagnose|tools/diagnose-lab-net.sh|why a guest cannot reach the mirror (as root: sudo ./nist diagnose)
+install-log|tools/install-log.sh|what an installer said before it stopped
+console-record|tools/console-record.sh|record a guest'"'"'s console across restarts
+harden-cycle|tools/harden-cycle.sh|one recorded hardening cycle on one host
+release-run|tools/release-run.sh|the release gate for one lab
+from-scratch|tools/lab-from-scratch.sh|both labs rebuilt from nothing (--yes)
+rehearse-baremetal|tools/rehearse-baremetal.sh|the bare-metal install, rehearsed in the lab
+portability-host|vm/portability-host.sh|a throwaway host of another distribution
+portability-run|tools/portability-run.sh|the kickstart lab on that host
+pki|tools/lab-pki.sh|the lab CA and host certificates
+secret-scan|tools/secret-scan.sh|no secret anywhere in the history
+test-lab-network|tools/test-lab-network.sh|the lab network, by behaviour
+test-console-record|tools/test-console-record.sh|the console recorder, by behaviour
+'
+if [[ $# -eq 0 || "$1" == help || "$1" == -h || "$1" == --help ]]; then
+  echo "./nist COMMAND [ARGS...] - the toolkit, run in its container"
+  echo
+  awk -F'|' 'NF {printf "  %-20s %s\n", $1, $3}' <<<"$COMMANDS"
+  echo
+  echo "  ./nist make TARGET    any make target: make all, make validate, make test, make vm ..."
+  echo "  ./nist bash           a shell inside the container"
+  echo "  ./nist PROGRAM ...    any program in the image (ansible-vault, ssh, ssh-keygen, virsh ...)"
+  exit 0
+fi
+script=$(awk -F'|' -v c="$1" '$1 == c {print $2}' <<<"$COMMANDS")
+if [[ -n "$script" ]]; then
+  [[ "$1" == diagnose ]] && export NIST_PRIVILEGED=1
+  shift; set -- "$HERE/$script" "$@"
+fi
 
 tag=$(cat "$HERE/container/Containerfile" "$HERE/requirements.yml" | sha256sum | cut -c1-12)
 image="localhost/nist-control:$tag"
@@ -85,6 +130,13 @@ done
 envs=(-e HOME="$HOME" -e USER="${USER:-$(id -un)}" -e TERM="${TERM:-dumb}"
       -e ANSIBLE_HOME=/tmp/ansible-home -e ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
       -e ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/ansible-cp -e XDG_CACHE_HOME=/tmp/cache)
+# The host's SSH agent, when there is one: the keys it holds - ssh-add'ed,
+# or on a hardware token - authenticate from inside without the private key
+# ever entering the container (`--key agent` in ./nist inventory and iso).
+if [[ -n "${SSH_AUTH_SOCK:-}" && -S "$SSH_AUTH_SOCK" ]]; then
+  mounts+=(-v "$SSH_AUTH_SOCK:/run/nist-ssh-agent.sock")
+  envs+=(-e SSH_AUTH_SOCK=/run/nist-ssh-agent.sock)
+fi
 while IFS='=' read -r k _; do envs+=(-e "$k"); done < <(env | grep -E '^(NIST_|SSH_ASKPASS|ANSIBLE_)' | grep -v '^ANSIBLE_COLLECTIONS_PATH=' || true)
 uid=$(id -u) gid=$(id -g)
 passwd="${XDG_RUNTIME_DIR:-/tmp}/nist-control-$tag-$uid.passwd"

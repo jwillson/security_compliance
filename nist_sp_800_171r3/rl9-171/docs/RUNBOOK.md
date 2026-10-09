@@ -32,13 +32,13 @@ has been rehearsed against this baseline on a retrofit guest; where the rehearsa
 
 ## Safety rules
 
-1. **Never apply to the machine you are working from.** `./apply.sh` disables
+1. **Never apply to the machine you are working from.** `./nist apply` disables
    root login, enforces MFA on sshd, sets the firewall default target to DROP
    and turns on deny-by-default execution. On your workstation that is a
    self-inflicted outage.
-2. **`--check` first, always.** `./apply.sh --check --diff` changes nothing
+2. **`--check` first, always.** `./nist apply --check --diff` changes nothing
    and shows exactly what would move.
-3. **`./verify.sh` is read-only.** It copies the assessor to the target and
+3. **`./nist verify` is read-only.** It copies the assessor to the target and
    runs it. It never remediates, and it never re-records a changed host key.
 4. **A clean assessment is not authorization.** 28 requirements have no host
    control and 31 more carry residual obligations. See
@@ -50,13 +50,13 @@ has been rehearsed against this baseline on a retrofit guest; where the rehearsa
 
 ```bash
 cd nist_sp_800_171r3/rl9-171
-make validate        # catalog <-> overlay <-> checks agree; no host needed
+./nist make validate        # catalog <-> overlay <-> checks agree; no host needed
 ```
 
-The workstation needs podman or docker and nothing of this project: the
-tool runs only in its control-plane container, and every command - `make`,
-`./apply.sh`, `./verify.sh`, the tools - enters it by itself (README, *Quick
-start*; `./nist make ...` where `make` is not installed). The rest of this
+The workstation needs bash and podman or docker, and nothing of this
+project: `./nist` is the one command run on the host, and `./nist COMMAND`
+runs the toolkit in its control-plane container (`./nist help` lists them;
+`./nist make TARGET` for a make target; README, *Quick start*). The rest of this
 section is for running the labs, which build VMs on this host.
 
 For the lab the host also needs the hypervisor. Check it first: this asks
@@ -65,10 +65,10 @@ the default pool and memory, names the host's `apt`, `dnf` or `pacman`
 command for what is missing, and installs nothing itself:
 
 ```bash
-make host-check      # libvirt as you, KVM, Secure Boot firmware, swtpm, the pool, memory
+./nist make host-check      # libvirt as you, KVM, Secure Boot firmware, swtpm, the pool, memory
 ```
 
-`make catalog` re-extracts `catalog/requirements.json` from
+`./nist make catalog` re-extracts `catalog/requirements.json` from
 `NIST.SP.800-171r3.pdf` and reproduces the committed file byte for byte. You
 only need it if you change the extractor or substitute a different revision.
 
@@ -84,16 +84,35 @@ for without echo, encrypted with ansible-vault, never exported or typed on a
 command line (TASKS C3):
 
 ```bash
-./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
-./tools/vault.sh     # the admin password (sudo and SSH), the GRUB password, the LUKS passphrase
+./nist inventory add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
+./nist vault     # the admin password (sudo and SSH), the GRUB password, the LUKS passphrase
 ```
 
-`./apply.sh` and `./verify.sh` ask for the vault password once per run, and
+**The SSH key** is the one the host already trusts - yours, whatever it is
+called:
+
+- **A key file under `~/.ssh`:** `--key ~/.ssh/NAME` (the private key; its
+  `.pub` beside it). The container sees `~/.ssh`, the repository and the BYO
+  lab directory, and nothing else of the host.
+- **A key in your SSH agent** - one kept elsewhere, `ssh-add`ed, or on a
+  hardware token: `--key agent`. `./nist` hands the agent's socket to the
+  container, so the private key never enters it; run `./nist` from the shell
+  where the agent is.
+
+Either way it must be **RSA of 3072 bits or more, or ECDSA P-256/384**: the
+FIPS policy the role enforces (03.13.11) refuses everything else, so an
+ed25519 or short RSA key that works today would lock you out at the first
+apply. `./nist inventory add` and `./nist iso` refuse such a key, with the
+reason. If your only key is ed25519, make one (`./nist ssh-keygen -t rsa -b
+3072`) and add its `.pub` to the admin account's `authorized_keys` on the
+host before the first apply.
+
+`./nist apply` and `./nist verify` ask for the vault password once per run, and
 Ansible answers sudo and the SSH password factor from it. For automation,
 `NIST_VAULT_PASSWORD_FILE` names a file, or a script that prints the vault
 password (a password manager). To read the vault back:
 `./nist ansible-vault view inventory/hosts.vault.yml`; to change a secret,
-`./tools/vault.sh inventory/hosts.yml --force`.
+`./nist vault inventory/hosts.yml --force`.
 
 The GRUB superuser is `root` with the vault's GRUB password: GRUB asks for both to
 edit a boot entry or reach its shell, never to boot one - every BLS entry is
@@ -112,13 +131,13 @@ in if the TPM ever refuses (see *When you are locked out*).
 Without a TPM there is nowhere to seal the key, and none is left on the disk:
 every boot stops at the console and asks for the passphrase before the CUI
 filesystems mount (ODP-REVIEW I5). Plan for a person at the console - the
-BMC's, for a remote machine - at each reboot, `./apply.sh --reboot`
+BMC's, for a remote machine - at each reboot, `./nist apply --reboot`
 included. `tools/probes/hardware.sh` tells you beforehand which kind of
 host you have.
 
 Leave the LUKS passphrase empty and the control it feeds is skipped with a
-warning and reported by `./verify.sh` as a deviation; the run does not abort.
-The kickstart lab keeps its own secrets in `.secrets/` instead (`make secrets`).
+warning and reported by `./nist verify` as a deviation; the run does not abort.
+The kickstart lab keeps its own secrets in `.secrets/` instead (`./nist make secrets`).
 
 Install-time controls the role cannot retrofit — a separate `/var/log/audit`
 filesystem, FIPS from first boot — will be reported as deviations rather than
@@ -143,9 +162,9 @@ control-plane image).
 # 2. Its secrets, then its install ISO (written 0600 under iso/: it holds the
 #    admin password's hash, taken from the vault). An RSA key first, if you
 #    have none: ./nist ssh-keygen -t rsa -b 3072
-make iso                                  # ./nist make iso, where make is not installed
-./tools/vault.sh
-./install/iso.sh HOST --disk /dev/disk/by-id/ID [--console tty0|ttyS1] [--key ~/.ssh/id_rsa.pub]
+./nist make iso                                  # ./nist make iso, where make is not installed
+./nist vault
+./nist iso HOST --disk /dev/disk/by-id/ID [--console tty0|ttyS1] [--key ~/.ssh/id_rsa.pub]
 ```
 
 3. Attach `iso/HOST-install.iso` as the BMC's virtual media (or write it to a
@@ -155,8 +174,8 @@ make iso                                  # ./nist make iso, where make is not i
 4. Register it and harden it as a host you brought:
 
 ```bash
-./tools/inventory.py add HOST --ip ADDRESS --user cuiadmin --connection byo --key ~/.ssh/id_rsa
-./apply.sh --limit HOST --reboot && ./verify.sh --host HOST
+./nist inventory add HOST --ip ADDRESS --user cuiadmin --connection byo --key ~/.ssh/id_rsa
+./nist apply --limit HOST --reboot && ./nist verify --host HOST
 ```
 
 `--console` is where the installer's screen and every later passphrase
@@ -169,15 +188,15 @@ booted from the ISO alone, UEFI, no TPM - and proves it end to end.
 ### The reference VM
 
 ```bash
-make all          # host check, tools, catalog, secrets, ISO, the CUI VM, apply, verify
-make vm-log && make pki && make apply && make verify   # the collector, then both again
+./nist make all          # host check, tools, catalog, secrets, ISO, the CUI VM, apply, verify
+./nist make vm-log && ./nist make pki && ./nist make apply && ./nist make verify   # the collector, then both again
 ```
 
-`make all` runs from a bare clone on any host that `make host-check` passes:
+`./nist make all` runs from a bare clone on any host that `./nist make host-check` passes:
 it creates the lab network if it is missing, installs unattended (15-25 min),
 applies with the reboot the first apply owes (`apply.sh --reboot`), and
-verifies. Step by step it is `make secrets` (RSA-3072 key, admin password,
-LUKS passphrase), `make iso`, `make vm`, `make apply`, `make verify`.
+verifies. Step by step it is `./nist make secrets` (RSA-3072 key, admin password,
+LUKS passphrase), `./nist make iso`, `./nist make vm`, `./nist make apply`, `./nist make verify`.
 
 If the install stops - the installer's console silent for 20 minutes, most
 often because the guest cannot reach the Rocky mirror - `build-vm.sh` says
@@ -187,16 +206,16 @@ up to inspect (docs/LAB.md, *When an install stops*).
 Both roles install at 4096 MB — the Rocky 9 network installer needs it — and a
 collector is trimmed back to 2048 MB once the install finishes.
 
-`make vm` establishes what a role cannot: separate filesystems for `/home`,
+`./nist make vm` establishes what a role cannot: separate filesystems for `/home`,
 `/tmp`, `/var`, `/var/log`, `/var/log/audit`, `/var/tmp` with
 `nodev`/`nosuid`/`noexec`; FIPS from first boot; minimal package set; locked
 root; UEFI + vTPM 2.0. It registers the guest in the kickstart lab's
 inventory, `inventory/kickstart.yml`, via `tools/inventory.py` — it does not
-overwrite hosts already there — and `make apply` / `make verify` read the
+overwrite hosts already there — and `./nist make apply` / `./nist make verify` read the
 same file.
 
 ```bash
-./tools/inventory.py show      # what is in the inventory and where it forwards
+./nist inventory show      # what is in the inventory and where it forwards
 ```
 
 ---
@@ -204,11 +223,11 @@ same file.
 ## Day 1 — apply the overlay
 
 ```bash
-./apply.sh --check --diff                 # change nothing, report drift
-./apply.sh --check --diff --tags 03.05    # one family
-./apply.sh                                # apply everything
-./apply.sh --tags 03.05.07                # one requirement
-./apply.sh --limit rl9-cui-01             # one host
+./nist apply --check --diff                 # change nothing, report drift
+./nist apply --check --diff --tags 03.05    # one family
+./nist apply                                # apply everything
+./nist apply --tags 03.05.07                # one requirement
+./nist apply --limit rl9-cui-01             # one host
 ```
 
 Every task carries its requirement ID as a tag, so `--tags 03.05.07` applies
@@ -217,14 +236,14 @@ exactly the tasks implementing Password Management and nothing else.
 Recommended first run on a host you care about:
 
 ```bash
-./apply.sh --check --diff | tee /tmp/nist-preview.txt   # read it
-./apply.sh --tags 03.03                                  # audit only, low risk
-./verify.sh --family 03.03                               # confirm
-./apply.sh                                               # then the rest
+./nist apply --check --diff | tee /tmp/nist-preview.txt   # read it
+./nist apply --tags 03.03                                  # audit only, low risk
+./nist verify --family 03.03                               # confirm
+./nist apply                                               # then the rest
 ```
 
 The role is idempotent: a second consecutive run reports `changed=0`, which is
-what makes `./apply.sh --check` a meaningful drift detector rather than
+what makes `./nist apply --check` a meaningful drift detector rather than
 permanent noise.
 
 **FIPS needs a reboot.** If the run reports `Reboot required: True`, reboot
@@ -240,8 +259,8 @@ time you hit it.
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` | FIPS policy (03.13.11) excludes ed25519 | Use RSA >= 3072 or ECDSA P-256/384. `make secrets` generates RSA-3072. |
-| Key alone no longer authenticates; you are asked for a password | 03.05.03 sets `AuthenticationMethods publickey,password` | Expected. `./tools/lab-ssh.sh HOST` answers both factors; see below. |
+| `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` | FIPS policy (03.13.11) excludes ed25519 | Use RSA >= 3072 or ECDSA P-256/384. `./nist make secrets` generates RSA-3072. |
+| Key alone no longer authenticates; you are asked for a password | 03.05.03 sets `AuthenticationMethods publickey,password` | Expected. `./nist lab-ssh HOST` answers both factors; see below. |
 | Host key changed after the first apply | 03.13.10 removes the weak DSA/ECDSA host keys | Expected once. `apply.sh` re-records it on success. `verify.sh` never does — an *unexpected* change stays an error. |
 | `ping` times out | firewalld default zone target is DROP (03.13.06) | Not a fault. The host is reachable on its permitted services. |
 | `last`, `lastlog`, `w` need root | `wtmp`/`btmp`/`lastlog` are audit information under 03.03.08a, mode 0600 | Use `sudo`. |
@@ -250,12 +269,12 @@ time you hit it.
 
 This is the first thing that will confuse you, and it is the control working.
 
-After `./apply.sh`, `sshd -T` reports
+After `./nist apply`, `sshd -T` reports
 `authenticationmethods publickey,password` (03.05.03). Your key authenticates
 as factor one and sshd then demands factor two. The tools answer it through
 Ansible, from the host's `ansible_password` - the vault, or the kickstart
 lab's `.secrets/admin_password` - handed to ssh through shared memory; and
-`./tools/lab-ssh.sh HOST` gives an interactive session with both factors
+`./nist lab-ssh HOST` gives an interactive session with both factors
 answered the same way. A plain `ssh` does neither.
 
 So a plain `ssh` prompts you for the admin password:
@@ -270,9 +289,9 @@ is typed and nothing wrong is offered (three wrong passwords lock the
 account, 03.01.08):
 
 ```bash
-./tools/lab-ssh.sh rl9-cui-01                         # a shell
-./tools/lab-ssh.sh rl9-cui-01 'sudo systemctl status auditd'
-./tools/lab-console.sh rl9-cui-01                     # the serial console, when SSH cannot
+./nist lab-ssh rl9-cui-01                         # a shell
+./nist lab-ssh rl9-cui-01 'sudo systemctl status auditd'
+./nist lab-console rl9-cui-01                     # the serial console, when SSH cannot
 ./nist bash -c '. lib/ssh-env.sh && ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'   # ansible by hand: the inventory and its vault
 ```
 
@@ -357,18 +376,18 @@ On the host:
 | `/var/log/nist-800-171/security-advisories-*.txt` | Advisories (03.14.03) |
 
 On the control workstation, `reports/<host>-<UTC timestamp>.{json,html}` per
-`./verify.sh` run.
+`./nist verify` run.
 
 ---
 
 ## Reading an assessment
 
 ```bash
-./verify.sh                          # every host
-./verify.sh --failed-only            # deviations only
-./verify.sh --family 03.13           # one family
-./verify.sh --requirement 03.05.07   # one requirement
-./verify.sh --host rl9-cui-01        # one host
+./nist verify                          # every host
+./nist verify --failed-only            # deviations only
+./nist verify --family 03.13           # one family
+./nist verify --requirement 03.05.07   # one requirement
+./nist verify --host rl9-cui-01        # one host
 make report                          # open the newest HTML report
 ```
 
@@ -384,7 +403,7 @@ Five statuses, and the distinctions matter:
 
 A `PASS` is a discharged host obligation and nothing more: a requirement
 with a `residual` is `partial`, and reports as partial however many of its
-checks pass. `make validate` enforces that.
+checks pass. `./nist make validate` enforces that.
 
 A healthy reference VM reports:
 
@@ -417,19 +436,19 @@ FAIL  03.13.11  Cryptographic Protection
    is what the running system is actually doing.
 2. **Decide which of three things it is:**
    - *Drift* — someone changed the host. Re-apply that tag:
-     `./apply.sh --tags 03.13.11`
+     `./nist apply --tags 03.13.11`
    - *Never applied* — an install-time control on a host that was not built
-     by `make vm`. A playbook cannot fix a filesystem layout. Rebuild, or
+     by `./nist make vm`. A playbook cannot fix a filesystem layout. Rebuild, or
      accept it and open a POA&M item.
    - *A wrong check* — the host is genuinely compliant by another mechanism.
-     Fix the check in `audit/checks.yml`, run `make validate`, and say why in
+     Fix the check in `audit/checks.yml`, run `./nist make validate`, and say why in
      the commit. Do not widen a check to make a red report green.
    - *ERROR, not FAIL* — the check could not look: a tool is missing, or it
      exited with a status the check does not declare normal (`ok_rc`). The
      observed line carries its stderr. Fix what stopped it (a dnf that
      cannot reach its repositories, a firewalld that is not running); do not
      add the status to `ok_rc` unless it genuinely means "nothing found".
-3. **Re-verify the one requirement:** `./verify.sh --requirement 03.13.11`
+3. **Re-verify the one requirement:** `./nist verify --requirement 03.13.11`
 4. **Record what you could not fix.** It already is: every failing
    requirement is an item in the POA&M register after the next scheduled
    assessment (or `sudo nist-generate-poam` now). Fill in its plan — below.
@@ -482,9 +501,9 @@ Policy lives in `catalog/overlay-rocky9.yml` and nowhere else.
 
 ```bash
 $EDITOR catalog/overlay-rocky9.yml   # odp: or odp_organizational:
-make validate                        # catalog <-> overlay <-> checks agree
-./apply.sh --check --diff            # see the effect
-./apply.sh && ./verify.sh
+./nist make validate                        # catalog <-> overlay <-> checks agree
+./nist apply --check --diff            # see the effect
+./nist apply && ./nist verify
 ```
 
 - **`odp:`** — values the host enforces. The role applies them and the checks
@@ -496,7 +515,7 @@ make validate                        # catalog <-> overlay <-> checks agree
   `organizational-requirements.md` so the SSP cites a decision, not a blank.
 
 Both ship with defaults drawn from common DoD CUI practice. **They are not
-your organization's values.** `make validate` only confirms nothing references
+your organization's values.** `./nist make validate` only confirms nothing references
 a parameter that does not exist — it cannot tell you a number is wrong.
 
 Never hand-edit a value into a task or a check. That is the drift the single
@@ -511,9 +530,9 @@ A single host cannot demonstrate 03.03.05c: records are to be correlated
 MANUAL, correctly, because nothing was observed.
 
 ```bash
-make vm-log        # or ./vm/build-vm.sh --role log
-./apply.sh         # CUI hosts now forward; the collector now receives
-./verify.sh --requirement 03.03.05
+./nist make vm-log        # or ./nist build-vm --role log
+./nist apply         # CUI hosts now forward; the collector now receives
+./nist verify --requirement 03.03.05
 ```
 
 `tools/inventory.py` wires the forwarders to the collector automatically.
@@ -528,9 +547,9 @@ same `audit_retention_days` the records had at origin.
 
 Both sides need certificates: `ca.crt` and `HOST.crt`/`HOST.key` per host in
 `NIST_PKI_DIR` (default `.secrets/pki`), `HOST` being the inventory name.
-`make pki` mints a lab authority after the hosts are in the inventory; a
+`./nist make pki` mints a lab authority after the hosts are in the inventory; a
 real deployment uses its own PKI's files in the same layout. Run it before
-`./apply.sh`, or the forwarders record `tls-certificate-missing`, forward
+`./nist apply`, or the forwarders record `tls-certificate-missing`, forward
 nothing, and `verify.sh` reports them - there is no plaintext fallback.
 `nist_log_tls: false` in the inventory is the explicit opt-out to 514 plain,
 which `sc-08-forward-encrypted` then reports on every forwarder.
@@ -549,11 +568,11 @@ Console access is the way back in - on a lab guest through libvirt, on a
 bare-metal machine its BMC's (serial-over-LAN or virtual KVM):
 
 ```bash
-./tools/lab-console.sh rl9-cui-01
-./tools/lab-console.sh rl9-log-01   # the collector
+./nist lab-console rl9-cui-01
+./nist lab-console rl9-log-01   # the collector
 ```
 
-`./tools/inventory.py show` lists the guests and their addresses.
+`./nist inventory show` lists the guests and their addresses.
 
 The lab admin password is in `.secrets/admin_password`; a host you brought
 has whatever you gave it. Root is locked by design (03.01.06) — log in as
@@ -574,13 +593,13 @@ was rehearsed and reverted.
 | Cause | What happens | From the console |
 |---|---|---|
 | Account locked by faillock after 3 failures (03.01.08) | The correct password is refused over SSH **and at the console**: the console login runs the same PAM stack. With root locked and one admin account, nobody can log in to run a reset during the lockout. | **Wait.** The lock expires `lockout_duration_seconds` (default 900) after the last failure; then log in and `sudo faillock --user <name> --reset` clears the tally, or simply carry on. For a single-admin host, create a second administrative account before you need it: faillock is per user, so it is not locked when the first one is. |
-| MFA enforced before operators enrolled keys | Key-only logins are refused with "Permission denied". | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`. Rehearsed verbatim: key-only login works immediately, `./verify.sh --requirement 03.05.03` reports `ia-03-sshd-authmethods` as failing, and `./apply.sh --tags 03.05.03` restores enforcement. To keep it off, set `nist_mfa_enforce_pubkey: false` and re-apply. |
+| MFA enforced before operators enrolled keys | Key-only logins are refused with "Permission denied". | `sudo sed -i 's/^AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config.d/00-nist-800-171.conf && sudo systemctl reload sshd`. Rehearsed verbatim: key-only login works immediately, `./nist verify --requirement 03.05.03` reports `ia-03-sshd-authmethods` as failing, and `./nist apply --tags 03.05.03` restores enforcement. To keep it off, set `nist_mfa_enforce_pubkey: false` and re-apply. |
 | Your key is ed25519 and FIPS rejects it | `signature algorithm ssh-ed25519 not in PubkeyAcceptedAlgorithms` at preauth. | Add an RSA-3072 key to the admin user's `authorized_keys` from the console. |
-| Boot never reaches a login prompt; the console shows "Please enter passphrase for disk vg_sys-lv_cui (cui_data)" | The TPM would not release the volume keys. They are sealed to PCR 7, the Secure Boot state, so a firmware or Secure Boot database update (a `dbx` revocation from `fwupd`, new keys, Secure Boot toggled) or a cleared TPM changes it, from the next boot on. Remote access is gone until the passphrase is typed. **The prompt alone is not the symptom:** it is shown on every boot while clevis answers it from the TPM a second later — the symptom is that it stays. | Type `NIST_LUKS_PASSPHRASE` at the prompt (systemd tries it on the second volume too, so usually once). Once up, `./verify.sh` reports `mp-09-luks-tpm-bound`: "stale binding - the TPM will not release the key". **First check Secure Boot** — `mp-09-secure-boot`. If it is off, turn it back on in the firmware before anything else: a seal made with Secure Boot off would open for any boot medium, so the role will not reseal then (ODP-REVIEW I1). It puts the key back on disk so the host boots unattended meanwhile, and reports it. With Secure Boot on again the original seal is often valid once more: re-apply and the role finds it so, removes the key and returns crypttab to the TPM. If the binding is still stale with Secure Boot on (a `dbx` update or new keys changed PCR 7), reseal from the control workstation: `NIST_LUKS_PASSPHRASE=... ./apply.sh --limit <host> --tags 03.08.09` (the role runs `clevis luks regen` with the passphrase), `./verify.sh` passes again, and the next boot unlocks alone. By hand instead: `sudo clevis luks regen -d /dev/vg_sys/lv_cui -s <slot>` per volume, only with Secure Boot enforced. **Rehearsed** (DEFECTS Phase 3; the PCR 7 rehearsal is retired, 7.36) (Secure Boot turned off to change PCR 7: the boot waits for the passphrase, the role declines to reseal and keeps the host bootable, Secure Boot restored, the original seal holds, and the next boot unlocks from the TPM alone). |
+| Boot never reaches a login prompt; the console shows "Please enter passphrase for disk vg_sys-lv_cui (cui_data)" | The TPM would not release the volume keys. They are sealed to PCR 7, the Secure Boot state, so a firmware or Secure Boot database update (a `dbx` revocation from `fwupd`, new keys, Secure Boot toggled) or a cleared TPM changes it, from the next boot on. Remote access is gone until the passphrase is typed. **The prompt alone is not the symptom:** it is shown on every boot while clevis answers it from the TPM a second later — the symptom is that it stays. | Type `NIST_LUKS_PASSPHRASE` at the prompt (systemd tries it on the second volume too, so usually once). Once up, `./nist verify` reports `mp-09-luks-tpm-bound`: "stale binding - the TPM will not release the key". **First check Secure Boot** — `mp-09-secure-boot`. If it is off, turn it back on in the firmware before anything else: a seal made with Secure Boot off would open for any boot medium, so the role will not reseal then (ODP-REVIEW I1). It puts the key back on disk so the host boots unattended meanwhile, and reports it. With Secure Boot on again the original seal is often valid once more: re-apply and the role finds it so, removes the key and returns crypttab to the TPM. If the binding is still stale with Secure Boot on (a `dbx` update or new keys changed PCR 7), reseal from the control workstation: `NIST_LUKS_PASSPHRASE=... ./nist apply --limit <host> --tags 03.08.09` (the role runs `clevis luks regen` with the passphrase), `./nist verify` passes again, and the next boot unlocks alone. By hand instead: `sudo clevis luks regen -d /dev/vg_sys/lv_cui -s <slot>` per volume, only with Secure Boot enforced. **Rehearsed** (DEFECTS Phase 3; the PCR 7 rehearsal is retired, 7.36) (Secure Boot turned off to change PCR 7: the boot waits for the passphrase, the role declines to reseal and keeps the host bootable, Secure Boot restored, the original seal holds, and the next boot unlocks from the TPM alone). |
 | sshd penalised your address (OpenSSH 9.8+ `PerSourcePenalties`, default on) | Every new connection from one workstation is reset before the banner - `kex_exchange_identification: read: Connection reset by peer`; `ssh -v` shows `banner line 0: Not allowed at this time`. Other workstations, and other hosts from this one, are unaffected. Earned by connections that fail or are dropped before authenticating (a stalled tool, a run killed mid-login), and it grows with repeats. | **Wait.** It lifts by itself, at most 10 minutes after the last offence; retrying meanwhile does not help. Nothing in the role sets it. If it recurs, find what keeps abandoning logins before raising anything on the host. |
-| Firewall locked out your source network | New SSH connections time out; an existing session may survive. | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` gets you back in immediately (rehearsed verbatim). It exempts that address from the firewall entirely, so do not leave it: once you are in, restore the authorized services with `./apply.sh --tags 03.13`, which also removes any trusted-zone exemption, and `sc-06-no-trusted-bypass` reports one that remains. Do **not** make it `--permanent` unless you accept the bypass until the next apply. |
+| Firewall locked out your source network | New SSH connections time out; an existing session may survive. | `sudo firewall-cmd --add-source=<cidr> --zone=trusted` gets you back in immediately (rehearsed verbatim). It exempts that address from the firewall entirely, so do not leave it: once you are in, restore the authorized services with `./nist apply --tags 03.13`, which also removes any trusted-zone exemption, and `sc-06-no-trusted-bypass` reports one that remains. Do **not** make it `--permanent` unless you accept the bypass until the next apply. |
 
-A reverted control is a deviation. `./verify.sh` reports each of the above
+A reverted control is a deviation. `./nist verify` reports each of the above
 (rehearsed for MFA and for the firewall bypass) — re-apply properly once you
 are back in.
 
@@ -641,12 +660,12 @@ So change it, then update the stored copy, then run anything else:
 2. Change it on the host, over one interactive session:
    `ssh <user>@<host>` (key, then the current password) and `passwd`.
 3. At once, update where the workstation keeps it: the inventory's vault
-   (`./tools/vault.sh INVENTORY --force`; the BYO lab: its
+   (`./nist vault INVENTORY --force`; the BYO lab: its
    `$NIST_BYO_LAB/byoadmin_password`, then `vm/byo-lab-init.sh` after
    removing `inventory/hosts.vault.yml`; the kickstart lab:
    `.secrets/admin_password`). One password for several hosts means changing
    it on each before updating the copy - or give each host its own.
-4. `./verify.sh --host <host> --requirement 03.05.12`: the connection
+4. `./nist verify --host <host> --requirement 03.05.12`: the connection
    works with the new factor and `ia-12-exempt-rotated` passes.
 
 If the account is locked anyway: *When you are locked out*, faillock.
@@ -691,10 +710,10 @@ guest's `authorized_keys` and the password hash is in its `/etc/shadow`. So
 rotate at rebuild time, when it is free:
 
 ```bash
-make destroy
+./nist make destroy
 rm -rf .secrets
-make secrets
-make vm
+./nist make secrets
+./nist make vm
 ```
 
 Do not rotate while a guest you still need is running; you will lock yourself
@@ -705,14 +724,14 @@ out of it.
 ## Decommissioning
 
 ```bash
-make destroy       # the kickstart VMs and all they left; the lab network if unused
-make teardown      # both labs and everything they left on the host (asks first)
+./nist make destroy       # the kickstart VMs and all they left; the lab network if unused
+./nist make teardown      # both labs and everything they left on the host (asks first)
 tools/lab-residue.sh   # what is left, if anything
-make clean         # reports only
+./nist make clean         # reports only
 ```
 
 Each destroy removes a guest's disk, UEFI variables, TPM state, logs, host
-key and inventory entry. `make teardown` also removes the BYO guests, the
+key and inventory entry. `./nist make teardown` also removes the BYO guests, the
 stand-in SIEM, the lab network, the staged ISO and the BYO base image, and
 fails if `tools/lab-residue.sh` still finds anything. The downloaded ISO,
 the catalog, `.secrets/` and the BYO lab's secrets survive, so a rebuild

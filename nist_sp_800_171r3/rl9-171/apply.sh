@@ -26,12 +26,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 . lib/inventory-env.sh || exit 1
 [[ -f "$NIST_INVENTORY" ]] || {
   echo "error: no inventory at $NIST_INVENTORY." >&2
-  echo "  existing host:  ./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo" >&2
-  echo "                  ./tools/vault.sh    (its passwords, encrypted)" >&2
+  echo "  existing host:  ./nist inventory add HOST --ip ADDRESS --user ADMIN --connection byo --key agent|~/.ssh/KEY" >&2
+  echo "                  ./nist vault    (its passwords, encrypted)" >&2
   if [[ -f inventory/kickstart.yml ]]; then
-    echo "  the kickstart lab is in inventory/kickstart.yml: make apply / make verify" >&2
+    echo "  the kickstart lab is in inventory/kickstart.yml: ./nist make apply / ./nist make verify" >&2
   else
-    echo "  new lab VM:     make vm" >&2
+    echo "  new lab VM:     ./nist make vm" >&2
   fi
   exit 1
 }

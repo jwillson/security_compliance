@@ -51,9 +51,9 @@ if [[ -n "$host" ]]; then
     echo "      trace: $trace"
     grep -E 'debug1: (Authentications|Next auth|Server accepts|Authenticated|Offering|read_passphrase|Entering|Sending command|mux)|ssh_askpass|Permission denied|BECOME|msg' "$trace" | tail -25 | sed 's/^/      /'
   fi
-  out=$(./nist ./verify.sh --host "$host" --requirement 03.05.03 </dev/null 2>&1)
+  out=$(./nist verify --host "$host" --requirement 03.05.03 </dev/null 2>&1)
   grep -q '1 requirements assessed' <<<"$out" && ok "verify.sh reaches $host from inside (03.05.03)" || bad "verify.sh: $(tail -3 <<<"$out" | tr '\n' ' ')"
-  out=$(./nist ./apply.sh --check --limit "$host" --tags 03.01.11 </dev/null 2>&1)
+  out=$(./nist apply --check --limit "$host" --tags 03.01.11 </dev/null 2>&1)
   grep -qE "^$host +:.* unreachable=0 +failed=0" <<<"$out" && ok "apply.sh --check reaches $host from inside, with sudo" || bad "apply.sh --check: $(grep -E "^$host +:|fatal" <<<"$out" | head -2 | tr '\n' ' ')"
 fi
 echo "==> $([ $fails -eq 0 ] && echo PASS || echo FAIL): the control-plane container ($fails failed)"

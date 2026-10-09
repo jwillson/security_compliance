@@ -7,13 +7,13 @@ the one piece of cross-host wiring the overlay needs: a CUI node forwards its
 audit records to the log collector (03.03.05c), which it cannot know the
 address of until the collector exists.
 
-    ./tools/inventory.py add rl9-cui-01 --ip 10.0.0.10 --role cui
-    ./tools/inventory.py add rl9-log-01 --ip 10.0.0.11 --role log
-    ./tools/inventory.py add byo-rl9-02 --ip 192.168.171.142 --user byoadmin \
+    ./nist inventory add rl9-cui-01 --ip 10.0.0.10 --role cui
+    ./nist inventory add rl9-log-01 --ip 10.0.0.11 --role log
+    ./nist inventory add byo-rl9-02 --ip 192.168.171.142 --user byoadmin \
         --connection byo
-    ./tools/inventory.py remove rl9-cui-01
-    ./tools/inventory.py check rl9-cui-01     could it be added? (exit 1 if not)
-    ./tools/inventory.py show
+    ./nist inventory remove rl9-cui-01
+    ./nist inventory check rl9-cui-01     could it be added? (exit 1 if not)
+    ./nist inventory show
 
 Roles:
     cui   a host the overlay hardens, forwarding its records to the collector
@@ -169,11 +169,57 @@ def cmd_check(args) -> int:
     return 0
 
 
+# After 03.13.11 the host's FIPS policy accepts RSA of 3072 bits or more and
+# ECDSA P-256/384, and nothing else: an ed25519 key that works today stops
+# working at the first apply, and the next login is the console's.
+FIPS_KEY_HINT = ("the FIPS policy the role enforces accepts RSA >= 3072 and ECDSA "
+                 "P-256/384 only: an ed25519 or short RSA key would lock you out after "
+                 "the first apply. Make one: ./nist ssh-keygen -t rsa -b 3072")
+
+
+def fips_ok(pubkey_line: str) -> bool:
+    import subprocess
+    kind = pubkey_line.split()[0] if pubkey_line.split() else ""
+    if kind in ("ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384"):
+        return True
+    if kind != "ssh-rsa":
+        return False
+    out = subprocess.run(["ssh-keygen", "-lf", "-"], input=pubkey_line, capture_output=True, text=True).stdout
+    return bool(out) and int(out.split()[0]) >= 3072
+
+
+def key_file(path: str) -> None:
+    """A private key the container can read, of a type the hardened host accepts."""
+    p = Path(os.path.expanduser(path))
+    if not p.exists():
+        sys.exit(f"error: {path} is not visible inside the container, which sees ~/.ssh, "
+                 "the repository and the BYO lab directory: put the key in ~/.ssh, or "
+                 "ssh-add it on the host and use --key agent")
+    pub = Path(str(p) + ".pub")
+    if pub.exists() and not fips_ok(pub.read_text()):
+        sys.exit(f"error: {path}: {FIPS_KEY_HINT}")
+
+
+def agent_key() -> None:
+    """The host's agent (./nist forwards it) holds a key the hardened host accepts."""
+    import subprocess
+    if not os.environ.get("SSH_AUTH_SOCK"):
+        sys.exit("error: --key agent, but no SSH agent reached the container: run ssh-agent "
+                 "on the host, ssh-add the key, and run ./nist from that shell")
+    keys = subprocess.run(["ssh-add", "-L"], capture_output=True, text=True).stdout.splitlines()
+    if not any(fips_ok(k) for k in keys):
+        sys.exit(f"error: the SSH agent holds no key it can use: {FIPS_KEY_HINT}")
+
+
 def cmd_add(args) -> int:
     data = load()
     host = dict(CONNECTIONS[args.connection])
     if args.connection == "byo":
-        host["ansible_ssh_private_key_file"] = args.key
+        if args.key == "agent":
+            agent_key()           # no key file: ssh takes it from the agent
+        else:
+            key_file(args.key)
+            host["ansible_ssh_private_key_file"] = args.key
     host["ansible_host"] = args.ip
     host["ansible_user"] = args.user
 
@@ -244,7 +290,8 @@ def main() -> int:
     a.add_argument("--role", choices=("cui", "log"), default="cui")
     a.add_argument("--connection", choices=sorted(CONNECTIONS), default="lab")
     a.add_argument("--key", default="~/.ssh/id_rsa",
-                   help="private key for --connection byo")
+                   help="private key for --connection byo: a file under ~/.ssh, or "
+                        "'agent' for one the host's SSH agent holds")
     a.set_defaults(fn=cmd_add)
 
     c = sub.add_parser("check", help="exit 1 if the host could not be added "

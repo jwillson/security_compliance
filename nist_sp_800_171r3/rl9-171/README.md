@@ -41,37 +41,39 @@ why.
 ## Quick start
 
 ```bash
-make all        # host check → catalog → secrets → ISO → VM → apply → verify
+./nist make all        # host check → catalog → secrets → ISO → VM → apply → verify
 ```
 
-**The tool runs only in its container.** The workstation needs podman or
-docker, and nothing of this project: every command enters the control-plane
-image by itself - a pinned Ubuntu 26.04 image with the Ansible, the libvirt
-client and the ISO tools this project uses (`container/Containerfile`). Use
-`./nist make all` where `make` is not installed; `./nist bash` is a shell
-inside it. It runs as you, on the host network, with the repository, `~/.ssh`
-and the BYO lab directory mounted where they are.
+**`./nist` is the one command you run on the host.** The workstation needs
+bash and podman or docker, and nothing of this project: `./nist COMMAND`
+runs the toolkit inside its control-plane container - a pinned Ubuntu 26.04
+image with the Ansible, the libvirt client and the ISO tools this project
+uses (`container/Containerfile`). `./nist help` lists the commands (`apply`,
+`verify`, `inventory`, `vault`, `iso`, `lab-ssh`, ...); `./nist make TARGET`
+runs any make target; `./nist bash` is a shell inside it. It runs as you, on
+the host network, with the repository, `~/.ssh`, your SSH agent and the BYO
+lab directory available where they are.
 
 For the lab, the host also needs the hypervisor - KVM, libvirt, qemu, swtpm,
 UEFI firmware, dnsmasq - and 8 GiB of memory free. The tool drives libvirt
-through its socket, as you, without sudo: `make host-check` asks libvirt
+through its socket, as you, without sudo: `./nist make host-check` asks libvirt
 what is missing and names the packages, and the lab network is created if
 missing. The lab, getting into a hardened guest, and removing everything
-again (`make teardown`) are [docs/LAB.md](docs/LAB.md), *On any host*.
+again (`./nist make teardown`) are [docs/LAB.md](docs/LAB.md), *On any host*.
 
 Or step by step:
 
 ```bash
-make catalog    # parse the PDF into a machine-readable catalog
-make validate   # confirm catalog, overlay and checks agree
-make secrets    # generate the automation key and credentials
-make iso        # download and checksum the Rocky 9 boot ISO
-make vm         # unattended install of the hardened reference VM
-make vm-log     # log collector, so record forwarding can be verified
-                # (`make all` builds the CUI host only)
-make pki        # lab CA + a certificate per host, for TLS forwarding
-make apply      # apply the overlay via Ansible
-make verify     # assess all 97 requirements, write JSON + HTML
+./nist make catalog    # parse the PDF into a machine-readable catalog
+./nist make validate   # confirm catalog, overlay and checks agree
+./nist make secrets    # generate the automation key and credentials
+./nist make iso        # download and checksum the Rocky 9 boot ISO
+./nist make vm         # unattended install of the hardened reference VM
+./nist make vm-log     # log collector, so record forwarding can be verified
+                # (`./nist make all` builds the CUI host only)
+./nist make pki        # lab CA + a certificate per host, for TLS forwarding
+./nist make apply      # apply the overlay via Ansible
+./nist make verify     # assess all 97 requirements, write JSON + HTML
 make report     # open the newest HTML report
 ```
 
@@ -86,7 +88,7 @@ organizational ones as `NOT_APPLICABLE(host)` rather than `PASS`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **technical** | 37 | The host enforces it. A failing check is a real finding. `make validate` refuses a technical entry that carries a `residual`. |
+| **technical** | 37 | The host enforces it. A failing check is a real finding. `./nist make validate` refuses a technical entry that carries a `residual`. |
 | **partial** | 32 | The host enforces part of it; `residual` names what the organization still owes, and the assessor reports it as partial even when every check passes. |
 | **organizational** | 28 | Policy, process, personnel, physical. No host setting satisfies it. |
 
@@ -151,8 +153,8 @@ needs an exit status it declares normal (`ok_rc`, default `[0]`), so `sshd -T`
 refusing a broken config or `dnf` unable to reach its repositories reports
 `ERROR`, not `PASS`; a tool that is not installed is `ERROR` whatever its
 output. The assessor refuses to run unprivileged or off the RHEL 9 family unless told
-`--allow-unsupported`, and then marks the report. `make test` covers these
-rules, and `make catalog-check` proves the catalog still reproduces from the
+`--allow-unsupported`, and then marks the report. `./nist make test` covers these
+rules, and `./nist make catalog-check` proves the catalog still reproduces from the
 PDF.
 
 ```
@@ -186,7 +188,7 @@ still have to be written down somewhere.
 
 Both blocks ship with defaults drawn from common DoD CUI practice, each
 reviewed and accepted for the lab by its owner (`docs/ODP-REVIEW.md`).
-**They are not your organization's values.** `make validate` will not tell you whether
+**They are not your organization's values.** `./nist make validate` will not tell you whether
 they are right — only that nothing references a parameter that does not exist.
 
 ---
@@ -194,15 +196,15 @@ they are right — only that nothing references a parameter that does not exist.
 ## Usage
 
 ```bash
-./apply.sh                       # apply everything
-./apply.sh --tags 03.03          # one family
-./apply.sh --tags 03.05.07       # one requirement
-./apply.sh --check --diff        # report drift, change nothing
+./nist apply                       # apply everything
+./nist apply --tags 03.03          # one family
+./nist apply --tags 03.05.07       # one requirement
+./nist apply --check --diff        # report drift, change nothing
 
-./verify.sh                      # assess every host
-./verify.sh --failed-only        # only deviations
-./verify.sh --family 03.13       # one family
-./verify.sh --requirement 03.05.07
+./nist verify                      # assess every host
+./nist verify --failed-only        # only deviations
+./nist verify --family 03.13       # one family
+./nist verify --requirement 03.05.07
 ```
 
 Every task carries its requirement ID as a tag, so `--tags 03.05.07` applies
@@ -216,10 +218,10 @@ with sudo, and put its secrets in the inventory's vault - asked for without
 echo, encrypted with ansible-vault, never exported or typed on a command line:
 
 ```bash
-./tools/inventory.py add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
-./tools/vault.sh                 # admin password, GRUB password, LUKS passphrase
-./apply.sh --check --diff        # dry run; completes on a host never applied
-./apply.sh && ./verify.sh        # each asks for the vault password once
+./nist inventory add HOST --ip ADDRESS --user ADMIN --connection byo --key ~/.ssh/id_rsa
+./nist vault                 # admin password, GRUB password, LUKS passphrase
+./nist apply --check --diff        # dry run; completes on a host never applied
+./nist apply && ./nist verify        # each asks for the vault password once
 ```
 
 The vault, `inventory/hosts.vault.yml`, holds the admin account's password
@@ -229,7 +231,7 @@ passphrase empty and, on a host with room for the CUI volumes, 03.08.09 and
 03.13.08 are skipped and reported; neither aborts the run. For automation,
 `NIST_VAULT_PASSWORD_FILE` names a file or a password-manager script that
 prints the vault password. The lab build supplies its own from `.secrets/`
-(`make secrets`).
+(`./nist make secrets`).
 
 **What a retrofit reports.** Proven against a stock Rocky 9.8 GenericCloud
 guest (UEFI, one root partition, no LVM, FIPS off, no firewalld) driven from
@@ -254,7 +256,7 @@ FIPS (03.13.11) is *not* on that list: it retrofits with one reboot. A host
 with an LVM root and 3 GB free passes the LUKS checks too, given
 `NIST_LUKS_PASSPHRASE`. The apply after the reboot records the kernel the
 security updates installed and changes two or three things only a boot
-settles; `./apply.sh --check` after it reports `changed=0` on every lab host,
+settles; `./nist apply --check` after it reports `changed=0` on every lab host,
 which is what makes the dry run a drift detector.
 
 ```yaml
@@ -293,12 +295,12 @@ The VM runs on an isolated libvirt network (`nist-lab`, `virbr17`) rather than
 the shared `default` bridge, which keeps lab traffic separated (03.13.01).
 
 ```bash
-./vm/build-vm.sh                      # build the CUI host (15-25 min, unattended)
-./vm/build-vm.sh --role log           # build the collector
-./vm/build-vm.sh --name rl9-cui-02 --disk-gb 60
-./vm/build-vm.sh --destroy            # remove the CUI VM and its disk
-./vm/build-vm.sh --role log --destroy # remove the collector
-make destroy                          # both
+./nist build-vm                      # build the CUI host (15-25 min, unattended)
+./nist build-vm --role log           # build the collector
+./nist build-vm --name rl9-cui-02 --disk-gb 60
+./nist build-vm --destroy            # remove the CUI VM and its disk
+./nist build-vm --role log --destroy # remove the collector
+./nist make destroy                          # both
 ```
 
 `--destroy` resolves the name from `--role`, so the plain form leaves a
@@ -316,8 +318,8 @@ second repository — the role writes the forwarding rule, nothing receives it,
 and the assessor reports MANUAL because nothing was observed.
 
 ```bash
-make vm-log        # or ./vm/build-vm.sh --role log
-./apply.sh         # the CUI hosts now forward; the collector now receives
+./nist make vm-log        # or ./nist build-vm --role log
+./nist apply         # the CUI hosts now forward; the collector now receives
 ```
 
 The collector is a CUI host too — it stores other systems' audit records — so
@@ -333,7 +335,7 @@ rewires them.
 
 Every host needs `ca.crt` and its own `HOST.crt`/`HOST.key` in
 `NIST_PKI_DIR` (default `.secrets/pki`), where `HOST` is its inventory name:
-`make pki` mints a lab authority for the inventory; a real deployment drops
+`./nist make pki` mints a lab authority for the inventory; a real deployment drops
 its own PKI's files there. A forwarder without a certificate forwards
 nothing, records `tls-certificate-missing`, and is reported by the assessor;
 nothing falls back to plaintext. `nist_log_tls: false` is the explicit
@@ -434,7 +436,7 @@ the host's true state — which is the point of reading effective state rather
 than config files.
 
 The role is also idempotent: once a host has been applied and rebooted and
-applied again, `./apply.sh --check` reports `changed=0` (every host of the
+applied again, `./nist apply --check` reports `changed=0` (every host of the
 release run), so the dry run is a meaningful drift detector rather than
 permanent noise.
 
@@ -444,7 +446,7 @@ permanent noise.
 
 ```
 rl9-171/
-├── NIST.SP.800-171r3.pdf        the publication; `make catalog` reads it
+├── NIST.SP.800-171r3.pdf        the publication; `./nist make catalog` reads it
 ├── catalog/
 │   ├── requirements.json        parsed from the PDF (generated)
 │   └── overlay-rocky9.yml       the mapping + ODP values  ← edit policy here
@@ -478,7 +480,7 @@ rl9-171/
 │   ├── byo-lab-init.sh          the BYO lab directory: its secrets, its vault, env.sh
 │   ├── host-check.sh            can this host run the lab, and what to install
 │   ├── lab-network.sh           the lab network: created if missing, removed when unused
-│   ├── lab-teardown.sh          make teardown: both labs and all they left
+│   ├── lab-teardown.sh          ./nist make teardown: both labs and all they left
 │   └── nist-lab-network.xml     isolated lab network
 ├── tools/
 │   ├── validate.py              catalog ↔ overlay ↔ checks consistency
@@ -532,7 +534,7 @@ refresh, malware scan, and security errata (`dnf-automatic`).
 | | Proven | Expected to work, not run |
 |---|---|---|
 | **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky Linux 9 minors. **Not RHEL 9** yet: `site.yml` refuses it, since the role and checks name Rocky's GPG key, release file, repository IDs and EFI path (ODP-REVIEW I3) |
-| **Control workstation and lab host** | Ubuntu 26.04 (both labs); Rocky Linux 9 (the kickstart lab from nothing: `make all`, 0 of 351 checks failed, 2026-10-06); ubuntu-24.04 in CI for everything that needs no host | Fedora and other Linux with the tools below (`make host-check` names what is missing) |
+| **Control workstation and lab host** | Ubuntu 26.04 (both labs); Rocky Linux 9 (the kickstart lab from nothing: `./nist make all`, 0 of 351 checks failed, 2026-10-06); ubuntu-24.04 in CI for everything that needs no host | Fedora and other Linux with the tools below (`./nist make host-check` names what is missing) |
 
 **OpenSSH before 9.2** — the 8.7p1 of early Rocky 9 minors — has no
 `ChannelTimeout`. The role then warns, leaves the idle-session settings out,
@@ -542,7 +544,7 @@ host that can reach its repositories to 9.9.
 
 Control workstation: podman or docker - the tool runs in its own image.
 For the labs, the host's hypervisor too: KVM, libvirt, qemu, swtpm, UEFI
-firmware with Secure Boot, dnsmasq; `make host-check` asks libvirt for each
+firmware with Secure Boot, dnsmasq; `./nist make host-check` asks libvirt for each
 and names the packages. Target: reachable over SSH, with sudo.
 
 ---
@@ -574,7 +576,7 @@ and names the packages. Target: reachable over SSH, with sudo.
 ## Caveats
 
 - `catalog/requirements.json` is derived from the published PDF. The PDF remains
-  authoritative; re-run `make catalog` if you substitute a different revision.
+  authoritative; re-run `./nist make catalog` if you substitute a different revision.
 - The overlay's ODP values are defensible defaults drawn from the DoD CUI
   baseline and the SSG RHEL 9 CUI profile. **They are not your organization's
   values** — review the `odp:` and `odp_organizational:` blocks before use.

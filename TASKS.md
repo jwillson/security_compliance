@@ -326,6 +326,10 @@ is proven by fresh runs.
       (0 of 351 failed each), the BYO release run (PASS, as native), the
       bare-metal rehearsal through the vault (0 of 351), the container,
       network and console tests - all in the container (DEFECTS 7.37).
+- [x] **C8 One command on the host.** `./nist COMMAND` (`./nist help`) - no
+      python3 or make on the host; existing SSH keys by file under `~/.ssh`
+      or from the agent (`--key agent`), FIPS-refused key types turned away
+      (DEFECTS 7.38).
 - [ ] **C7 A misleading warning on re-apply.** With the CUI and backup
       volumes already made, `03.08.09 | Warn if there is not enough free
       space` still says vg_sys has too little room - the space left after

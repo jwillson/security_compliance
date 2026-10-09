@@ -4,7 +4,7 @@ Two labs prove this tool, and they answer different questions.
 
 | Lab | Built by | Proves |
 | --- | --- | --- |
-| **Kickstart** | `vm/build-vm.sh` (`make all`, `make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. |
+| **Kickstart** | `vm/build-vm.sh` (`./nist make all`, `./nist make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. |
 | **BYO** ("bring your own") | `vm/byo-guest.sh` | The portability claim: the role hardening a stock Rocky 9 host this toolkit did not build. |
 
 Both run on libvirt (`qemu:///system`) on the isolated NAT network `nist-lab`
@@ -26,16 +26,16 @@ each does only what is missing, and re-running one is safe.
 
 | To | Run |
 | --- | --- |
-| See whether this host can, and what to install if not | `make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It asks libvirt, and prints the host's `apt`, `dnf` or `pacman` command for whatever is missing |
-| Build, harden and assess the kickstart CUI host from a bare clone | `make all`: the host check, the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
-| Add its collector | `make vm-log && make pki && make apply && make verify` |
+| See whether this host can, and what to install if not | `./nist make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It asks libvirt, and prints the host's `apt`, `dnf` or `pacman` command for whatever is missing |
+| Build, harden and assess the kickstart CUI host from a bare clone | `./nist make all`: the host check, the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
+| Add its collector | `./nist make vm-log && ./nist make pki && ./nist make apply && ./nist make verify` |
 | Build the BYO lab | `vm/byo-lab-init.sh`, `source $NIST_BYO_LAB/env.sh`, then `vm/byo-guest.sh build` per guest (*BYO guests*), or `tools/release-run.sh byo`, which builds and cycles all three |
 | Get into a hardened guest | `tools/lab-ssh.sh HOST [COMMAND]` (SSH, both factors supplied); `tools/lab-console.sh HOST` (the serial console, when SSH cannot) |
 | See what the labs left on the host | `tools/lab-residue.sh` (`--orphans`: only what belongs to no guest) |
-| Remove | `make destroy`: the kickstart VMs, then `nist-lab` if no guest uses it. `vm/byo-guest.sh destroy NAME`: one BYO guest. `make teardown`: both labs and everything they left, asking first |
+| Remove | `./nist make destroy`: the kickstart VMs, then `nist-lab` if no guest uses it. `vm/byo-guest.sh destroy NAME`: one BYO guest. `./nist make teardown`: both labs and everything they left, asking first |
 | Prove all of the above | `tools/lab-from-scratch.sh --yes`: teardown, then both labs rebuilt from nothing by these scripts alone |
 
-`make teardown` keeps the inputs a rebuild needs - `.secrets/`, the
+`./nist make teardown` keeps the inputs a rebuild needs - `.secrets/`, the
 downloaded ISO in `iso/`, and the BYO lab directory's secrets - and removes
 everything else, through libvirt: guests, their volumes (disks, install and
 seed ISOs, the BYO base image), UEFI variables, TPM state, DHCP pins, host
@@ -67,7 +67,7 @@ itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
 7.30). The inventory is checked before the install starts (7.31); after any
-failure, `make destroy` and `make all` repeat it from nothing. The usual cause of a stall is a guest
+failure, `./nist make destroy` and `./nist make all` repeat it from nothing. The usual cause of a stall is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
 `FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or
 a proxy. DNS: the guests ask libvirt's dnsmasq, which forwards to the
@@ -90,7 +90,7 @@ its own collector, its own CA, and its own second SSH factor — and offering a
 host the other lab's password is a failed authentication, a faillock strike
 (03.01.08) on every connection. So each lab has its own inventory, and the
 lab's own tools choose it - nothing to export (DEFECTS 7.33): `make` and
-`vm/build-vm.sh` use `inventory/kickstart.yml`; `./apply.sh`, `./verify.sh`
+`vm/build-vm.sh` use `inventory/kickstart.yml`; `./nist apply`, `./nist verify`
 and the BYO lab's `env.sh` use `inventory/hosts.yml`; `tools/lab-ssh.sh` and
 `tools/lab-console.sh` take the one that lists the host named.
 `NIST_INVENTORY` overrides any of them. `lib/inventory-env.sh`, sourced by
@@ -99,8 +99,8 @@ every `ansible` call follows.
 
 | Lab | Inventory | Shell | Secrets from |
 | --- | --- | --- | --- |
-| BYO | `inventory/hosts.yml` | `source ~/.local/share/nist-byo-lab/env.sh`, then `./apply.sh`, `./verify.sh` | the environment that `env.sh` sets |
-| Kickstart | `inventory/kickstart.yml` | a **fresh** shell (none of the BYO lab's secrets in it), then `make` - `make vm`, `make apply`, `make verify` | `.secrets/` |
+| BYO | `inventory/hosts.yml` | `source ~/.local/share/nist-byo-lab/env.sh`, then `./nist apply`, `./nist verify` | the environment that `env.sh` sets |
+| Kickstart | `inventory/kickstart.yml` | a **fresh** shell (none of the BYO lab's secrets in it), then `make` - `./nist make vm`, `./nist make apply`, `./nist make verify` | `.secrets/` |
 
 The helper reads the connection kind from the inventory itself — `lab` if the
 hosts use the `.secrets/` key, `byo` otherwise — and from it `lib/ssh-env.sh`
@@ -143,10 +143,10 @@ unusable (DEFECTS 6b.12). A guest has a TPM only when built with `--tpm`
 cd nist_sp_800_171r3/rl9-171
 source ~/.local/share/nist-byo-lab/env.sh     # NIST_PKI_DIR, become password, askpass
 
-./vm/byo-guest.sh build byo-rl9-02 --ip 192.168.171.144 \
+./nist byo-guest build byo-rl9-02 --ip 192.168.171.144 \
     --data-disk 10 --tpm --user cuiuser1
-./vm/byo-guest.sh check byo-rl9-02            # read-only: release, accounts, vg_sys, TPM, Secure Boot
-./vm/byo-guest.sh destroy byo-rl9-02
+./nist byo-guest check byo-rl9-02            # read-only: release, accounts, vg_sys, TPM, Secure Boot
+./nist byo-guest destroy byo-rl9-02
 ```
 
 A build writes the cloud-init seed, creates the disks, pins the address in
@@ -253,7 +253,7 @@ Each of these stopped a build once. The fix is in the script, not in a note.
 | `tools/harden-cycle.sh HOST [--no-probe]` | One full, recorded hardening cycle: probe, dry run, apply, admit to the collector, reboot if required, apply, dry run (expects `changed=0`), verify, probe again. Logs and evidence in `reports/runs/HOST-UTC/`. The release gate (TASKS R3) is this, on every lab host, at the release commit. |
 | `vm/host-check.sh [kickstart\|byo\|all]` | Can this host run the lab - asked of libvirt through its socket: libvirt as you, KVM, UEFI with Secure Boot, swtpm, the default pool, memory; the host's package command for what is missing (DEFECTS 7.19; TASKS C4). |
 | `vm/lab-network.sh ensure\|destroy\|destroy-if-unused` | `nist-lab` in `qemu:///system`: created only if missing (by both builders), removed only when no guest uses it; warns about forwarding and Docker (DEFECTS 7.17); gives dnsmasq a DNS forwarder when resolv.conf lists none (7.29). `upstream` prints the one it uses. |
-| `vm/lab-teardown.sh [--yes]` | `make teardown`: both labs and everything they left; fails if `lab-residue.sh` still finds anything (DEFECTS 7.18). |
+| `vm/lab-teardown.sh [--yes]` | `./nist make teardown`: both labs and everything they left; fails if `lab-residue.sh` still finds anything (DEFECTS 7.18). |
 | `tools/lab-residue.sh [--orphans]` | Read-only, through the libvirt socket: every lab guest, network and pool volume, and which are orphans. UEFI and TPM state go with `undefine --nvram --tpm`; libvirt keeps its own per-domain logs. |
 | `tools/lab-from-scratch.sh --yes` | Teardown, then both labs rebuilt from nothing by the scripts alone, from a bare shell; logs in `reports/runs/from-scratch-UTC/`. |
 | `tools/lab-ssh.sh HOST [COMMAND]` | SSH into a hardened guest with both factors supplied from the inventory and the lab's askpass (DEFECTS 7.20). |
