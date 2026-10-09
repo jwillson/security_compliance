@@ -1940,3 +1940,14 @@ public when it had not.*
       throwaway agent: its keys seen inside, an ed25519-only agent and an
       ed25519 key file refused, an RSA-3072 agent key accepted (no key file
       written to the inventory), `./nist iso --key agent` built.
+
+- [x] **7.39 In the container, the lab network could lose a DNS forwarder it
+      had.** On the owner's Rocky 9 host the forwarder for `nist-lab` (7.29)
+      was found natively; in the container there is no nmcli or resolvectl,
+      only the resolver files, and if none of them names a server that
+      answers, `lab-network.sh ensure` stopped - though the network already
+      forwarded somewhere that worked. *Fix:* it keeps the forwarder the
+      network has, and says so; it stops only when there is none.
+      `NIST_LAB_DNS=IP` still chooses. *Proven* by `./nist test-lab-network`
+      (13/13): a mirror name nothing resolves stands in for a host whose
+      resolver the container cannot see, and the forwarder stays.

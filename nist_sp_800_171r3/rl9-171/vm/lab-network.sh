@@ -116,9 +116,16 @@ ensure() {
 'sudo systemctl enable --now libvirtd' where libvirt runs as one daemon (Ubuntu, Debian), or \
 'sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket' on RHEL 9 / Fedora"
   local fwd
-  fwd=$(upstreams) || die "$RESOLV lists no nameserver, so libvirt's dnsmasq could not answer the guests, \
+  if ! fwd=$(upstreams); then
+    # Nothing found that answers - but a network that already forwards
+    # somewhere keeps that: its forwarder was found before, perhaps by a
+    # tool the container has not got (nmcli, on the owner's Rocky 9 host).
+    fwd=$(forwarders_of)
+    [[ -n "$fwd" ]] || die "$RESOLV lists no nameserver, so libvirt's dnsmasq could not answer the guests, \
 and no resolver this host might use answers for $PROBE_NAME (tried systemd-resolved, 127.0.0.1, ::1, \
-and the servers resolvectl and NetworkManager know). Fix the host's DNS, or name a server: NIST_LAB_DNS=IP"
+and the servers in systemd-resolved's and NetworkManager's files). Fix the host's DNS, or name a server: NIST_LAB_DNS=IP"
+    warn "no resolver found that answers for $PROBE_NAME; keeping $NET's DNS forwarder ($fwd)"
+  fi
   # EXIT, not RETURN: a RETURN trap fires as any function returns
   # (forwarders_of, attached) and would remove the file before net-define;
   # and global, since the trap runs after ensure's locals are gone.

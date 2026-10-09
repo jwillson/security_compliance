@@ -46,6 +46,12 @@ out=$(NIST_RESOLV_CONF="$empty" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh 
 f=$(fwd); r=$(python3 lib/dnsq.py 192.168.179.1 dl.rockylinux.org 2>&1)
 [[ $rc -eq 0 && -n "$f" ]] && ok "an empty resolv.conf gets a forwarder this host answers from ($f)" || bad "empty resolv.conf: rc=$rc forwarders='$f': $out"
 [[ -n "$f" && "$r" =~ ^[0-9.]+$ ]] && ok "the network's dnsmasq resolves the mirror through it ($r)" || bad "dnsmasq on 192.168.179.1 does not resolve: $r"
+# Nothing that answers (a mirror name that cannot resolve stands in for a
+# host whose resolver the container cannot see): the forwarder it has stays.
+had=$(fwd)
+out=$(NIST_RESOLV_CONF="$empty" NIST_ROCKY_MIRROR=https://nist-lab-nettest.invalid/x NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+[[ $rc -eq 0 && -n "$had" && "$(fwd)" == "$had" && "$out" == *"keeping"* ]] \
+  && ok "no resolver found: the network keeps the forwarder it has ($had)" || bad "keep forwarder: rc=$rc had='$had' now='$(fwd)': $out"
 out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 f=$(fwd)
 [[ $rc -eq 0 && "$f" == *"server=fe80::1%virbr179"* && "$f" == *"addr=192.0.2.53"* ]] \
