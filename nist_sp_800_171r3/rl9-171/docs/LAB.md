@@ -4,7 +4,7 @@ Two labs prove this tool, and they answer different questions.
 
 | Lab | Built by | Proves |
 | --- | --- | --- |
-| **Kickstart** | `vm/build-vm.sh` (`./nist make all`, `./nist make vm-log`) | The reference build: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. |
+| **Kickstart** | `vm/build-vm.sh` (`./nist make all`) | The reference build, a CUI host and its collector: install-time controls (separate filesystems, LUKS volumes, FIPS from first boot) plus the role. |
 | **BYO** ("bring your own") | `vm/byo-guest.sh` | The portability claim: the role hardening a stock Rocky 9 host this toolkit did not build. |
 
 Both run on libvirt (`qemu:///system`) on the isolated NAT network `nist-lab`
@@ -27,8 +27,8 @@ each does only what is missing, and re-running one is safe.
 | To | Run |
 | --- | --- |
 | See whether this host can, and what to install if not | `./nist make host-check` (the kickstart lab); `vm/host-check.sh byo` or `all`. It asks libvirt, and prints the host's `apt`, `dnf` or `pacman` command for whatever is missing |
-| Build, harden and assess the kickstart CUI host from a bare clone | `./nist make all`: the host check, the catalog, `.secrets/`, the ISO, the VM (creating `nist-lab` if missing), apply with the reboot it owes (`apply.sh --reboot`), verify |
-| Add its collector | `./nist make vm-log && ./nist make pki && ./nist make apply && ./nist make verify` |
+| Build, harden and assess the kickstart lab from a bare clone | `./nist make all`: the host check, the catalog, `.secrets/`, the ISO, the CUI VM (creating `nist-lab` if missing) and its collector, the lab PKI, apply with the reboot it owes (`apply.sh --reboot`), verify |
+| Add the collector to a lab that has only the CUI host | `./nist make vm-log && ./nist make pki && ./nist make apply && ./nist make verify` |
 | Build the BYO lab | `vm/byo-lab-init.sh`, `source $NIST_BYO_LAB/env.sh`, then `vm/byo-guest.sh build` per guest (*BYO guests*), or `tools/release-run.sh byo`, which builds and cycles all three |
 | Get into a hardened guest | `tools/lab-ssh.sh HOST [COMMAND]` (SSH, both factors supplied); `tools/lab-console.sh HOST` (the serial console, when SSH cannot) |
 | See what the labs left on the host | `tools/lab-residue.sh` (`--orphans`: only what belongs to no guest) |

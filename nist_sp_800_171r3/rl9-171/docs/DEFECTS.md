@@ -1964,3 +1964,36 @@ public when it had not.*
       ssh-keygen's `.old` copy holding it, and says so; the next connection
       records the current key. *Proven* on a TEST-NET address with a planted
       entry: forgotten, no `.old` left.
+- [x] **7.41 The reference run left 03.03.05c to the operator.** `make all`
+      built, hardened and assessed the CUI host alone; its collector was a
+      second step (`make vm-log`, `make pki`, `make apply`, `make verify`)
+      that only `tools/lab-from-scratch.sh` took. An operator who ran the
+      reference build as documented - as the owner did on a Rocky 9 host on
+      2026-10-12 - got a lab with nowhere to forward audit records, so
+      cross-repository correlation (03.03.05c) could only be MANUAL, and the
+      forwarding path (TLS, both ends authenticated, the collector's
+      listener) went unexercised. The reference run exists to show
+      everything a host can. *Fix:* `make all` is host-check, catalog,
+      secrets, ISO, the CUI VM, the collector, the lab PKI, apply, verify;
+      lab-from-scratch drops its separate collector step, and the docs say
+      what the reference lab is. *Proven* 2026-10-12 on the Ubuntu laptop by
+      `./nist make destroy && ./nist make all`, all in the container: both
+      guests built, applied (failed=0, then settled at changed=1 and 2), and
+      verified 0 of 351 failed each - rl9-cui-01 36/33/0/28 with
+      `au-05-forward-established` and `au-05-audit-trail-forwarded` passing,
+      rl9-log-01 35/34/0/28 with `au-05-collector-receiving` passing.
+- [ ] **7.42 A guest the firmware reset was taken for an installed one.** On
+      2026-10-12 a fresh `make all` on the Ubuntu laptop built rl9-cui-01's
+      ISO and started the guest; the firmware printed nothing past its screen
+      setup - where the build of 10-07 printed `loading Boot0002 "UEFI QEMU
+      DVD-ROM"` - and 67 seconds later the guest reset. virt-install reports
+      any stop as the end of the install, so build-vm said "install
+      finished", ejected the ISO, and waited five minutes for an address the
+      uninstalled guest could not have (`BdsDxe: No bootable option`). No
+      hypervisor package had changed since 09-29. *Fix (detection):* the
+      installer names itself on the console; build-vm now requires
+      `anaconda` there before it calls an install finished, and otherwise
+      stops at once with the console's last lines and qemu's log path. The
+      rebuild that followed installed both guests with the check in place.
+      The reset itself is not yet explained: if it recurs, qemu's log for
+      the guest is the evidence to keep.

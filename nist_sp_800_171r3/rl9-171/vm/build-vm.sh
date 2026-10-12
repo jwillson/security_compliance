@@ -194,6 +194,23 @@ EOF
   exit 1
 fi
 wait "$vi_pid" || { cat "$OUT/virt-install.log" >&2; kill "$rec" 2>/dev/null; die "virt-install failed (its log: $OUT/virt-install.log)"; }
+# virt-install reports any stop of the guest as the end of the install. A
+# guest the firmware reset before it booted the ISO stops too, a minute in,
+# with nothing installed; that was taken for an install and the build then
+# waited five minutes for an address that could not come (DEFECTS 7.42).
+# The installer names itself on the console; without it, nothing ran.
+if ! grep -aqi anaconda "$CONSOLE" 2>/dev/null; then
+  kill "$rec" 2>/dev/null || true
+  echo "error: the guest stopped after $(( (SECONDS - started) / 60 )) minutes and the installer never started:" >&2
+  echo "its console shows no anaconda. The console's last lines:" >&2
+  "$ROOT/tools/install-log.sh" "$CONSOLE" 2>&1 | tail -8 | sed 's/^/  /' >&2
+  cat >&2 <<EOF
+The firmware did not boot the install ISO. qemu's side is in
+/var/log/libvirt/qemu/$VM_NAME.log (root only). Remove the guest and build
+again:  ./nist build-vm --name $VM_NAME --destroy
+EOF
+  exit 1
+fi
 log "install finished; waiting for the VM to boot"
 
 # virt-install restarts the guest after its install; start it if it did not.
@@ -264,8 +281,8 @@ elif "$ROOT/tools/inventory.py" show 2>/dev/null | grep -q ' log '; then
 else
   NEXT_HINT="
   A single CUI host cannot exercise audit-record forwarding (03.03.05c):
-  there is nowhere to forward to, so the assessor reports it MANUAL. Build
-  the collector and re-apply to close that:
+  there is nowhere to forward to, so the assessor reports it MANUAL.
+  ./nist make all builds the collector next; built by hand, close it with:
 
              ./nist make vm-log && ./nist make pki && ./nist make apply
 "

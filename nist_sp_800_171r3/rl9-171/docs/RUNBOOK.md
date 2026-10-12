@@ -196,15 +196,20 @@ identity - and apply. The install uses DHCP.
 ### The reference VM
 
 ```bash
-./nist make all          # host check, tools, catalog, secrets, ISO, the CUI VM, apply, verify
-./nist make vm-log && ./nist make pki && ./nist make apply && ./nist make verify   # the collector, then both again
+./nist make all          # host check, catalog, secrets, ISO, the CUI VM and its collector, PKI, apply, verify
 ```
 
 `./nist make all` runs from a bare clone on any host that `./nist make host-check` passes:
-it creates the lab network if it is missing, installs unattended (15-25 min),
-applies with the reboot the first apply owes (`apply.sh --reboot`), and
-verifies. Step by step it is `./nist make secrets` (RSA-3072 key, admin password,
-LUKS passphrase), `./nist make iso`, `./nist make vm`, `./nist make apply`, `./nist make verify`.
+it creates the lab network if it is missing, installs the CUI host and its
+log collector unattended (15-25 min each), mints the lab PKI the forwarding
+between them uses, applies to both with the reboot the first apply owes
+(`apply.sh --reboot`), and verifies both. The collector is part of the
+reference: a CUI host alone has nowhere to forward its audit records, so
+03.03.05c could only be MANUAL (DEFECTS 7.41). Step by step it is
+`./nist make secrets` (RSA-3072 key, admin password, LUKS passphrase),
+`./nist make iso`, `./nist make vm`, `./nist make vm-log`, `./nist make pki`,
+`./nist make apply`, `./nist make verify` - and on a lab built before 7.41,
+with the CUI host only, the last four add the collector.
 
 If the install stops - the installer's console silent for 20 minutes, most
 often because the guest cannot reach the Rocky mirror - `build-vm.sh` says

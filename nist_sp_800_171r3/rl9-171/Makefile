@@ -43,7 +43,7 @@ help:
 	@echo "NIST SP 800-171r3 -> Rocky Linux 9"
 	@echo
 	@echo "  (the kickstart lab: its inventory is inventory/kickstart.yml)"
-	@echo "  make all         catalog + secrets + iso + vm + apply + verify"
+	@echo "  make all         the reference lab: catalog + secrets + iso + vm + vm-log + pki + apply + verify"
 	@echo "  make catalog     extract requirements from the PDF"
 	@echo "  make catalog-check  re-extract to a scratch file; fail unless byte-identical"
 	@echo "  make validate    check the catalog, overlay and checks agree"
@@ -52,7 +52,7 @@ help:
 	@echo "  make pki         lab CA + a certificate per inventory host (TLS forwarding)"
 	@echo "  make iso         download and verify the Rocky 9 boot ISO"
 	@echo "  make vm          build the hardened reference VM (unattended)"
-	@echo "  make vm-log      build the log collector, so 03.03.05c can be verified"
+	@echo "  make vm-log      build the log collector alone (make all builds it)"
 	@echo "  make apply       apply the overlay via Ansible"
 	@echo "  make verify      assess all 97 requirements on the target"
 	@echo "  make report      open the newest HTML assessment report"
@@ -61,9 +61,13 @@ help:
 	@echo "  make teardown    remove both labs and everything they left (asks first)"
 	@echo "  make clean       remove generated reports (keeps the ISO and secrets)"
 
-# From a bare host: check it, build the tooling, then the reference VM, harden
-# it and assess it. The lab network is created on the way (vm/lab-network.sh).
-all: host-check catalog-present secrets iso vm apply verify
+# From a bare host: check it, then build the reference lab - the CUI host and
+# its log collector, the lab PKI that authenticates the forwarding between
+# them - harden both and assess both. The reference run shows everything a
+# host can show, and a CUI host alone cannot show 03.03.05c: with nowhere to
+# forward to, the assessor reports it MANUAL (DEFECTS 7.41). The lab network
+# is created on the way (vm/lab-network.sh).
+all: host-check catalog-present secrets iso vm vm-log pki apply verify
 
 host-check:
 	./vm/host-check.sh kickstart
@@ -133,7 +137,8 @@ vm: host-check secrets iso catalog-present
 
 # A single host cannot demonstrate audit-record forwarding: there is nowhere
 # to forward to, so the assessor reports 03.03.05c as MANUAL rather than
-# passing it. This builds the receiving end. Re-run `make apply` afterwards.
+# passing it. This builds the receiving end; make all does, between the CUI
+# host and pki. On its own, run make pki and make apply afterwards.
 vm-log: host-check secrets iso catalog-present
 	./vm/build-vm.sh --role log
 

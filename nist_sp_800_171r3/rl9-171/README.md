@@ -41,7 +41,7 @@ why.
 ## Quick start
 
 ```bash
-./nist make all        # host check → catalog → secrets → ISO → VM → apply → verify
+./nist make all        # host check → catalog → secrets → ISO → CUI VM + collector → PKI → apply → verify
 ```
 
 **`./nist` is the one command you run on the host.** The workstation needs
@@ -70,7 +70,6 @@ Or step by step:
 ./nist make iso        # download and checksum the Rocky 9 boot ISO
 ./nist make vm         # unattended install of the hardened reference VM
 ./nist make vm-log     # log collector, so record forwarding can be verified
-                # (`./nist make all` builds the CUI host only)
 ./nist make pki        # lab CA + a certificate per host, for TLS forwarding
 ./nist make apply      # apply the overlay via Ansible
 ./nist make verify     # assess all 97 requirements, write JSON + HTML

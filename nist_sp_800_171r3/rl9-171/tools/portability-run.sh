@@ -10,7 +10,8 @@
 #   2. install podman - the tool runs only in its container (TASKS C2) - then
 #      vm/host-check.sh, and do what it says: the hypervisor packages it
 #      names, libvirt's sockets and group, the default pool; then it must pass
-#   3. ./nist make all - catalog, secrets, ISO, the CUI VM (nested), apply,
+#   3. ./nist make all - catalog, secrets, ISO, the CUI VM and its collector
+#      (nested, 4 GiB each while they install), the lab PKI, apply,
 #      verify - with nothing of the project on the test host but podman
 #   4. tools/lab-ssh.sh into the hardened guest
 #   5. vm/lab-teardown.sh --yes, which must leave nothing

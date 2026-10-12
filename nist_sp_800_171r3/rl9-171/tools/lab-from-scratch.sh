@@ -6,7 +6,7 @@
 #
 #   tools/lab-from-scratch.sh --yes                destroys every lab guest first
 #   tools/lab-from-scratch.sh --yes --from STEP    resume at STEP (teardown,
-#       kickstart-all, kickstart-collector, byo-init, byo-release), skipping
+#       kickstart-all, byo-init, byo-release), skipping
 #       the steps before it and the teardown - after a failure fixed in place,
 #       so what already passed is not rebuilt; the earlier steps' logs are in
 #       the run that failed
@@ -14,8 +14,8 @@
 # 1. make teardown; tools/lab-residue.sh must then find nothing - no guest,
 #    no network, no disk, no log.
 # 2. make all for the kickstart lab (host-check, catalog, secrets, ISO, the
-#    CUI VM - creating the lab network - apply, verify); make vm-log; apply
-#    and verify again so the CUI host forwards to the collector.
+#    CUI VM - creating the lab network - its collector, the lab PKI, apply,
+#    verify), so the CUI host forwards to the collector.
 # 3. The BYO lab: vm/byo-lab-init.sh, then tools/release-run.sh byo
 #    (builds the three guests from the stock image and cycles them).
 # Each step's log is in reports/runs/from-scratch-UTC/. Exit 0 only if every
@@ -51,7 +51,6 @@ step() {   # name command... (in the control-plane container, as everything)
 
 step teardown "./vm/lab-teardown.sh --yes"
 step kickstart-all "make all"
-step kickstart-collector "make vm-log && make pki && make apply && make verify"
 step byo-init "./vm/byo-lab-init.sh"
 step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo"
 say "residue now:"; ./tools/lab-residue.sh | tee -a "$OUT/summary.txt"
