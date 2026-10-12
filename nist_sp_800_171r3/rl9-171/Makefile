@@ -57,8 +57,12 @@ help:
 	@echo "  make verify      assess all 97 requirements on the target"
 	@echo "  make report      open the newest HTML assessment report"
 	@echo "  make host-check  can this host run the lab, and what to install if not"
-	@echo "  make destroy     remove the kickstart VMs, and the lab network if unused"
-	@echo "  make teardown    remove both labs and everything they left (asks first)"
+	@echo "  make destroy     the kickstart lab only (rl9-cui-01, rl9-log-01), no prompt;"
+	@echo "                   BYO guests and the lab network they use stay. Before a rebuild:"
+	@echo "                   make destroy && make all"
+	@echo "  make teardown    every lab on this host (kickstart, BYO, portability) and all"
+	@echo "                   they left, asks first, then proves nothing is left; keeps"
+	@echo "                   .secrets/, iso/ and the BYO lab's secrets"
 	@echo "  make clean       remove generated reports (keeps the ISO and secrets)"
 
 # From a bare host: check it, then build the reference lab - the CUI host and
