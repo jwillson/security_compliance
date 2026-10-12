@@ -1912,7 +1912,10 @@ public when it had not.*
       (10/10), its ad-hoc check now through `lib/ssh-env.sh` as every tool
       runs ansible: a bare `./nist ansible` has no vault, offered no
       password for the second factor, and was refused (one faillock strike,
-      aged out).
+      aged out). On the owner's Rocky 9 machine, the first RHEL-family run
+      of the container-only tool (2026-10-12): `./nist make all` built,
+      hardened and verified rl9-cui-01 - 35/34/0/28, 0 of 351 failed - with
+      only the hypervisor and podman on the host.
 
 - [x] **7.38 The boundary was invisible, and `python3` and `make` were still
       host tools.** Each script entered the container by itself, so
