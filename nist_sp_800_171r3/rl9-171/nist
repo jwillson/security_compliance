@@ -32,6 +32,8 @@
 # `diagnose` alone runs privileged, and must be run as root (sudo ./nist
 # diagnose): it puts a network namespace on the lab bridge and reads the NAT
 # rules. (NIST_PRIVILEGED=1 is what it sets.)
+# `vm-logs` runs as root too (sudo ./nist vm-logs NAME), unprivileged: it only
+# reads libvirt's and swtpm's log directories, mounted read-only for it.
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +65,7 @@ lab-network|vm/lab-network.sh|the lab network: ensure / destroy / upstream
 teardown|vm/lab-teardown.sh|remove both labs and all they left
 residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans)
 diagnose|tools/diagnose-lab-net.sh|why a guest cannot reach the mirror (as root: sudo ./nist diagnose)
+vm-logs|tools/vm-logs.sh|the qemu and TPM emulator logs of a lab guest (as root: sudo ./nist vm-logs NAME)
 install-log|tools/install-log.sh|what an installer said before it stopped
 console-record|tools/console-record.sh|record a guest'"'"'s console across restarts
 harden-cycle|tools/harden-cycle.sh|one recorded hardening cycle on one host
@@ -75,6 +78,7 @@ pki|tools/lab-pki.sh|the lab CA and host certificates
 secret-scan|tools/secret-scan.sh|no secret anywhere in the history
 test-lab-network|tools/test-lab-network.sh|the lab network, by behaviour
 test-console-record|tools/test-console-record.sh|the console recorder, by behaviour
+test-cdrom-boot|tools/test-cdrom-boot.sh|does the firmware of a new guest reach GRUB from a CD-ROM (DEFECTS 7.42)
 '
 if [[ $# -eq 0 || "$1" == help || "$1" == -h || "$1" == --help ]]; then
   echo "./nist COMMAND [ARGS...] - the toolkit, run in its container"
@@ -89,6 +93,7 @@ fi
 script=$(awk -F'|' -v c="$1" '$1 == c {print $2}' <<<"$COMMANDS")
 if [[ -n "$script" ]]; then
   [[ "$1" == diagnose ]] && export NIST_PRIVILEGED=1
+  [[ "$1" == vm-logs ]] && host_logs=1
   shift; set -- "$HERE/$script" "$@"
 fi
 
@@ -105,6 +110,10 @@ mounts=(-v "$REPO:$REPO")
 # DEFECTS 7.34). Access is the host's - your membership of its libvirt group,
 # carried in below.
 [[ -d /run/libvirt ]] && mounts+=(-v /run/libvirt:/run/libvirt)
+# vm-logs alone reads libvirt's and swtpm's logs, read-only, as root.
+if (( ${host_logs:-0} )); then
+  for d in /var/log/libvirt /var/log/swtpm; do [[ -d "$d" ]] && mounts+=(-v "$d:/host$d:ro"); done
+fi
 # A tool that must show a file at the path the hypervisor sees it by (an ISO
 # uploaded into a pool) adds "-v SRC:DST:ro ..." here.
 read -r -a extra <<<"${NIST_CONTAINER_MOUNTS:-}"

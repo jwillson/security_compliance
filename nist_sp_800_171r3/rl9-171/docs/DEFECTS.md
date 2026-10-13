@@ -1982,18 +1982,84 @@ public when it had not.*
       verified 0 of 351 failed each - rl9-cui-01 36/33/0/28 with
       `au-05-forward-established` and `au-05-audit-trail-forwarded` passing,
       rl9-log-01 35/34/0/28 with `au-05-collector-receiving` passing.
-- [ ] **7.42 A guest the firmware reset was taken for an installed one.** On
-      2026-10-12 a fresh `make all` on the Ubuntu laptop built rl9-cui-01's
-      ISO and started the guest; the firmware printed nothing past its screen
-      setup - where the build of 10-07 printed `loading Boot0002 "UEFI QEMU
-      DVD-ROM"` - and 67 seconds later the guest reset. virt-install reports
-      any stop as the end of the install, so build-vm said "install
-      finished", ejected the ISO, and waited five minutes for an address the
-      uninstalled guest could not have (`BdsDxe: No bootable option`). No
-      hypervisor package had changed since 09-29. *Fix (detection):* the
-      installer names itself on the console; build-vm now requires
-      `anaconda` there before it calls an install finished, and otherwise
-      stops at once with the console's last lines and qemu's log path. The
-      rebuild that followed installed both guests with the check in place.
-      The reset itself is not yet explained: if it recurs, qemu's log for
-      the guest is the evidence to keep.
+- [x] **7.42 A new lab guest's firmware hangs on its first boot, and qemu
+      then crashed.** Three of seven builds on 2026-10-12 on the Ubuntu
+      laptop stopped a minute in: the firmware printed nothing past its
+      screen setup, and virt-install, which reports any stop as the end of
+      the install, made build-vm say "install finished" and wait five
+      minutes for an address. *Evidence:* `sudo ./nist vm-logs NAME` (new;
+      libvirt's and swtpm's logs, mounted read-only) showed `shutting down,
+      reason=crashed`; systemd-coredump held a qemu SIGSEGV for each, all in
+      its SATA ATAPI emulation (`ide_atapi_cmd_reply_end` ->
+      `ide_transfer_start_norecurse`), qemu 1:10.2.1+ds-1ubuntu3.2. The swtpm
+      log was clean; the host kernel logged nothing from KVM. The segfault
+      was the end of a hang: `./nist test-cdrom-boot` (new) boots fresh
+      guests from the Rocky boot ISO and counts those that never reach GRUB.
+      With an emulated TPM, about half of first boots hang, printing nothing,
+      on SATA and virtio-scsi alike (7/10, 7/10; tpm-tis 6/8; no NIC 3/6;
+      still hung after 300 s), and none without a TPM (0/6). Fresh firmware
+      variables with the TPM state kept hang (3/6); a fresh TPM state with
+      the variables kept does not (0/6); a guest's later boots after a hung
+      first one do not (7/7). Booting a stripped guest first to initialize
+      the variables ("priming") cut it to 1/10 but did not end it, and was
+      dropped. OVMF 2025.11-3ubuntu7.3, swtpm 0.10.1. *Fix:* build-vm
+      requires `anaconda` on the console before it calls an install
+      finished; the install ISO is a virtio-scsi CD-ROM, out of the ATAPI
+      code qemu crashed in; and when the console shows no `BdsDxe` 45 s into
+      an attempt, it stops the guest, removes its definition keeping its
+      firmware variables, deletes its empty disk and runs virt-install again
+      under the same name - libvirt reuses the variable store - at most three
+      attempts, each a fresh install. Open upstream: the firmware hang
+      itself. *Proven* 2026-10-13 by `./nist make destroy && ./nist make
+      all`: both guests installed from the virtio-scsi CD-ROM, applied
+      (failed=0, settled at changed=1) and verified 0 of 352 failed.
+- [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
+      could not have worked.** 03.14.02 was classed technical, but statement
+      c.1 asks for real-time scanning of files from external sources as they
+      are downloaded, opened or executed; fapolicyd acts on execution only and
+      ClamAV's timer is a scheduled scan, so a working ClamAV would have
+      reported PASS for a requirement the host only partly meets. Its scope
+      also claimed on-access scanning nothing configures. The opt-in (4.2's
+      reversible path) installed `epel-release`, enabling all of EPEL, under
+      `failed_when: false`; the repository checks would then report EPEL as
+      unauthorized, since nothing declared it. `si-02-freshclam-enabled` asked
+      `rpm -q clamav-update`, a name clamav-freshclam only provides.
+      `sr-03-all-packages-signed` asked only whether a package is signed,
+      while 03.17.03's scope claimed an authorized key - rpm accepts any
+      imported key - and the role's provenance scan read SIGPGP alone, so it
+      counted every RSA-signed package unsigned. And in the reference lab,
+      opted in, EPEL's ClamAV 1.4.6 could not verify its databases under FIPS:
+      `ERROR: Verification: Can't allocate memory` (MD5, refused in FIPS mode;
+      ClamAV 1.5 added FIPS-capable signatures), then a day's CDN cool-down
+      from freshclam's retries; `si-02-signatures-fresh` failed on both hosts.
+      *Fix* (owner decisions ODP-REVIEW I6, 2026-10-12): 03.14.02 is partial,
+      real-time scanning on download and open in its residual. EPEL is scoped
+      to ClamAV's four packages by a repository file the role writes
+      (`includepkgs`, `gpgcheck=1`, the EPEL 9 key shipped in the role and
+      imported only at its fingerprint, `nist_epel_baseurl` for an internal
+      repository), taken only when the repository offers ClamAV at
+      `nist_clamav_min_version` (1.5) or later - asked read-only first;
+      below it nothing is added and the apply says why. `authorized-repos.d`
+      and `authorized-signers.d` declare the suppliers, as
+      `authorized-ports.d` does ports; the repository checks and a new
+      `sr-03-signers-authorized` read them. Opted-in failures are failures;
+      no clamd. The kickstart lab opts in once EPEL ships 1.5.
+      `tools/probes/freshclam.sh` shows what a host's freshclam meets.
+      *Proven*: the scoped path on rl9-cui-01 and rl9-log-01 (EPEL limited,
+      key pinned, all four supply-chain checks and the repository checks
+      passing with EPEL declared); the FIPS failure by the probe; then, on
+      2026-10-13, a fresh `make all` with the final change - rl9-cui-01
+      36/33/0/28 and rl9-log-01 35/34/0/28, 0 of 352 failed, 03.14.02
+      reported partial - and `./nist apply --check` asking for ClamAV, which
+      found EPEL's 1.4.6, said why it would not take it and added nothing;
+      97 unit tests, including declared and undeclared repositories and
+      signers.
+- [x] **7.44 `./nist lab-ssh` could not log in from the container.** It wrote
+      a one-run askpass script into /dev/shm and pointed SSH_ASKPASS at it,
+      but a container's /dev/shm is mounted noexec (podman and docker
+      alike): ssh could not run it, offered no password, and the hardened
+      host refused the login ("Too many authentication failures"). *Fix:* the
+      executable part is `lib/askpass.sh`, from the repository; it prints the
+      password from a 0600 file in /dev/shm named by NIST_ASKPASS_FILE, which
+      is only read and goes with the container. *Proven*: the file prints the
+      lab password (compared offline), then one login to rl9-cui-01.

@@ -87,8 +87,8 @@ organizational ones as `NOT_APPLICABLE(host)` rather than `PASS`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| **technical** | 37 | The host enforces it. A failing check is a real finding. `./nist make validate` refuses a technical entry that carries a `residual`. |
-| **partial** | 32 | The host enforces part of it; `residual` names what the organization still owes, and the assessor reports it as partial even when every check passes. |
+| **technical** | 36 | The host enforces it. A failing check is a real finding. `./nist make validate` refuses a technical entry that carries a `residual`. |
+| **partial** | 33 | The host enforces part of it; `residual` names what the organization still owes, and the assessor reports it as partial even when every check passes. |
 | **organizational** | 28 | Policy, process, personnel, physical. No host setting satisfies it. |
 
 Assessment result for a host on which every check passes, such as the
@@ -107,11 +107,14 @@ That is the CUI host. The collector reads 35 / 34 / 0 / 28: it forwards
 nowhere, so `sc-08-forward-encrypted` reports MANUAL there and 03.13.08
 counts as partial - the single-node case, reported as such.
 
-36 rather than 37 satisfied, because 03.14.02 (Malicious Code Protection)
-reports *partially satisfied*: fapolicyd prevention is verified, but ClamAV
-signature scanning needs EPEL, which is outside the authorized repository set
-(03.17.03). That trade-off is opt-in via `nist_clamav_enabled`, not decided
-silently.
+03.14.02 (Malicious Code Protection) is partial: fapolicyd blocks untrusted
+code as it is executed, but statement c.1 also asks for real-time scanning of
+files as they are downloaded or opened - an endpoint product or the
+organization's mail and web gateways - which no host setting here provides.
+Signature scanning (ClamAV) is an opt-in from EPEL, scoped to ClamAV's
+packages, and on these FIPS hosts it needs ClamAV 1.5 or later, which EPEL 9
+does not yet ship; until it does, the role refuses the opt-in and says why
+(DEFECTS 7.43).
 
 A requirement marked `partial` can never report `PASS`, only `MANUAL` — every
 host-side check passed, but organizational evidence is still required. That is
@@ -565,7 +568,9 @@ and names the packages. Target: reachable over SSH, with sudo.
   needed, reseals (rehearsed).
 - **Forwarding is proven to lab receivers**: this toolkit's collector and
   syslog-ng, both with lab certificates. Your SIEM is yours to prove.
-- **ClamAV is off by default** (it needs EPEL), so 03.14.02 is partial.
+- **03.14.02 is partial.** Real-time scanning of downloaded and opened files
+  is the organization's (an endpoint product or its gateways); ClamAV is an
+  opt-in from EPEL that a FIPS host can take only at 1.5 or later.
 - **The organizational requirements are the owner's.** The tool lists them
   (`organizational-requirements.md`, the POA&M register) and drafts the SSP
   around them; it cannot satisfy them.

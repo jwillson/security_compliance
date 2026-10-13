@@ -248,7 +248,8 @@ Decision: accepted 2026-09-18.
 - `ir_authorities` stays CISA-based: the population is non-DoD CUI (DEFECTS.md
   4.1b, 2026-09-17).
 - `patch_window_days` removed: dead machine ODP (DEFECTS.md 4.1c).
-- ClamAV off, fapolicyd enforcing (DEFECTS.md 4.2, 4.3).
+- ClamAV off, fapolicyd enforcing (DEFECTS.md 4.2, 4.3); the opt-in scoped
+  and proven in the reference lab (I6).
 
 ## I. Decisions from the review after 1.0.0 (2026-10-01)
 
@@ -301,6 +302,28 @@ role stages it in RAM only to format, open and add the volumes, and crypttab
 asks at boot. The checks pass for a passphrase-only volume on a host without
 a TPM, reported as such; every reboot needs a person at the console. A host
 that has a TPM with Secure Boot off keeps I1.
+
+**I6. ClamAV from EPEL, revisited (03.14.02 against 03.17.03).** 4.2 left
+ClamAV off: EPEL is a supplier outside Rocky. SP 800-171r3 does not forbid a
+third-party repository; it asks that the supplier be authorized, the
+components verified and the choice recorded. The opt-in the role carried did
+none of that - it enabled all of EPEL, and the repository checks then reported
+it as a finding.
+Decision (2026-10-12): **a scoped opt-in, off by default, and 03.14.02
+partial.** With `nist_clamav_enabled` and `nist_enable_epel` the role writes its own
+EPEL repository - ClamAV's packages only (`includepkgs`), `gpgcheck` on, the
+EPEL 9 key shipped in the role and pinned by fingerprint, an internal mirror
+by `nist_epel_baseurl` - and declares the repository and its signer as
+authorized, which the supply chain checks read. Hosts you bring keep ClamAV
+off unless their owner opts in, and records the justification (03.17.03) in
+the SSP. The reference lab was to opt in and prove the path; the proof found
+that EPEL's ClamAV (1.4.6) cannot verify its signatures under FIPS, which
+needs 1.5, so the role refuses an older one and the lab opts in once EPEL
+ships it. And statement c.1 asks for real-time scanning of files as they are
+downloaded or opened, which the host does not do - fapolicyd acts on
+execution - so 03.14.02 is partial, that scanning in its residual (an
+endpoint product, or mail and web gateways), rather than technical
+(DEFECTS 7.43).
 
 ## H. Values accepted as they are
 

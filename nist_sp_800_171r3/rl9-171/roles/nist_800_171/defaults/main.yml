@@ -123,18 +123,37 @@ nist_forbidden_packages:
 
 # --- 03.14.02 Malicious code protection ---
 # ClamAV is NOT in the Rocky 9 base repositories; it comes from EPEL. Enabling
-# it therefore adds a repository outside the authorized set, which 03.17.03
+# it therefore adds a supplier outside the authorized set, which 03.17.03
 # (supply chain) and 03.16.02 (supported components) both care about. That is a
-# real trade-off, so it is opt-in and explicit rather than silent:
+# real trade-off, so it is opt-in and explicit rather than silent (DEFECTS 4.2:
+# off by default; 7.43: scoped when on):
 #
 #   nist_clamav_enabled: true   -> also set nist_enable_epel: true
+#
+# Scoped, not EPEL wholesale: the role writes its own repository file in place
+# of epel-release, with gpgcheck on, the EPEL 9 key shipped in this role and
+# pinned by fingerprint, and includepkgs naming ClamAV's own packages - so
+# nothing else can come from EPEL. It then declares the repository and the
+# signer in authorized-repos.d and authorized-signers.d, which the supply chain
+# checks read. nist_epel_baseurl points it at an internal mirror of EPEL
+# instead of the public one (the metalink).
 #
 # With ClamAV absent, 03.14.02 is still partly met by fapolicyd, which prevents
 # unauthorized code from executing at all. The assessor reports the
 # signature-scanning checks as MANUAL, not PASS, so the gap stays visible.
+# The kickstart lab - the reference - will turn it on once EPEL offers a
+# ClamAV that works under FIPS (nist_clamav_min_version); until then nothing
+# opts in by default.
 nist_clamav_enabled: false
 nist_enable_epel: false
+nist_epel_baseurl: ""
 nist_clamav_scan_schedule: "*-*-* 03:00:00"
+nist_epel_packages: [clamav, clamav-filesystem, clamav-freshclam, clamav-lib]
+# Every host here runs FIPS (03.13.11), and only ClamAV 1.5 and later can
+# verify its signature databases under it; below this the opt-in is refused
+# with a warning (DEFECTS 7.43). EPEL 9 offers 1.4.6 as of 2026-10-12.
+nist_clamav_min_version: "1.5"
+nist_epel_signer: {name: EPEL-9, fingerprint: FF8AD1344597106ECE813B918A3872BF3228467C}
 
 # --- 03.04.08 Authorized software ---
 # fapolicyd denies execution by default. Enabling it on a host whose workload is
@@ -185,6 +204,15 @@ nist_mount_hardening:
   - { path: /var/tmp,       src: /dev/mapper/vg_sys-lv_vartmp,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
   - { path: /var/log,       src: /dev/mapper/vg_sys-lv_varlog,   fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
   - { path: /var/log/audit, src: /dev/mapper/vg_sys-lv_varaudit, fstype: xfs, opts: "defaults,nodev,nosuid,noexec" }
+
+# --- 03.17.03 Authorized suppliers ---
+# The keys whose signatures make a package authorized. rpm accepts a package
+# signed by any key that has been imported, so "signed" alone proves nothing
+# about the supplier; the role declares these in authorized-signers.d and
+# sr-03-signers-authorized compares each package's signer with them. EPEL's
+# key is added only with nist_enable_epel (above).
+nist_authorized_signers:
+  - {name: Rocky-9, fingerprint: 21CB256AE16FC54C6E652949702D426D350D275D}
 
 # Ports every host may listen on. Role-specific additions are declared in
 # their own fragment under {{ nist_conf_dir }}/authorized-ports.d/ rather than

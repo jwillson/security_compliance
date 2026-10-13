@@ -460,7 +460,7 @@ odp_organizational:
   - id: malware_scan_freq
     requirement: "03.14.02"
     parameter: "Scan frequency (statement c)"
-    value: "continuous execution control (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled (off by default, DEFECTS.md 4.2)"
+    value: "continuous execution control (fapolicyd); signature scan daily at 03:00 when ClamAV is enabled (off by default, DEFECTS.md 4.2; under FIPS it needs ClamAV 1.5 or later, 7.43)"
     rationale: "fapolicyd is always on; ClamAV needs EPEL and is a per-host opt-in."
 
   # 03.15.01 Policy and Procedures
@@ -1565,14 +1565,25 @@ requirements:
 
   - id: "03.14.02"
     title: Malicious Code Protection
-    disposition: technical
+    disposition: partial
     tasks: tasks/si.yml
     host_scope: >
-      Two complementary mechanisms: fapolicyd blocks execution of any
-      unauthorized binary at the point of execution (prevention), and ClamAV
-      provides signature-based detection with on-access scanning of files from
-      external sources plus a scheduled full scan at malware_scan_freq, with
-      freshclam keeping signatures current and detections quarantined.
+      fapolicyd blocks execution of any unauthorized binary as it is executed
+      (prevention, non-signature-based); ClamAV, where the operator opts in to
+      EPEL scoped to its packages at a version that works under FIPS (1.5 or
+      later), adds signature-based detection with a scheduled full scan at
+      malware_scan_freq, freshclam keeping signatures current and detections
+      quarantined (statement c.2). Without ClamAV the signature checks report
+      MANUAL.
+    residual: >
+      Statement c.1's real-time scanning of files from external sources as
+      they are downloaded or opened - at the endpoint (an EDR or on-access
+      scanner) or at the system's entry and exit points (mail and web
+      gateways) - is the organization's to provide; the host checks execution,
+      not download or open. Signature scanning on a FIPS host needs ClamAV 1.5
+      or later, which EPEL 9 does not yet ship (DEFECTS 7.43); until then it
+      comes from the organization's own repository or its endpoint product.
+      Statement b's updates follow its configuration management process.
     checks: [si-02-clamav-installed, si-02-freshclam-enabled,
              si-02-clamav-scan-timer, si-02-signatures-fresh,
              si-02-fapolicyd-running, si-02-scan-action-quarantine]
@@ -1700,10 +1711,11 @@ requirements:
     tasks: tasks/sr.yml
     host_scope: >
       Enforces the host-verifiable supply chain control: every installed package
-      must carry a valid signature from an authorized Rocky GPG key, the
-      authorized key set is pinned, and unsigned or foreign-signed packages are
-      detected and reported.
+      must carry a valid signature by a declared supplier key (Rocky's; EPEL's
+      only where the operator opts in to ClamAV, scoped to its packages and
+      pinned by fingerprint), only declared repositories may be enabled, and
+      unsigned or foreign-signed packages are detected and reported.
     residual: >
       Supplier assessment and contractual flow-down are procurement processes.
     checks: [sr-03-gpg-keys-imported, sr-03-all-packages-signed,
-             sr-03-no-unauthorized-repos]
+             sr-03-signers-authorized, sr-03-no-unauthorized-repos]

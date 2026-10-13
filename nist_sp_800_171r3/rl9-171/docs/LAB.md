@@ -66,7 +66,13 @@ the likely causes, leaving the VM up to inspect. An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
-7.30). The inventory is checked before the install starts (7.31); after any
+7.30). A guest whose firmware never reaches its boot manager - the firmware
+and emulated TPM on some hosts hang on a new guest's first boot - is booted
+again, on the variables it has, up to three times; the installer must then
+name itself on the console before an install counts as finished, and the ISO
+is a virtio-scsi CD-ROM (DEFECTS 7.42; `./nist test-cdrom-boot` measures a
+host, `sudo ./nist vm-logs NAME` shows qemu's side). The inventory is checked
+before the install starts (7.31); after any
 failure, `./nist make destroy` and `./nist make all` repeat it from nothing. The usual cause of a stall is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
 `FORWARD DROP` policy (`vm/lab-network.sh` warns about the last two), DNS, or

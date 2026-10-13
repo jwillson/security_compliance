@@ -13,15 +13,72 @@
   failed_when: false
   tags: ["03.17.03"]
 
+# The authorized suppliers, declared on the host for the checks to read, as
+# ports are in authorized-ports.d: Rocky's repositories and key always, EPEL's
+# only where the operator opted in to ClamAV (defaults/main.yml; DEFECTS
+# 7.43). A repository or a signer is authorized because it is declared here -
+# never because a check was widened.
+- name: "03.17.03 | Create the authorized-supplier declaration directories"
+  ansible.builtin.file:
+    path: "{{ nist_conf_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [authorized-repos.d, authorized-signers.d]
+  tags: ["03.17.03"]
+
+- name: "03.17.03 | Declare the authorized signing keys"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/authorized-signers.d/00-base"
+    content: |
+      # Keys whose signatures make a package authorized (03.17.03b), as rpm
+      # prints them: the last 16 hex digits of the fingerprint. One per line.
+      {% for k in nist_authorized_signers %}
+      {{ k.fingerprint[-16:] | lower }}  {{ k.name }} {{ k.fingerprint }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.17.03"]
+
+- name: "03.17.03 | Declare EPEL, scoped to ClamAV, where opted in"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir }}/{{ item.dir }}/50-clamav-epel"
+    content: |
+      # nist_clamav_enabled + nist_enable_epel, at a ClamAV that works under FIPS: EPEL for {{ nist_epel_packages | join(', ') }} only.
+      {{ item.line }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {dir: authorized-repos.d, line: "epel"}
+    - {dir: authorized-signers.d, line: "{{ nist_epel_signer.fingerprint[-16:] | lower }}  {{ nist_epel_signer.name }} {{ nist_epel_signer.fingerprint }}"}
+  when: nist_clamav_active | default(false)
+  tags: ["03.17.03"]
+
+- name: "03.17.03 | No EPEL declaration unless ClamAV is taken from it"
+  ansible.builtin.file:
+    path: "{{ nist_conf_dir }}/{{ item }}/50-clamav-epel"
+    state: absent
+  loop: [authorized-repos.d, authorized-signers.d]
+  when: not (nist_clamav_active | default(false))
+  tags: ["03.17.03"]
+
 - name: "03.17.03 | Find packages that are unsigned or foreign-signed"
   # 03.17.03b  Every component must trace to an authorized supplier. An
-  # unsigned package has no verifiable provenance.
+  # unsigned package has no verifiable provenance; one signed by a key not
+  # declared above has a provenance nobody authorized. RSA signatures are in
+  # RSAHEADER, not SIGPGP (as sr-03-all-packages-signed reads them).
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      rpm -qa --queryformat '%{NAME} %{SIGPGP:pgpsig}\n' \
-        | awk '$2 == "(none)" || $2 == "" {print $1}' \
-        | grep -v '^gpg-pubkey' || true
+      auth=$(cat {{ nist_conf_dir }}/authorized-signers.d/* 2>/dev/null | grep -oE '^[0-9a-f]{16}' | sort -u | paste -sd'|')
+      rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\n' \
+        | awk -F'|' -v re="Key ID (${auth:-none})$" '$1 !~ /^gpg-pubkey/ {
+            s = ($2 != "" && $2 != "(none)") ? $2 : $3
+            if (s == "" || s == "(none)") print "unsigned:" $1
+            else if (s !~ re) print "foreign:" $1 }'
     executable: /bin/bash
   register: nist_unsigned
   changed_when: false
@@ -32,12 +89,13 @@
   ansible.builtin.copy:
     dest: "{{ nist_conf_dir }}/supply-chain-status"
     content: |
-      # 03.17.03b  Provenance of installed components.
-      authorized_keys=RPM-GPG-KEY-Rocky-9
+      # 03.17.03b  Provenance of installed components. Installer bootstrap
+      # packages are unsigned by design (sr-03-all-packages-signed).
+      authorized_signers={{ (nist_authorized_signers + ([nist_epel_signer] if (nist_clamav_active | default(false)) else [])) | map(attribute='name') | join(',') }}
       gpgcheck=enforced
       localpkg_gpgcheck=enforced
-      unsigned_package_count={{ nist_unsigned.stdout_lines | length }}
-      unsigned_packages={{ nist_unsigned.stdout_lines | join(',') if nist_unsigned.stdout_lines else '(none)' }}
+      unsigned_or_foreign_count={{ nist_unsigned.stdout_lines | length }}
+      unsigned_or_foreign={{ nist_unsigned.stdout_lines | join(',') if nist_unsigned.stdout_lines else '(none)' }}
     owner: root
     group: root
     mode: "0644"

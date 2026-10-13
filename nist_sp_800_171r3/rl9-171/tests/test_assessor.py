@@ -246,6 +246,46 @@ class RealChecks(unittest.TestCase):
                 self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nbaseos-evil x'"), "FAIL")
                 self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nrocky-mirror x'"), "FAIL")
 
+    REPO_DECL = "cat /etc/nist-800-171/authorized-repos.d/* 2>/dev/null"
+
+    def test_a_repository_is_authorized_only_by_its_declaration(self):
+        # EPEL is a finding until the role declares it (DEFECTS 7.43), and a
+        # declaration names a whole repository ID, not a prefix.
+        for cid in ("sa-02-no-unsupported-repos", "sr-03-no-unauthorized-repos"):
+            for declared, repos, want in (("", "epel", "FAIL"),
+                                          ("epel", "epel", "PASS"),
+                                          ("epel", "epel-testing", "FAIL"),
+                                          ("epel", "baseos", "PASS")):
+                with self.subTest(cid=cid, declared=declared, repos=repos):
+                    check = dict(self.checks[cid])
+                    self.assertIn(self.REPO_DECL, check["command"])
+                    check["command"] = (check["command"]
+                                        .replace(self.REPO_DECL, f"echo '{declared}'")
+                                        .replace(self.REPOS, f"echo -e 'repo id\\n{repos} x'"))
+                    self.assertEqual(na.Runner(self.odp).run(check)["status"], want)
+
+    SIGNERS = "rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\\n'"
+    SIGNER_DECL = "cat /etc/nist-800-171/authorized-signers.d/* 2>/dev/null"
+    ROCKY = "RSA/SHA256, Tue Apr  9 17:20:09 2024, Key ID 702d426d350d275d"
+    EPEL = "RSA/SHA256, Mon Aug 10 15:59:13 2026, Key ID 8a3872bf3228467c"
+
+    def test_only_declared_signers_pass(self):
+        decl_epel = "702d426d350d275d  Rocky-9\\n8a3872bf3228467c  EPEL-9"
+        for declared, pkgs, want in (
+                ("", f"acl|(none)|{self.ROCKY}", "PASS"),          # Rocky, before any apply
+                ("", f"clamav|(none)|{self.EPEL}", "FAIL"),        # EPEL, not declared
+                (decl_epel, f"clamav|(none)|{self.EPEL}", "PASS"),  # EPEL, declared
+                (decl_epel, "filesystem|(none)|(none)", "PASS"),   # unsigned: the other check's
+                ("702d426d350d275d", f"clamav|{self.EPEL}|(none)", "FAIL")):
+            with self.subTest(declared=declared, pkgs=pkgs):
+                check = dict(self.checks["sr-03-signers-authorized"])
+                self.assertIn(self.SIGNER_DECL, check["command"])
+                self.assertIn(self.SIGNERS, check["command"])
+                check["command"] = (check["command"]
+                                    .replace(self.SIGNER_DECL, f"echo -e '{declared}'")
+                                    .replace(self.SIGNERS, f"echo '{pkgs}'"))
+                self.assertEqual(na.Runner(self.odp).run(check)["status"], want)
+
     def test_journal_retention_must_be_the_odp(self):
         reads = "systemd-analyze cat-config systemd/journald.conf 2>/dev/null"
         days = self.odp["audit_retention_days"]

@@ -14,11 +14,12 @@
 #
 # NIST_INVENTORY_KIND is derived from the inventory, never assumed:
 #   lab    every host connects with the .secrets/ key (tools/inventory.py
-#          --connection lab); .secrets/askpass.sh is the second factor
-#   byo    no host uses the .secrets/ key; the operator's SSH_ASKPASS is
+#          --connection lab); .secrets/admin_password is the second factor
+#   byo    no host uses the .secrets/ key; the second factor is the
+#          inventory's vault
 #   empty  no hosts yet
-# An inventory that mixes the two is refused: one SSH_ASKPASS cannot serve
-# both, and handing a host the other lab's password is a failed
+# An inventory that mixes the two is refused: each needs its own second
+# factor, and handing a host the other lab's password is a failed
 # authentication - a faillock strike (03.01.08) on every connection.
 
 NIST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

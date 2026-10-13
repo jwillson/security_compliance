@@ -2246,7 +2246,9 @@ checks:
     command: |
       # ClamAV comes from EPEL and is opt-in (see nist_clamav_enabled). When it
       # is absent, say so plainly rather than reporting a configuration fault.
-      rpm -q clamav-update >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
+      # clamav-update is a name clamav-freshclam provides, and `rpm -q` asks
+      # for package names: it reported ClamAV absent where it was installed.
+      rpm -q --whatprovides clamav-update >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
       systemctl is-enabled clamav-freshclam 2>&1
     expect_match: "^(enabled|static)$"
     manual_if_absent: true
@@ -2419,10 +2421,15 @@ checks:
   - id: sa-02-no-unsupported-repos
     description: Only authorized repositories are enabled
     # Whole repository IDs: the pattern was anchored only at the start, so
-    # "baseos-anything" passed (issue #13).
+    # "baseos-anything" passed (issue #13). Rocky's own are the baseline; any
+    # other is authorized only by a declaration in authorized-repos.d, which
+    # the role writes where the operator opted in (EPEL for ClamAV, DEFECTS
+    # 7.43) - never by widening this pattern.
     command: |
+      auth=$(cat /etc/nist-800-171/authorized-repos.d/* 2>/dev/null \
+               | grep -oE '^[A-Za-z0-9_-]+' | sort -u | paste -sd'|')
       dnf -q repolist --enabled | tail -n +2 \
-        | awk '$1 !~ /^(baseos|appstream|extras|crb)$/ {print $1}'
+        | awk -v re="^(baseos|appstream|extras|crb${auth:+|$auth})$" '$1 !~ re {print $1}'
     expect_empty: true
 
   - id: sa-02-no-orphan-packages
@@ -2454,11 +2461,33 @@ checks:
              $1 !~ /^gpg-pubkey/ && $1 !~ boot {print $1}' | head -10
     expect_empty: true
 
+  - id: sr-03-signers-authorized
+    description: Every signed package was signed by an authorized supplier's key
+    command: |
+      # rpm accepts a signature by any key that has been imported, so a valid
+      # signature says nothing about who the supplier was. The authorized keys
+      # are declared in authorized-signers.d (Rocky's; EPEL's only where the
+      # operator opted in, DEFECTS 7.43), as rpm prints them: the last 16 hex
+      # digits of the fingerprint. Unsigned packages are
+      # sr-03-all-packages-signed's.
+      auth=$(cat /etc/nist-800-171/authorized-signers.d/* 2>/dev/null \
+               | grep -oE '^[0-9a-f]{16}' | sort -u | paste -sd'|')
+      rpm -qa --queryformat '%{NAME}|%{SIGPGP:pgpsig}|%{RSAHEADER:pgpsig}\n' \
+        | awk -F'|' -v re="Key ID (${auth:-702d426d350d275d})$" '$1 !~ /^gpg-pubkey/ {
+            s = ($2 != "" && $2 != "(none)") ? $2 : $3
+            if (s != "" && s != "(none)" && s !~ re) print $1 }' | head -10
+    expect_empty: true
+
   - id: sr-03-no-unauthorized-repos
     description: No repository outside the authorized set is configured
     # Whole repository IDs: the pattern was anchored only at the start, so
-    # "baseos-anything" passed (issue #13).
+    # "baseos-anything" passed (issue #13). Rocky's own are the baseline; any
+    # other is authorized only by a declaration in authorized-repos.d, which
+    # the role writes where the operator opted in (EPEL for ClamAV, DEFECTS
+    # 7.43) - never by widening this pattern.
     command: |
+      auth=$(cat /etc/nist-800-171/authorized-repos.d/* 2>/dev/null \
+               | grep -oE '^[A-Za-z0-9_-]+' | sort -u | paste -sd'|')
       dnf -q repolist --enabled | tail -n +2 \
-        | awk '$1 !~ /^(baseos|appstream|extras|crb)$/ {print $1}'
+        | awk -v re="^(baseos|appstream|extras|crb${auth:+|$auth})$" '$1 !~ re {print $1}'
     expect_empty: true

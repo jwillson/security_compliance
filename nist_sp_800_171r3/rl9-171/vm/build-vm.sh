@@ -150,24 +150,59 @@ log "installing from ${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}
 CONSOLE="$OUT/console.log"
 STALL_MIN="${NIST_INSTALL_STALL_MIN:-20}"
 LIMIT_MIN="${NIST_INSTALL_TIMEOUT_MIN:-120}"
+# The install ISO is a CD-ROM on virtio-scsi, not virt-install's default SATA:
+# qemu 10.2.1 (Ubuntu 1:10.2.1+ds-1ubuntu3.2) segfaulted in its SATA ATAPI
+# emulation (ide_atapi_cmd_reply_end) on 3 of 7 builds, while the firmware
+# read the ISO (DEFECTS 7.42; tools/test-cdrom-boot.sh). --xml addresses the
+# CD-ROM by position - disk[2], after the --disk above - since virt-install's
+# XPath does not select by attribute.
 "$ROOT/tools/console-record.sh" "$VM_NAME" "$CONSOLE" $(( LIMIT_MIN * 60 + 600 )) 2> "$OUT/console-record.err" &
 rec=$!
+install_attempt() {
 virt-install --connect "$NIST_LIBVIRT_URI" --name "$VM_NAME" \
   --memory "$VM_RAM_MB" --vcpus "$VM_VCPUS" --cpu host-passthrough --machine q35 \
   --boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
   --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb \
   --disk "pool=$POOL,size=$VM_DISK_GB,format=qcow2,bus=virtio,serial=$VM_NAME,cache=none,discard=unmap" \
   --cdrom "$pool_path/$ISO_VOL" \
+  --controller type=scsi,model=virtio-scsi --xml './devices/disk[2]/target/@bus=scsi' \
   --network "network=$VM_NETWORK,model=virtio" --graphics none \
   --console pty,target_type=serial --os-variant "$OSINFO" \
-  --noautoconsole --wait -1 > "$OUT/virt-install.log" 2>&1 &
+  --noautoconsole --wait -1 >> "$OUT/virt-install.log" 2>&1 &
 vi_pid=$!
+}
+install_attempt
 log "watching the install: the console is recorded in $CONSOLE"
+# The firmware's first boot (DEFECTS 7.42): with this firmware (OVMF
+# 2025.11) and an emulated TPM, a new guest's firmware hangs before its boot
+# manager on about half of first boots, printing nothing; a later boot of the
+# same guest does not (tools/test-cdrom-boot.sh --reuse: 7 of 7). So if the
+# console has no BdsDxe 45 s after the start, the guest is stopped, its
+# definition removed with its firmware variables kept and its empty disk
+# deleted, and virt-install runs again under the same name - libvirt reuses
+# a variable store that exists. Nothing has been installed: each attempt is a
+# fresh install. At most three.
+attempt=1 fw_from=0 fw_start=$SECONDS
 started=$SECONDS last_size=-1 last_change=$SECONDS why=""
 while kill -0 "$vi_pid" 2>/dev/null; do
-  sleep 30
+  sleep 5
   size=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0)
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
+  if (( fw_start )); then
+    if tail -c +$(( fw_from + 1 )) "$CONSOLE" 2>/dev/null | grep -aq 'BdsDxe'; then
+      fw_start=0
+    elif (( SECONDS - fw_start > 45 )); then
+      if (( attempt == 3 )); then why="the firmware did not reach its boot manager on 3 attempts (DEFECTS 7.42)"; break; fi
+      attempt=$(( attempt + 1 ))
+      log "the firmware hung on this guest's first boot (DEFECTS 7.42); again, on the variables it has now: attempt $attempt of 3"
+      "${V[@]}" destroy "$VM_NAME" >/dev/null 2>&1; wait "$vi_pid" 2>/dev/null
+      "${V[@]}" undefine "$VM_NAME" --keep-nvram >/dev/null 2>&1
+      "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1
+      fw_from=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0) fw_start=$SECONDS last_change=$SECONDS
+      install_attempt
+      continue
+    fi
+  fi
   # The kickstart ends with `reboot`; an installer that halts or powers off
   # has given up, and qemu stays up with nothing more to say (DEFECTS 7.30).
   if grep -aqE 'reboot: (System halted|Power down)' "$CONSOLE" 2>/dev/null; then

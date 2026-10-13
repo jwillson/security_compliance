@@ -23,10 +23,11 @@
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/lib/inventory-env.sh" || return 1 2>/dev/null || exit 1
 
-# A direct ssh (tools/lab-ssh.sh, tools/console.py) has no ansible to answer
-# for it: this writes a one-run askpass for HOST into the container's own
-# /dev/shm, printing the password ansible_password gives that host, and
-# echoes its path.
+# A direct ssh (tools/lab-ssh.sh) has no ansible to answer for it: this writes
+# the password ansible_password gives HOST into a 0600 file in the
+# container's own /dev/shm - gone when the container exits - and echoes its
+# path, for lib/askpass.sh to print (NIST_ASKPASS_FILE). The file is only
+# read: /dev/shm is noexec in a container (DEFECTS 7.44).
 nist_askpass_for() {
   local f pw
   # Rendered by ansible (a lab host's is a lookup, a vault's is encrypted);
@@ -34,8 +35,8 @@ nist_askpass_for() {
   pw=$(ansible "$1" -m ansible.builtin.debug -a 'msg={{ ansible_password | default("") }}' -o 2>/dev/null \
        | python3 -c 'import json,sys; l=sys.stdin.read(); print(json.loads(l.split("=>",1)[1]).get("msg",""), end="")') || return 1
   [ -n "$pw" ] || return 1
-  f=$(mktemp -p /dev/shm nist-askpass.XXXXXX)
-  printf '#!/bin/sh\ncat <<"EOF"\n%s\nEOF\n' "$pw" > "$f"; chmod 700 "$f"
+  f=$(umask 077; mktemp -p /dev/shm nist-askpass.XXXXXX)
+  printf '%s\n' "$pw" > "$f"
   echo "$f"
 }
 

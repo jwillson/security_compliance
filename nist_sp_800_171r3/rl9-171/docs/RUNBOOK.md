@@ -429,9 +429,9 @@ A healthy reference VM reports:
  97 requirements assessed, 334 checks run, 0 failed
 ```
 
-36 rather than 37 satisfied because 03.14.02 reports partial: fapolicyd
-prevention is verified but ClamAV signature scanning needs EPEL, outside the
-authorized repository set (03.17.03).
+03.14.02 is partial: fapolicyd covers files as they are executed; real-time
+scanning of files as they are downloaded or opened (statement c.1) is the
+organization's - an endpoint product or its mail and web gateways.
 
 ---
 
@@ -630,14 +630,41 @@ nist_fapolicyd_permissive: true    # log instead of block, while profiling
 Re-apply, profile from the logs, write rules into
 `/etc/fapolicyd/rules.d/`, then turn enforcement back on.
 
-**ClamAV is off by default.** It needs EPEL, which is outside the authorized
-repository set (03.17.03). Enabling it is an explicit trade-off, not a
-silent one:
+**ClamAV is off by default.** It needs EPEL, a supplier outside Rocky
+(03.17.03). Enabling it is an explicit trade-off, not a silent one
+(ODP-REVIEW I6), set per host or group in the inventory:
 
 ```yaml
 nist_clamav_enabled: true
 nist_enable_epel: true
+nist_epel_baseurl: https://mirror.example.internal/epel/9/Everything/x86_64/   # optional
 ```
+
+The role does not install `epel-release` (it removes it): it writes
+`/etc/yum.repos.d/nist-epel.repo` with ClamAV's packages as the only ones EPEL
+may supply, `gpgcheck=1`, and the EPEL 9 key from the role, imported only if
+its fingerprint is `FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C`. It
+declares the repository and the key in `/etc/nist-800-171/authorized-repos.d/`
+and `authorized-signers.d/`, which `sr-03-no-unauthorized-repos`,
+`sa-02-no-unsupported-repos` and `sr-03-signers-authorized` read: anything
+else from EPEL, or EPEL without the opt-in, is still a finding.
+`nist_epel_baseurl` replaces the public mirrors with your own copy of EPEL.
+The host needs to reach the ClamAV signature mirrors (`freshclam`,
+database.clamav.net over HTTPS) - name that egress in the SSP, with the
+justification for EPEL.
+
+**Under FIPS, ClamAV needs 1.5 or later.** Before 1.5 it verifies its
+signature databases with MD5, which FIPS mode refuses: freshclam reports
+`Verification: Can't allocate memory` and no signatures arrive, and its
+retries can earn a day's cool-down from ClamAV's CDN. The role asks the
+repository which version it offers before adding anything, and below
+`nist_clamav_min_version` (1.5) it installs nothing, adds no repository or key,
+and says why in the apply output. EPEL 9 offers 1.4.6 as of 2026-10-12. So for
+now signature scanning on a FIPS host comes from your own repository (Cisco
+publishes 1.5 RPMs with detached signatures; re-sign them under your key,
+declare that key, and point `nist_epel_baseurl` at the repository) or from
+your endpoint product. `./nist probe freshclam HOST` shows what a host's
+freshclam meets. The kickstart lab will opt in once EPEL ships 1.5.
 
 **authselect owns the PAM stack.** The role reasserts the profile if
 `authselect check` fails. Do not hand-edit files under `/etc/pam.d/` — they

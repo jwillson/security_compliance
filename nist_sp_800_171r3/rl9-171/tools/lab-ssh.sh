@@ -43,8 +43,8 @@ print(v.get("ansible_host", ""), v.get("ansible_user", ""),
 mkdir -p "$(dirname "$kh")"; touch "$kh"; chmod 600 "$kh"
 ssh-keygen -F "$addr" -f "$kh" >/dev/null 2>&1 || ssh-keyscan -H "$addr" >> "$kh" 2>/dev/null
 # The knowledge factor: answered from the inventory, never typed or exported.
-if askpass=$(nist_askpass_for "$host"); then
-  export SSH_ASKPASS="$askpass" SSH_ASKPASS_REQUIRE=force
+if pwfile=$(nist_askpass_for "$host"); then
+  export SSH_ASKPASS="$PWD/lib/askpass.sh" SSH_ASKPASS_REQUIRE=force NIST_ASKPASS_FILE="$pwfile"
 fi
 exec ssh -i "$key" -o UserKnownHostsFile="$kh" -o StrictHostKeyChecking=yes \
   -o PreferredAuthentications=publickey,password -o NumberOfPasswordPrompts=1 \
