@@ -381,7 +381,7 @@ On the host:
 | `/etc/nist-800-171/overlay-version` | Which overlay version is applied |
 | `/etc/nist-800-171/mfa-status` | Whether pubkey MFA enforcement is on |
 | `/etc/nist-800-171/log-forwarding-status` | Whether records are forwarded, or local-only |
-| `/etc/nist-800-171/authorized-ports.d/` | Authorized listening ports, one fragment per role. The port checks subtract this; a port opened by hand and not declared here is a finding |
+| `/etc/nist-800-171/authorized-ports.d/` | Authorized listening ports, one fragment per role: `PORT` on any address, `PORT loopback` on 127.0.0.1 and ::1 only and never in the firewall. The port checks subtract this; a port opened by hand and not declared here is a finding |
 | `/etc/nist-800-171/log-collector-status` | On a collector: port, record directory, retention |
 | `/var/log/nist-800-171/assessment-latest.json` | Most recent on-host assessment |
 | `/var/log/nist-800-171/poam-*.csv` | Dated snapshots of the register, for the record |

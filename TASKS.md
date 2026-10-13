@@ -324,13 +324,20 @@ which crypto_types forbids).
         agent listener (bound to loopback); imfile in inotify mode read
         alerts.json once and never again (polling); a failed apply lost the
         rsyslog restart (force_handlers);
-      - **open, for the owner:** wazuh-remoted (127.0.0.1:1514) and the API
-        (127.0.0.1:55000) listen on loopback, and `cm-06-no-listening-extras`
-        (03.04.06) fails on both: the port checks count every listening
-        socket. The modules' indexer connector retries an indexer that does
-        not exist. Detection is only as good as the hash list: exact SHA-256
-        matches of known samples, which a deployment must feed and keep
-        current (03.14.02b).
+      - wazuh-remoted (127.0.0.1:1514) and the API (127.0.0.1:55000) listen on
+        loopback, which `cm-06-no-listening-extras` (03.04.06) counted as
+        findings. Owner decision, 2026-10-13: a loopback-aware check. A
+        fragment line `PORT loopback` authorizes the port on 127.0.0.1 and
+        ::1 only - the same port on any other address is still a finding -
+        and the firewall check, the network allowlist and the task that
+        closes undeclared ports read plain `PORT` lines alone, so a loopback
+        declaration never opens anything (99 unit tests). rl9-cui-01 with
+        Wazuh: 36/33/0/28, 0 of 352 failed;
+      - **open:** the modules' indexer connector retries, at start, an indexer
+        that does not exist (warnings, then quiet). Detection is only as good
+        as the hash list: exact SHA-256 matches of known samples, which a
+        deployment must feed and keep current (03.14.02b). Next: the
+        reference lab opts in, proven by a fresh `make all`.
 
 ## Open — container only
 

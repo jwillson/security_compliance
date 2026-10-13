@@ -151,7 +151,8 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      auth=$(cat {{ nist_conf_dir }}/authorized-ports.d/* 2>/dev/null | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      # Plain "PORT" lines only: "PORT loopback" is never opened (TASKS W1).
+      auth=$(cat {{ nist_conf_dir }}/authorized-ports.d/* 2>/dev/null | grep -E '^[0-9]+[[:space:]]*(#.*)?$' | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
       changed=0
       for scope in "--permanent" ""; do

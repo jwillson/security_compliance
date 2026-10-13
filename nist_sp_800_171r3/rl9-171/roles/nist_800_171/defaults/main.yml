@@ -216,7 +216,9 @@ nist_authorized_signers:
 
 # Ports every host may listen on. Role-specific additions are declared in
 # their own fragment under {{ nist_conf_dir }}/authorized-ports.d/ rather than
-# by widening this list - see roles/nist_log_collector.
+# by widening this list - see roles/nist_log_collector. A fragment line
+# "PORT" authorizes it on any address; "PORT loopback" only on 127.0.0.1 and
+# ::1, and never in the firewall - see roles/nist_wazuh.
 nist_authorized_tcp_ports:
   - 22
 

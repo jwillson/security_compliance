@@ -69,8 +69,10 @@ had served its purpose, and the orphaned `web/` nginx snippet went the same way
   `{{ nist_conf_dir }}/authorized-ports.d/<NN>-<role>`. The port checks read
   that directory rather than hardcoding a port, so 6514 is authorized on a
   collector and still a finding on a plain CUI host, and a port nothing
-  declares is closed on apply. Widening a check to go
-  green is the wrong fix.
+  declares is closed on apply. A line `PORT` authorizes it on any address;
+  `PORT loopback` only on 127.0.0.1 and ::1, and never in the firewall (a
+  service no other host can reach, such as Wazuh's on a standalone host,
+  TASKS W1). Widening a check to go green is the wrong fix.
 - Python 3, stdlib first. Ansible tasks use FQCN (`ansible.builtin.*`,
   `ansible.posix.*`, `community.general.*`) and carry their requirement ID as
   a tag.

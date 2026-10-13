@@ -87,6 +87,23 @@
   notify: restart wazuh-manager
   tags: ["03.14.02"]
 
+- name: "03.04.06 | Declare Wazuh's two listeners, loopback only"
+  # The manager will not start without its agent listener, and the API
+  # always starts; both are bound to loopback above, and declared as such,
+  # so cm-06-no-listening-extras accepts them there and nowhere else, and
+  # neither is ever opened in the firewall (TASKS W1).
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir | default('/etc/nist-800-171') }}/authorized-ports.d/60-wazuh"
+    content: |
+      # Authorized by roles/nist_wazuh, on 127.0.0.1 and ::1 only:
+      # wazuh-remoted (no agent is enrolled) and the Wazuh API (unused).
+      1514 loopback
+      55000 loopback
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.14.02", "03.04.06"]
+
 - name: "03.14.02 | The known-malware SHA-256 list"
   ansible.builtin.copy:
     dest: /var/ossec/etc/lists/nist-malware-sha256

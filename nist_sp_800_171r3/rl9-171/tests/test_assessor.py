@@ -246,6 +246,40 @@ class RealChecks(unittest.TestCase):
                 self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nbaseos-evil x'"), "FAIL")
                 self.assertEqual(self.status(cid, self.REPOS, "-e 'repo id\\nrocky-mirror x'"), "FAIL")
 
+    PORT_DECL = "cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null"
+    LISTENERS = "ss -tlnH"
+
+    def listening(self, declared, sockets):
+        check = dict(self.checks["cm-06-no-listening-extras"])
+        self.assertEqual(check["command"].count(self.PORT_DECL), 2)
+        self.assertIn(self.LISTENERS, check["command"])
+        ss = "\\n".join(f"LISTEN 0 128 {a} 0.0.0.0:*" for a in sockets)
+        check["command"] = (check["command"]
+                            .replace(self.PORT_DECL, f"printf '{declared}'")
+                            .replace(self.LISTENERS, f"printf '{ss}\\n'"))
+        return na.Runner(self.odp).run(check)["status"]
+
+    def test_a_loopback_declaration_authorizes_loopback_only(self):
+        # TASKS W1: Wazuh's listeners, declared "PORT loopback".
+        lo = "22\\n1514 loopback\\n55000 loopback\\n"
+        self.assertEqual(self.listening(lo, ["0.0.0.0:22", "127.0.0.1:1514", "[::1]:55000"]), "PASS")
+        self.assertEqual(self.listening(lo, ["0.0.0.0:22", "0.0.0.0:1514"]), "FAIL")
+        self.assertEqual(self.listening(lo, ["[::]:55000"]), "FAIL")
+        self.assertEqual(self.listening(lo, ["192.168.171.5:1514"]), "FAIL")
+        # Undeclared, loopback or not, is a finding; a plain line is any address.
+        self.assertEqual(self.listening("22\\n", ["127.0.0.1:631"]), "FAIL")
+        self.assertEqual(self.listening("22\\n6514\\n", ["[::]:6514", "127.0.0.1:6514"]), "PASS")
+        # Nothing declared: 22 alone.
+        self.assertEqual(self.listening("", ["0.0.0.0:22"]), "PASS")
+
+    def test_a_loopback_declaration_never_opens_the_firewall(self):
+        check = dict(self.checks["sc-06-no-unexpected-ports"])
+        self.assertIn(self.PORT_DECL, check["command"])
+        check["command"] = (check["command"]
+                            .replace(self.PORT_DECL, "printf '22\\n1514 loopback\\n'")
+                            .replace("firewall-cmd --list-ports", "echo 1514/tcp"))
+        self.assertEqual(na.Runner(self.odp).run(check)["status"], "FAIL")
+
     REPO_DECL = "cat /etc/nist-800-171/authorized-repos.d/* 2>/dev/null"
 
     def test_a_repository_is_authorized_only_by_its_declaration(self):

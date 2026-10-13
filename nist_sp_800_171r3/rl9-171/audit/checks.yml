@@ -951,17 +951,25 @@ checks:
     expect_empty: true
 
   - id: cm-06-no-listening-extras
-    description: No unexpected service is listening on a network socket
+    description: No unexpected service is listening on a socket
     command: |
       # Authorized ports are declared on the host, one fragment per role,
       # by whatever opened them. Reading them here keeps the check honest: a
       # collector's 514 is authorized, the same port on a plain CUI host is
-      # still a finding.
+      # still a finding. A plain "PORT" line authorizes it on any address;
+      # "PORT loopback" only on 127.0.0.1 and ::1 - a service no other host
+      # can reach, such as Wazuh's on a standalone host (TASKS W1) - so the
+      # same port on any other address is still a finding. Every listener is
+      # counted, loopback too, and an offender is shown as address:port.
       auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
-               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+               | grep -E '^[0-9]+[[:space:]]*(#.*)?$' | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
-      ss -tlnH | awk '{print $4}' | sed 's/.*://' | sort -un \
-        | awk -v re="^(${auth})$" '$0 !~ re'
+      lo=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
+             | grep -E '^[0-9]+[[:space:]]+loopback' | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+      ss -tlnH | awk -v any="^(${auth})$" -v lo="^(${auth}${lo:+|$lo})$" '{
+          addr = $4; port = addr; sub(/.*:/, "", port)
+          ok = (addr ~ /^(127\.[0-9.]+|\[::1\]):/) ? port ~ lo : port ~ any
+          if (!ok) print addr }' | sort -u
     expect_empty: true
 
   - id: cm-06-ctrlaltdel-masked
@@ -1932,8 +1940,10 @@ checks:
       # by whatever opened them. Reading them here keeps the check honest: a
       # collector's 514 is authorized, the same port on a plain CUI host is
       # still a finding.
+      # A plain "PORT" line authorizes it on any address; "PORT loopback"
+      # only on 127.0.0.1 and ::1, and never in the firewall.
       auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
-               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+               | grep -E '^[0-9]+[[:space:]]*(#.*)?$' | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
       # firewalld prints "514/tcp 9100/udp" on a single line.
       firewall-cmd --list-ports | tr ' ' '\n' \
@@ -1967,8 +1977,10 @@ checks:
       # by whatever opened them. Reading them here keeps the check honest: a
       # collector's 514 is authorized, the same port on a plain CUI host is
       # still a finding.
+      # A plain "PORT" line authorizes it on any address; "PORT loopback"
+      # only on 127.0.0.1 and ::1, and never in the firewall.
       auth=$(cat /etc/nist-800-171/authorized-ports.d/* 2>/dev/null \
-               | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
+               | grep -E '^[0-9]+[[:space:]]*(#.*)?$' | grep -oE '^[0-9]+' | sort -un | paste -sd'|')
       auth=${auth:-22}
       ss -tlnH \
         | awk '$4 !~ /^(127\.|\[::1\])/ {print $4}' \

@@ -65,7 +65,8 @@ host; that is what the labs are for.
   selects that requirement's tasks — and every task a tagged task depends on
   must carry the tag too.
 - A role that opens a listening port declares it in
-  `/etc/nist-800-171/authorized-ports.d/`; widening a check to go green is the
+  `/etc/nist-800-171/authorized-ports.d/` - `PORT` for any address, `PORT
+  loopback` for 127.0.0.1 and ::1 only; widening a check to go green is the
   wrong fix.
 - Python 3, standard library first.
 
