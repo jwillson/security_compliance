@@ -305,7 +305,7 @@ manager package, no agent - so no Wazuh crypto crosses the network (its agent
 channel uses the OpenSSL it bundles, 3.5.1, not Rocky's validated module,
 which crypto_types forbids).
 
-- [ ] **W1 The trial.** `roles/nist_wazuh` (opt-in, `nist_wazuh_enabled`, off
+- [x] **W1 The trial.** `roles/nist_wazuh` (opt-in, `nist_wazuh_enabled`, off
       by default; site.yml's third play), `./nist test-wazuh HOST COLLECTOR`,
       `./nist probe wazuh HOST`. On rl9-cui-01, 2026-10-13, Wazuh 4.14.8:
       - the supply chain holds: a repository for wazuh-manager alone, its key
@@ -336,8 +336,13 @@ which crypto_types forbids).
       - **open:** the modules' indexer connector retries, at start, an indexer
         that does not exist (warnings, then quiet). Detection is only as good
         as the hash list: exact SHA-256 matches of known samples, which a
-        deployment must feed and keep current (03.14.02b). Next: the
-        reference lab opts in, proven by a fresh `make all`.
+        deployment must feed and keep current (03.14.02b);
+      - the reference lab opts in (tools/inventory.py), and 03.14.02 has two
+        checks for it, MANUAL where Wazuh is absent. *Proven* 2026-10-13 by
+        `./nist make destroy && ./nist make all && ./nist test-wazuh
+        rl9-cui-01 rl9-log-01`: both hosts with Wazuh, 0 of 354 failed
+        (36/33/0/28 and 35/34/0/28); EICAR quarantined in 2 s, the alert on
+        the collector, 5/5; the collector at 2 GB with 692 MB available.
 
 ## Open — container only
 

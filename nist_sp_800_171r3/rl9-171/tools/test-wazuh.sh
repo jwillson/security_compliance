@@ -16,7 +16,7 @@
 #   tools/test-wazuh.sh rl9-cui-01 rl9-log-01
 #
 # Everything it writes on HOST is quarantined by Wazuh or removed. Runs in the
-# control-plane container; NIST_INVENTORY names the lab's inventory.
+# control-plane container, with the inventory of the lab that lists HOST.
 #
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
 host=${1:?usage: tools/test-wazuh.sh HOST COLLECTOR} collector=${2:?usage: tools/test-wazuh.sh HOST COLLECTOR}
-. lib/ssh-env.sh || exit 2
+NIST_FOR_HOST=$host . lib/ssh-env.sh || exit 2      # the lab whose inventory lists HOST
 OUT="$ROOT/reports/runs/test-wazuh-$host-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 fails=0
 ok()  { echo "PASS  $*"; }

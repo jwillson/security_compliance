@@ -100,10 +100,11 @@ kickstart-built reference lab:
   0 not satisfied
  28 organizational       (no host control exists; policy/process/physical)
  ----------------------------------------
- 97 requirements assessed, 351 checks run, 0 failed
+ 97 requirements assessed, 354 checks run, 0 failed
 ```
 
-That is the CUI host. The collector reads 35 / 34 / 0 / 28: it forwards
+That is the CUI host, with Wazuh standalone as the reference lab runs it
+(TASKS W1). The collector reads 35 / 34 / 0 / 28: it forwards
 nowhere, so `sc-08-forward-encrypted` reports MANUAL there and 03.13.08
 counts as partial - the single-node case, reported as such.
 

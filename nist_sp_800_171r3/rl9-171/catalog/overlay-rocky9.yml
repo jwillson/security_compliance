@@ -1569,7 +1569,10 @@ requirements:
     tasks: tasks/si.yml
     host_scope: >
       fapolicyd blocks execution of any unauthorized binary as it is executed
-      (prevention, non-signature-based); ClamAV, where the operator opts in to
+      (prevention, non-signature-based); Wazuh, standalone, where the operator
+      opts in (nist_wazuh_enabled), hashes each file written where files
+      arrive as it is written and quarantines a known-malicious match; ClamAV,
+      where the operator opts in to
       EPEL scoped to its packages at a version that works under FIPS (1.5 or
       later), adds signature-based detection with a scheduled full scan at
       malware_scan_freq, freshclam keeping signatures current and detections
@@ -1586,7 +1589,8 @@ requirements:
       Statement b's updates follow its configuration management process.
     checks: [si-02-clamav-installed, si-02-freshclam-enabled,
              si-02-clamav-scan-timer, si-02-signatures-fresh,
-             si-02-fapolicyd-running, si-02-scan-action-quarantine]
+             si-02-fapolicyd-running, si-02-scan-action-quarantine,
+             si-02-realtime-detection-running, si-02-realtime-quarantine-configured]
 
   - id: "03.14.03"
     title: Security Alerts, Advisories, and Directives

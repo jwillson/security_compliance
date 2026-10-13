@@ -23,7 +23,8 @@ Roles:
 Connections:
     lab   a host vm/build-vm.sh built: the lab key, admin password (for
           sudo and as the SSH password factor, which ansible answers itself)
-          and known_hosts under .secrets/ (the default).
+          and known_hosts under .secrets/ (the default). As the reference,
+          it also opts in to Wazuh standalone (TASKS W1).
     byo   a host you already have (vm/byo-guest.sh, or real hardware): the
           operator's own key (--key, default ~/.ssh/id_rsa) and known_hosts;
           the passwords come from the inventory's vault,
@@ -83,6 +84,13 @@ CONNECTIONS["lab"] = {
         "-o StrictHostKeyChecking=yes "
         "-o UserKnownHostsFile={{ playbook_dir }}/.secrets/known_hosts",
 }
+# The kickstart lab is the reference: it shows everything a host can, so it
+# takes the opt-ins a host you bring leaves off - Wazuh standalone (03.14.02,
+# TASKS W1). (ClamAV is not among them: EPEL's cannot work under FIPS,
+# DEFECTS 7.43.) Not a password: the vault's group variables are not
+# shadowed by it.
+LAB_REFERENCE = {"nist_wazuh_enabled": True}
+CONNECTIONS["lab"].update(LAB_REFERENCE)
 CONNECTIONS["byo"] = {
     "ansible_become": True,
     "ansible_become_method": "sudo",
@@ -107,6 +115,8 @@ def load() -> dict:
             del host["ansible_become_password"]
         if ".secrets/" in str(host.get("ansible_ssh_private_key_file", "")):
             host.setdefault("ansible_password", CONNECTIONS["lab"]["ansible_password"])
+            for k, v in LAB_REFERENCE.items():   # lab hosts added before W1
+                host.setdefault(k, v)
     return data
 
 

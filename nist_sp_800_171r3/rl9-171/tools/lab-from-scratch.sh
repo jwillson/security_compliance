@@ -6,7 +6,7 @@
 #
 #   tools/lab-from-scratch.sh --yes                destroys every lab guest first
 #   tools/lab-from-scratch.sh --yes --from STEP    resume at STEP (teardown,
-#       kickstart-all, byo-init, byo-release), skipping
+#       kickstart-all, kickstart-wazuh, byo-init, byo-release), skipping
 #       the steps before it and the teardown - after a failure fixed in place,
 #       so what already passed is not rebuilt; the earlier steps' logs are in
 #       the run that failed
@@ -15,7 +15,9 @@
 #    no network, no disk, no log.
 # 2. make all for the kickstart lab (host-check, catalog, secrets, ISO, the
 #    CUI VM - creating the lab network - its collector, the lab PKI, apply,
-#    verify), so the CUI host forwards to the collector.
+#    verify), so the CUI host forwards to the collector; then
+#    tools/test-wazuh.sh: the reference lab's Wazuh quarantines the EICAR
+#    file and the alert reaches the collector (TASKS W1).
 # 3. The BYO lab: vm/byo-lab-init.sh, then tools/release-run.sh byo
 #    (builds the three guests from the stock image and cycles them).
 # Each step's log is in reports/runs/from-scratch-UTC/. Exit 0 only if every
@@ -51,6 +53,7 @@ step() {   # name command... (in the control-plane container, as everything)
 
 step teardown "./vm/lab-teardown.sh --yes"
 step kickstart-all "make all"
+step kickstart-wazuh "./tools/test-wazuh.sh rl9-cui-01 rl9-log-01"
 step byo-init "./vm/byo-lab-init.sh"
 step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo"
 say "residue now:"; ./tools/lab-residue.sh | tee -a "$OUT/summary.txt"

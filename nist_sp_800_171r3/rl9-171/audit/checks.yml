@@ -2283,6 +2283,29 @@ checks:
     expect_int: "<= 7"
     manual_if_absent: true
 
+  - id: si-02-realtime-detection-running
+    description: Real-time malicious code detection (Wazuh, standalone) is running
+    command: |
+      # Opt-in (roles/nist_wazuh, TASKS W1): absent, say so plainly.
+      rpm -q wazuh-manager >/dev/null 2>&1 || { echo "wazuh not installed"; exit 1; }
+      systemctl is-active wazuh-manager 2>&1
+    expect_output: "active"
+    manual_if_absent: true
+
+  - id: si-02-realtime-quarantine-configured
+    description: Files arriving in watched directories are checked as written and a match is quarantined
+    command: |
+      rpm -q wazuh-manager >/dev/null 2>&1 || { echo "wazuh not installed"; exit 1; }
+      c=/var/ossec/etc/ossec.conf
+      # Real-time watches, the known-malware list, and the response bound to
+      # the rule that matches it: the three together, or nothing quarantines.
+      rt=$(grep -c '<directories realtime="yes"' "$c" 2>/dev/null)
+      grep -q '<list>etc/lists/nist-malware-sha256</list>' "$c" 2>/dev/null || rt=0
+      grep -A3 '<active-response>' "$c" 2>/dev/null | grep -q '<command>nist-quarantine</command>' || rt=0
+      echo "${rt:-0}"
+    expect_int: ">= 1"
+    manual_if_absent: true
+
   - id: si-02-fapolicyd-running
     description: Execution-time prevention is active
     command: "systemctl is-active fapolicyd"

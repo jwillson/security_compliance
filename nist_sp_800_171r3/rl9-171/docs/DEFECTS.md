@@ -2012,7 +2012,9 @@ public when it had not.*
       attempts, each a fresh install. Open upstream: the firmware hang
       itself. *Proven* 2026-10-13 by `./nist make destroy && ./nist make
       all`: both guests installed from the virtio-scsi CD-ROM, applied
-      (failed=0, settled at changed=1) and verified 0 of 352 failed.
+      (failed=0, settled at changed=1) and verified 0 of 352 failed. The
+      retry itself the same day: rl9-log-01's firmware hung on its first
+      boot, build-vm said so and booted it again, and attempt 2 installed.
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
