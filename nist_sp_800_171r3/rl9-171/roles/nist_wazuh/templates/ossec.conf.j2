@@ -1,0 +1,97 @@
+<!--
+  Written by the nist_wazuh role (03.14.02). Wazuh standalone: file integrity
+  monitoring in real time, a known-malware SHA-256 list, and an active
+  response that quarantines a match. Enrollment off, no cluster; the agent
+  listener wazuh-remoted is bound to loopback - the manager will not start
+  without one - and no agent is ever enrolled. Alerts go to
+  logs/alerts/alerts.json, which rsyslog forwards to the collector.
+-->
+<ossec_config>
+  <global>
+    <jsonout_output>yes</jsonout_output>
+    <alerts_log>yes</alerts_log>
+    <logall>no</logall>
+    <logall_json>no</logall_json>
+    <email_notification>no</email_notification>
+  </global>
+
+  <alerts>
+    <log_alert_level>3</log_alert_level>
+  </alerts>
+
+  <remote>
+    <connection>secure</connection>
+    <port>1514</port>
+    <protocol>tcp</protocol>
+    <local_ip>127.0.0.1</local_ip>
+  </remote>
+
+  <auth>
+    <disabled>yes</disabled>
+  </auth>
+
+  <cluster>
+    <disabled>yes</disabled>
+  </cluster>
+
+  <rootcheck>
+    <disabled>yes</disabled>
+  </rootcheck>
+
+  <wodle name="syscollector">
+    <disabled>yes</disabled>
+  </wodle>
+
+  <sca>
+    <enabled>no</enabled>
+  </sca>
+
+  <vulnerability-detection>
+    <enabled>no</enabled>
+  </vulnerability-detection>
+
+  <indexer>
+    <enabled>no</enabled>
+  </indexer>
+
+  <syscheck>
+    <disabled>no</disabled>
+    <frequency>43200</frequency>
+    <scan_on_start>yes</scan_on_start>
+    <alert_new_files>yes</alert_new_files>
+{% for d in nist_wazuh_watch_dirs %}
+    <directories realtime="yes" check_md5sum="no" check_sha1sum="no" check_sha256sum="yes" check_size="yes" check_owner="yes" check_perm="yes" check_mtime="yes">{{ d }}</directories>
+{% endfor %}
+  </syscheck>
+
+  <ruleset>
+    <decoder_dir>ruleset/decoders</decoder_dir>
+    <rule_dir>ruleset/rules</rule_dir>
+    <list>etc/lists/audit-keys</list>
+    <list>etc/lists/amazon/aws-eventnames</list>
+    <list>etc/lists/security-eventchannel</list>
+    <list>etc/lists/malicious-ioc/malware-hashes</list>
+    <list>etc/lists/malicious-ioc/malicious-ip</list>
+    <list>etc/lists/malicious-ioc/malicious-domains</list>
+    <list>etc/lists/nist-malware-sha256</list>
+    <decoder_dir>etc/decoders</decoder_dir>
+    <rule_dir>etc/rules</rule_dir>
+  </ruleset>
+
+  <command>
+    <name>nist-quarantine</name>
+    <executable>nist-quarantine</executable>
+    <timeout_allowed>no</timeout_allowed>
+  </command>
+
+  <active-response>
+    <disabled>no</disabled>
+    <command>nist-quarantine</command>
+    <location>local</location>
+    <rules_id>100100</rules_id>
+  </active-response>
+
+  <logging>
+    <log_format>plain</log_format>
+  </logging>
+</ossec_config>

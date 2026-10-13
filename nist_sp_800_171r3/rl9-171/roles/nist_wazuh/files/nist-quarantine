@@ -1,0 +1,55 @@
+#!/usr/bin/python3
+# 03.14.02c.2  Wazuh active response (nist_wazuh role): move a file that
+# matched the known-malware list into /var/lib/nist-quarantine, readable by
+# root alone, and say so to syslog - which forwards it to the collector.
+# Kept, not deleted, for incident analysis (03.06.02a), as the scheduled
+# ClamAV scan does.
+#
+# Wazuh 4.x hands an active response the alert as one JSON line on stdin;
+# the response names the keys it acts on ("check_keys") and acts only when
+# execd answers "continue".
+import json, os, shutil, sys, syslog, time
+
+QUARANTINE = "/var/lib/nist-quarantine"
+
+
+def say(msg, prio=syslog.LOG_ALERT):
+    syslog.openlog("nist-quarantine", 0, syslog.LOG_AUTHPRIV)
+    syslog.syslog(prio, msg)
+
+
+def main():
+    try:
+        msg = json.loads(sys.stdin.readline())
+    except ValueError:
+        say("03.14.02 active response: unreadable input", syslog.LOG_ERR)
+        return 1
+    if msg.get("command") != "add":
+        return 0
+    alert = msg.get("parameters", {}).get("alert", {})
+    path = alert.get("syscheck", {}).get("path", "")
+    if not path:
+        return 0
+    print(json.dumps({"version": 1,
+                      "origin": {"name": "nist-quarantine", "module": "active-response"},
+                      "command": "check_keys",
+                      "parameters": {"keys": [path]}}), flush=True)
+    answer = json.loads(sys.stdin.readline() or "{}")
+    if answer.get("command") != "continue":
+        return 0
+    if not os.path.isfile(path) or os.path.islink(path):
+        say(f"03.14.02 malicious code at {path}: already gone, nothing to quarantine", syslog.LOG_WARNING)
+        return 0
+    os.makedirs(QUARANTINE, mode=0o700, exist_ok=True)
+    dest = os.path.join(QUARANTINE, f"{int(time.time())}-{os.path.basename(path)}")
+    shutil.move(path, dest)
+    os.chown(dest, 0, 0)
+    os.chmod(dest, 0o400)
+    rule = alert.get("rule", {})
+    say(f"03.14.02 malicious code quarantined: {path} -> {dest} "
+        f"(rule {rule.get('id', '?')}: {rule.get('description', '')})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

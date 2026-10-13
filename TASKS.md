@@ -295,6 +295,43 @@ CUI volumes ask for the passphrase at every boot (ODP-REVIEW I5).
       the spare machine through its BMC, then apply and verify.
 - [x] **B3 Passphrase unlock without a TPM (I5).** Done and rehearsed
       (DEFECTS 7.35); on the spare machine with B2.
+## Open — malicious code detection with Wazuh (03.14.02)
+
+03.14.02 is partial (DEFECTS 7.43): fapolicyd covers files as they are
+executed, and statement c.1 also asks for real-time scanning as files are
+downloaded or opened; EPEL's ClamAV cannot verify its signatures under FIPS.
+Owner decision, 2026-10-12: try Wazuh, standalone on each CUI host - the
+manager package, no agent - so no Wazuh crypto crosses the network (its agent
+channel uses the OpenSSL it bundles, 3.5.1, not Rocky's validated module,
+which crypto_types forbids).
+
+- [ ] **W1 The trial.** `roles/nist_wazuh` (opt-in, `nist_wazuh_enabled`, off
+      by default; site.yml's third play), `./nist test-wazuh HOST COLLECTOR`,
+      `./nist probe wazuh HOST`. On rl9-cui-01, 2026-10-13, Wazuh 4.14.8:
+      - the supply chain holds: a repository for wazuh-manager alone, its key
+        pinned (`0DCF CA55 ... 2911 1145`), declared in authorized-repos.d and
+        authorized-signers.d - every repository and signer check passes; the
+        RPM installs under FIPS (RSA/SHA256);
+      - the EICAR file written to a home directory is quarantined, root-only,
+        2 s later (real-time file monitoring, a SHA-256 list, an active
+        response trusted in fapolicyd by size and hash); the alert and the
+        quarantine record reach the collector over 03.03.05c's TLS; the
+        longest alert the rule can raise (5.4 KB) arrives whole, under
+        rsyslog's 8 KB message;
+      - no fapolicyd or SELinux denial; about 570 MB resident, 350 of them the
+        API's Python workers, which nothing uses;
+      - found and fixed on the way: the manager will not start without its
+        agent listener (bound to loopback); imfile in inotify mode read
+        alerts.json once and never again (polling); a failed apply lost the
+        rsyslog restart (force_handlers);
+      - **open, for the owner:** wazuh-remoted (127.0.0.1:1514) and the API
+        (127.0.0.1:55000) listen on loopback, and `cm-06-no-listening-extras`
+        (03.04.06) fails on both: the port checks count every listening
+        socket. The modules' indexer connector retries an indexer that does
+        not exist. Detection is only as good as the hash list: exact SHA-256
+        matches of known samples, which a deployment must feed and keep
+        current (03.14.02b).
+
 ## Open — container only
 
 Owner decision, 2026-10-07: the tool runs only in the control-plane container;

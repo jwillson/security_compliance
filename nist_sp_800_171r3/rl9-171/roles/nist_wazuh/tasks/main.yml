@@ -1,0 +1,209 @@
+---
+# 03.14.02 Malicious code detection with Wazuh, standalone (defaults/main.yml
+# says why standalone). Real-time file integrity monitoring of where files
+# arrive, a known-malware SHA-256 list, and an active response that
+# quarantines a match; alerts forwarded by rsyslog over 03.03.05c's TLS.
+
+# --- the supplier: Wazuh's repository, scoped to wazuh-manager ---------------
+- name: "03.14.02 | Install the Wazuh signing key"
+  ansible.builtin.copy:
+    src: GPG-KEY-WAZUH
+    dest: /etc/pki/rpm-gpg/GPG-KEY-WAZUH
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.14.02", "03.17.03"]
+
+- name: "03.14.02 | Trust the Wazuh key, pinned by fingerprint"
+  ansible.builtin.rpm_key:
+    key: /etc/pki/rpm-gpg/GPG-KEY-WAZUH
+    fingerprint: "{{ nist_wazuh_signer.fingerprint }}"
+    state: present
+  tags: ["03.14.02", "03.17.03"]
+
+- name: "03.14.02 | Wazuh's repository, for wazuh-manager and nothing else"
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/nist-wazuh.repo
+    content: |
+      # Written by the nist_wazuh role (03.14.02, 03.17.03). Declared in
+      # {{ nist_conf_dir | default('/etc/nist-800-171') }}/authorized-repos.d.
+      [wazuh]
+      name=Wazuh 4.x - wazuh-manager only
+      baseurl={{ nist_wazuh_baseurl }}
+      enabled=1
+      gpgcheck=1
+      gpgkey=file:///etc/pki/rpm-gpg/GPG-KEY-WAZUH
+      includepkgs=wazuh-manager
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.14.02", "03.17.03"]
+
+- name: "03.14.02 | Declare Wazuh as an authorized supplier"
+  ansible.builtin.copy:
+    dest: "{{ nist_conf_dir | default('/etc/nist-800-171') }}/{{ item.dir }}/60-wazuh"
+    content: |
+      # nist_wazuh_enabled: Wazuh's repository, for wazuh-manager only.
+      {{ item.line }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {dir: authorized-repos.d, line: "wazuh"}
+    - {dir: authorized-signers.d, line: "{{ nist_wazuh_signer.fingerprint[-16:] | lower }}  {{ nist_wazuh_signer.name }} {{ nist_wazuh_signer.fingerprint }}"}
+  tags: ["03.14.02", "03.17.03"]
+
+- name: "03.14.02 | Install the Wazuh manager"
+  ansible.builtin.dnf:
+    name: "wazuh-manager-{{ nist_wazuh_version }}"
+    state: present
+  register: nist_wazuh_pkg
+  tags: ["03.14.02"]
+
+# --- configuration -------------------------------------------------------------
+- name: "03.14.02 | Configure Wazuh standalone: monitoring, the list, the response"
+  ansible.builtin.template:
+    src: ossec.conf.j2
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0640"
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  notify: restart wazuh-manager
+  tags: ["03.14.02"]
+
+- name: "03.14.02 | The API on loopback only"
+  # wazuh-apid always starts with the manager; nothing here uses it.
+  ansible.builtin.copy:
+    dest: /var/ossec/api/configuration/api.yaml
+    content: |
+      # nist_wazuh role (03.14.02): loopback only; nothing uses the API.
+      host: ['127.0.0.1']
+      port: 55000
+    owner: root
+    group: wazuh
+    mode: "0660"
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  notify: restart wazuh-manager
+  tags: ["03.14.02"]
+
+- name: "03.14.02 | The known-malware SHA-256 list"
+  ansible.builtin.copy:
+    dest: /var/ossec/etc/lists/nist-malware-sha256
+    content: |
+      {% for h in nist_wazuh_hashes %}
+      {{ h }}
+      {% endfor %}
+      {% for f in nist_wazuh_hash_files %}
+      {{ lookup('ansible.builtin.file', f) }}
+      {% endfor %}
+    owner: root
+    group: wazuh
+    mode: "0640"
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  notify: restart wazuh-manager
+  tags: ["03.14.02"]
+
+- name: "03.14.02 | The detection rule"
+  ansible.builtin.copy:
+    src: nist_rules.xml
+    dest: /var/ossec/etc/rules/nist_rules.xml
+    owner: root
+    group: wazuh
+    mode: "0640"
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  notify: restart wazuh-manager
+  tags: ["03.14.02"]
+
+- name: "03.14.02 | The quarantine response"
+  ansible.builtin.copy:
+    src: nist-quarantine
+    dest: /var/ossec/active-response/bin/nist-quarantine
+    owner: root
+    group: wazuh
+    mode: "0750"
+  register: nist_wazuh_ar
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  tags: ["03.14.02"]
+
+# fapolicyd trusts the RPM database and declared files (03.04.08): the
+# response is the role's, not a package's, so it is declared by size and
+# SHA-256 - a changed script is no longer trusted.
+- name: "03.14.02 | Measure the quarantine response"
+  ansible.builtin.stat:
+    path: /var/ossec/active-response/bin/nist-quarantine
+    checksum_algorithm: sha256
+  register: nist_wazuh_ar_stat
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  tags: ["03.14.02", "03.04.08"]
+
+- name: "03.04.08 | Trust the quarantine response in fapolicyd"
+  ansible.builtin.copy:
+    dest: /etc/fapolicyd/trust.d/nist-wazuh
+    content: |
+      /var/ossec/active-response/bin/nist-quarantine {{ nist_wazuh_ar_stat.stat.size }} {{ nist_wazuh_ar_stat.stat.checksum }}
+    owner: root
+    group: fapolicyd
+    mode: "0644"
+  when: nist_wazuh_ar_stat.stat.exists | default(false)
+  notify: update fapolicyd trust
+  tags: ["03.14.02", "03.04.08"]
+
+- name: "03.14.02 | Create the quarantine directory"
+  ansible.builtin.file:
+    path: /var/lib/nist-quarantine
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  tags: ["03.14.02"]
+
+# --- alerts: to the collector, and not forever on the host ---------------------
+- name: "03.14.02 | Forward Wazuh's alerts with the audit records"
+  # Into the forwarding ruleset only (03.03.05c, au.yml), so they are not
+  # written to the local syslog files a second time; alerts.json stays the
+  # local copy. Wazuh's alerts can be long - the full log line of what
+  # triggered them - so imfile reads them whole and the forwarder's queue is
+  # what bounds them.
+  ansible.builtin.copy:
+    dest: /etc/rsyslog.d/80-nist-wazuh.conf
+    content: |
+      # nist_wazuh role (03.14.02): Wazuh's alerts, forwarded with the audit
+      # records over the collector's TLS channel.
+      # Polling, not inotify: rsyslog's SELinux domain may not watch Wazuh's
+      # var_t directory, and imfile then read the file once at start and
+      # never again, with no denial logged (the trial, 2026-10-13).
+      module(load="imfile" mode="polling" PollingInterval="2")
+      input(type="imfile" File="/var/ossec/logs/alerts/alerts.json"
+            Tag="wazuh-alert:" Facility="local5" Severity="alert"
+            ruleset="nist_forward")
+    owner: root
+    group: root
+    mode: "0600"
+  when: nist_log_collector | default('') | length > 0
+  notify: restart rsyslog for wazuh
+  tags: ["03.14.02", "03.03.05"]
+
+- name: "03.14.02 | Keep alerts on the host for {{ nist_wazuh_alert_retention_days }} days"
+  # Wazuh rotates its alerts daily into logs/alerts/YYYY/Mon/ and never
+  # deletes them; on the root filesystem that would grow without bound.
+  # systemd-tmpfiles ages them out - no script, so nothing for fapolicyd to
+  # trust. alerts.json itself is never that old: Wazuh starts it afresh daily.
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/nist-wazuh.conf
+    content: |
+      # nist_wazuh role (03.14.02): the collector holds the forwarded copy.
+      e /var/ossec/logs/alerts   - - - {{ nist_wazuh_alert_retention_days }}d
+      e /var/ossec/logs/archives - - - {{ nist_wazuh_alert_retention_days }}d
+    owner: root
+    group: root
+    mode: "0644"
+  tags: ["03.14.02"]
+
+- name: "03.14.02 | Start the Wazuh manager"
+  ansible.builtin.systemd:
+    name: wazuh-manager
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  tags: ["03.14.02"]

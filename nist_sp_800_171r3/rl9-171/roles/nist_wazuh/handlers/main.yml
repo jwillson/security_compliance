@@ -1,0 +1,15 @@
+---
+- name: restart wazuh-manager
+  ansible.builtin.systemd:
+    name: wazuh-manager
+    state: restarted
+
+- name: update fapolicyd trust
+  ansible.builtin.command:
+    cmd: fapolicyd-cli --update
+  changed_when: true
+
+- name: restart rsyslog for wazuh
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted

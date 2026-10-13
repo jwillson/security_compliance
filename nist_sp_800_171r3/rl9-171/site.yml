@@ -117,3 +117,26 @@
     - role: nist_log_collector
 
   tags: ["03.03.05", "collector"]
+
+
+# 03.14.02 malicious code detection with Wazuh, standalone on each CUI host:
+# real-time file monitoring, a known-malware list and a quarantining active
+# response, with no Wazuh network channel (roles/nist_wazuh). Opt-in:
+# nist_wazuh_enabled. Under trial (TASKS).
+- name: Malicious code detection with Wazuh, standalone (03.14.02)
+  hosts: cui_hosts
+  become: true
+  gather_facts: false
+  # A failed task must not lose the restarts already owed: the trial's first
+  # apply failed at the manager's start, and rsyslog never loaded the input
+  # that forwards Wazuh's alerts - the next apply found nothing changed.
+  force_handlers: true
+
+  vars_files:
+    - catalog/overlay-rocky9.yml
+
+  roles:
+    - role: nist_wazuh
+      when: nist_wazuh_enabled | default(false) | bool
+
+  tags: ["03.14.02", "wazuh"]

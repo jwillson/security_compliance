@@ -1,0 +1,34 @@
+---
+# Malicious code detection on the host with Wazuh, standalone (03.14.02;
+# TASKS: the Wazuh trial). Off by default.
+#
+# Standalone means the Wazuh manager package on each CUI host, with no agent
+# and no network listener: Wazuh's agent-to-manager channel is encrypted by
+# the OpenSSL Wazuh bundles (3.5.1 in 4.14.8), not by Rocky's FIPS-validated
+# module, so it would breach crypto_types (03.13.11). Here nothing of Wazuh's
+# crosses the network: its alerts go to a local file, and rsyslog forwards
+# them over the TLS channel 03.03.05c already uses. The bundled OpenSSL only
+# hashes files on the host - SHA-256 alone - which the SSP names as a
+# non-validated module used for detection, not to protect CUI.
+nist_wazuh_enabled: false
+
+# The repository, scoped to the one package, and its signer - declared in
+# authorized-repos.d and authorized-signers.d as EPEL is (DEFECTS 7.43).
+nist_wazuh_baseurl: https://packages.wazuh.com/4.x/yum/
+nist_wazuh_version: "4.14.8"
+nist_wazuh_signer: {name: Wazuh, fingerprint: 0DCFCA5547B19D2A6099506096B3EE5F29111145}
+
+# Watched in real time (inotify): where files from outside arrive or are
+# staged. A write there is hashed and looked up at once (03.14.02c.1, as
+# files are downloaded).
+nist_wazuh_watch_dirs: [/home, /root, /tmp, /var/tmp, /dev/shm]
+
+# Known-malicious SHA-256 hashes, "hash:description" per line. The EICAR test
+# file is the one the trial proves detection with; a deployment adds its own
+# feed (nist_wazuh_hash_files, files on the controller).
+nist_wazuh_hashes:
+  - "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f:EICAR anti-malware test file"
+nist_wazuh_hash_files: []
+
+# Alerts kept on the host; the collector holds the forwarded copy.
+nist_wazuh_alert_retention_days: 14

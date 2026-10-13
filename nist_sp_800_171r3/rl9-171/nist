@@ -79,6 +79,7 @@ secret-scan|tools/secret-scan.sh|no secret anywhere in the history
 test-lab-network|tools/test-lab-network.sh|the lab network, by behaviour
 test-console-record|tools/test-console-record.sh|the console recorder, by behaviour
 test-cdrom-boot|tools/test-cdrom-boot.sh|does the firmware of a new guest reach GRUB from a CD-ROM (DEFECTS 7.42)
+test-wazuh|tools/test-wazuh.sh|does Wazuh standalone quarantine the EICAR file and forward the alert (the Wazuh trial)
 '
 if [[ $# -eq 0 || "$1" == help || "$1" == -h || "$1" == --help ]]; then
   echo "./nist COMMAND [ARGS...] - the toolkit, run in its container"

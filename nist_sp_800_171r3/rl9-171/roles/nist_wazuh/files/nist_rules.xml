@@ -1,0 +1,12 @@
+<!--
+  nist_wazuh role (03.14.02): a file written in a watched directory whose
+  SHA-256 is on the known-malware list. 554 is a new file, 550 a changed one.
+-->
+<group name="nist,malware,">
+  <rule id="100100" level="13">
+    <if_sid>554, 550</if_sid>
+    <list field="sha256" lookup="match_key">etc/lists/nist-malware-sha256</list>
+    <description>03.14.02: known malicious code written - quarantined (syscheck.path names it)</description>
+    <group>pci_dss_11.4,nist_800_53_SI.3,</group>
+  </rule>
+</group>
