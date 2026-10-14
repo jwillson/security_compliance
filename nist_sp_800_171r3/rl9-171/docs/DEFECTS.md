@@ -2019,7 +2019,19 @@ public when it had not.*
       10-12 and 10-13 each booted the firmware on the first attempt (the
       10-13 ones by `grep -c 'Starting install'` in each build's
       virt-install.log, which an attempt appends to: 1 and 1) - so far, the
-      laptop's Ubuntu qemu, OVMF and swtpm alone.
+      laptop's Ubuntu qemu, OVMF and swtpm alone. Every component differs:
+
+      | | Ubuntu laptop (hangs) | Rocky 9 machine (does not) |
+      |---|---|---|
+      | qemu | 1:10.2.1+ds-1ubuntu3.2 | qemu-kvm 10.1.0-17.el9_8.5 |
+      | OVMF | 2025.11-3ubuntu7.3 | edk2-ovmf 20241117-8.el9 |
+      | swtpm | 0.10.1+ds-1ubuntu3 | 0.8.0-2.el9_4 |
+      | libvirt | 12.0.0-1ubuntu5.5 | 11.10.0-12.7.el9_8 |
+
+      The newer OVMF (2025.11 against 2024.11) and swtpm (0.10, whose
+      default-v1 profile the laptop's TPM manufacturing logs, against 0.8)
+      are the first suspects, given the hang needs both a fresh variable
+      store and a TPM; not yet isolated.
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
