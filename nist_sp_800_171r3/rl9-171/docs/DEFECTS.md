@@ -2015,6 +2015,11 @@ public when it had not.*
       (failed=0, settled at changed=1) and verified 0 of 352 failed. The
       retry itself the same day: rl9-log-01's firmware hung on its first
       boot, build-vm said so and booted it again, and attempt 2 installed.
+      Not seen on the owner's Rocky 9 machine: its builds of 2026-10-06,
+      10-12 and 10-13 each booted the firmware on the first attempt (the
+      10-13 ones by `grep -c 'Starting install'` in each build's
+      virt-install.log, which an attempt appends to: 1 and 1) - so far, the
+      laptop's Ubuntu qemu, OVMF and swtpm alone.
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
