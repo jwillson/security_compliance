@@ -2028,10 +2028,18 @@ public when it had not.*
       | swtpm | 0.10.1+ds-1ubuntu3 | 0.8.0-2.el9_4 |
       | libvirt | 12.0.0-1ubuntu5.5 | 11.10.0-12.7.el9_8 |
 
-      The newer OVMF (2025.11 against 2024.11) and swtpm (0.10, whose
-      default-v1 profile the laptop's TPM manufacturing logs, against 0.8)
-      are the first suspects, given the hang needs both a fresh variable
-      store and a TPM; not yet isolated.
+      Isolated further on the laptop, 2026-10-14, 8 fresh guests each with a
+      TPM (`./nist test-cdrom-boot scsi 8 ...`): Rocky 9's own OVMF
+      (edk2-ovmf 20241117, from its mirror, `--firmware rocky`) hung 6/8, so
+      the firmware version is not it; swtpm's `null` profile in place of
+      0.10's default-v1 (`--tpm-profile null`) hung 5/8, so the profile is
+      not it; the host's OVMF without Secure Boot (`--firmware nosb`) hung
+      1/8, against 5-7 of 8 for every Secure Boot build. The Secure Boot
+      builds run their variable store in System Management Mode, which the
+      plain one does not use: the suspects left are this host's KVM SMM
+      handling (kernel 7.0 here, 5.14 on the Rocky machine), qemu 10.2 and
+      the swtpm 0.10 binary - none of which the lab can swap without
+      changing the host. The build retry stands.
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
