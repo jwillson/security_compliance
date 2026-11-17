@@ -238,10 +238,19 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   Python's GObject bindings; a `PATH` that puts a venv's `python3` first
   breaks it. In the control-plane image the venv is last on `PATH`.
 - **vTPM: "Need read/write rights on statedir /var/lib/swtpm-localca for user
-  tss".** libvirt runs swtpm as `tss`; Ubuntu's package leaves the local CA
-  directory owned by `swtpm`. It is the host's to fix, once, since the tool no
-  longer touches host files: `sudo install -d -m 0750 -o tss -g root
-  /var/lib/swtpm-localca`.
+  tss".** Not Ubuntu's packaging, as this said until 2026-11-17, but a host
+  whose `/etc/libvirt/qemu.conf` is gone: libvirt then runs swtpm as `tss`,
+  its built-in default, while the package gives the directory to `swtpm` -
+  the user its own qemu.conf names, so a stock Ubuntu 26.04 needs nothing.
+  The chown this recommended does not last: systemd-tmpfiles gave the
+  directory back on the laptop on 2026-10-16, and no TPM guest could be made
+  there for a month. `vm/host-swtpm.sh check` says whether the two agree, and
+  `sudo vm/host-swtpm.sh fix` writes a tmpfiles override naming the user
+  libvirt uses (or removes it once they agree without it) - no libvirtd
+  restart, which on Ubuntu 26.04 has left the daemon unrecoverable short of
+  a reboot. *Proven* on the laptop: check failed, fix, check passed and
+  stayed so across `systemd-tmpfiles --create`, and three TPM guests started
+  where swtpm_setup had refused.
 - **A pinned address handed to someone else.** dnsmasq will not give a pinned
   address to a new MAC while an unexpired lease holds it for another, and the
   guest silently takes a different address. `byo-guest.sh` derives the MAC

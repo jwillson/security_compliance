@@ -35,8 +35,8 @@
 # libvirt, the lab network (vm/lab-network.sh) and, for --tpm, swtpm. On
 # Ubuntu the first vTPM can fail at "Need read/write rights on statedir
 # /var/lib/swtpm-localca for user tss": the package leaves that directory to
-# another user, and the fix is the host's (docs/LAB.md):
-#   sudo install -d -m 0750 -o tss -g root /var/lib/swtpm-localca
+# another user than libvirt runs swtpm as (docs/LAB.md):
+#   vm/host-swtpm.sh check; sudo vm/host-swtpm.sh fix
 #
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
