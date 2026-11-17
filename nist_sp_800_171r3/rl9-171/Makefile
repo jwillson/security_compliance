@@ -10,9 +10,11 @@ ROCKY_MIRROR := $(or $(NIST_ROCKY_MIRROR),https://dl.rockylinux.org/pub/rocky/9)
 # when 9.9 came out, 9/isos/ no longer held 9.8 and `make iso` failed on every
 # new host (404, first seen 2026-11-17). So it is fetched from the release's
 # own directory beside 9/, then from the vault, where old releases stay.
-ISO_VERSION := 9.8
+# The release is the one 9/ serves - what the installer and every `dnf`
+# after it take their packages from (owner decision 2026-11-17: 9.9).
+ISO_VERSION := 9.9
 ISO_DIRS := $(patsubst %/9,%/$(ISO_VERSION),$(ROCKY_MIRROR))/isos/x86_64 https://dl.rockylinux.org/vault/rocky/$(ISO_VERSION)/isos/x86_64
-ISO     := iso/Rocky-9.8-x86_64-boot.iso
+ISO     := iso/Rocky-$(ISO_VERSION)-x86_64-boot.iso
 
 # Every target runs in the control-plane container (TASKS C2): run outside
 # it, make runs again inside, through ./nist, with the same goals - so a host

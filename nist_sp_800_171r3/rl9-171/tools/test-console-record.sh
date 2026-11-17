@@ -26,13 +26,13 @@ fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
 V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
-[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || { echo "error: no iso/Rocky-9.8-x86_64-boot.iso (./nist make iso)" >&2; exit 2; }
+[[ -f iso/Rocky-9.9-x86_64-boot.iso ]] || { echo "error: no iso/Rocky-9.9-x86_64-boot.iso (./nist make iso)" >&2; exit 2; }
 V dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - remove it first" >&2; exit 2; }
 
-size=$(stat -c %s iso/Rocky-9.8-x86_64-boot.iso)
+size=$(stat -c %s iso/Rocky-9.9-x86_64-boot.iso)
 lab_pool_ensure || exit 2
 V vol-delete --pool "$LAB_POOL" "$VOL" >/dev/null 2>&1
-V vol-create-as "$LAB_POOL" "$VOL" "$size" --format raw >/dev/null && V vol-upload --pool "$LAB_POOL" "$VOL" iso/Rocky-9.8-x86_64-boot.iso \
+V vol-create-as "$LAB_POOL" "$VOL" "$size" --format raw >/dev/null && V vol-upload --pool "$LAB_POOL" "$VOL" iso/Rocky-9.9-x86_64-boot.iso \
   || { echo "error: could not upload the boot ISO into pool $LAB_POOL" >&2; exit 2; }
 ISO=$(V vol-path --pool "$LAB_POOL" "$VOL")
 cat > "$OUT/domain.xml" <<XML

@@ -47,7 +47,7 @@ while (( $# )); do
     *) echo "unknown option $1" >&2; exit 2 ;; esac; shift
 done
 [[ "$bus" =~ ^(sata|scsi)$ && "$n" =~ ^[0-9]+$ ]] || { sed -n '3,14p' "$0"; exit 2; }
-NAME=${LAB_PREFIX}rl9-cdtest-01 VOL=${LAB_PREFIX}rl9-cdtest-01-boot.iso ISOFILE=iso/Rocky-9.8-x86_64-boot.iso
+NAME=${LAB_PREFIX}rl9-cdtest-01 VOL=${LAB_PREFIX}rl9-cdtest-01-boot.iso ISOFILE=iso/Rocky-9.9-x86_64-boot.iso
 OUT="$ROOT/reports/runs/test-cdrom-boot-$bus$( ((tpm)) || echo -notpm)$( ((nic)) || echo -nonic)$( [[ $tpm_model == tpm-tis ]] && echo -tis)$(case $reuse in 1) echo -reuse;; 2) echo -freshtpm;; 3) echo -freshnvram;; esac)${profile:+-profile-$profile}$( [[ $firmware == sb ]] || echo "-fw-$firmware")-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
 [[ -f "$ISOFILE" ]] || { echo "error: no $ISOFILE (./nist make iso)" >&2; exit 2; }

@@ -26,3 +26,17 @@ ausearch -m FANOTIFY -ts recent -i 2>/dev/null | grep -oE 'path=[^ ]+|exe=[^ ]+'
 journalctl -u fapolicyd --since -1h --no-pager -q 2>/dev/null | grep -i deny | tail -8 | sed 's/^/  /'
 echo "--- SELinux denials since the last hour"
 ausearch -m AVC -ts recent -i 2>/dev/null | grep -oE 'comm=[^ ]+ .*name=[^ ]+|scontext=[^ ]+ tcontext=[^ ]+' | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /'
+# What fapolicyd trusts of the package (the bundled Python was refused on
+# Rocky 9.9, 2026-11-17): the release, fapolicyd's version, how many of the
+# package's files under /var/ossec are in the trust database, and the
+# filter that decides which RPM files go into it.
+echo "--- fapolicyd's trust of the package"
+echo "  release:       $(cat /etc/rocky-release 2>/dev/null)"
+echo "  fapolicyd:     $(rpm -q fapolicyd 2>/dev/null)"
+owned=$(rpm -ql wazuh-manager 2>/dev/null | grep -c '^/var/ossec/')
+trusted=$(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/')
+echo "  files under /var/ossec: $owned in the RPM, $trusted in the trust database"
+echo "  bundled python: $(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/framework/python/') trusted"
+for f in /etc/fapolicyd/fapolicyd-filter.conf /etc/fapolicyd/rpm-filter.conf; do
+  [ -f "$f" ] && { echo "  $f:"; grep -vE '^\s*(#|$)' "$f" | sed 's/^/    /' | head -40; }
+done

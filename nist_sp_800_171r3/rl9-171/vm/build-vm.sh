@@ -122,7 +122,7 @@ fi
 for f in admin_password_hash id_rsa id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
 done
-[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.8-x86_64-boot.iso (./nist make iso)"
+[[ -f iso/Rocky-9.9-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.9-x86_64-boot.iso (./nist make iso)"
 # The lab network: nothing created it on a new host, so the build failed or
 # hung there (DEFECTS 7.17). Only what is missing is done.
 "$HERE/lab-network.sh" ensure
