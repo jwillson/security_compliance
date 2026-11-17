@@ -148,6 +148,14 @@ mixes kickstart-lab hosts (`.secrets/` key) with hosts you brought — each need
 its own second SSH factor, and the wrong one is a faillock strike
 (`rl9-171/docs/LAB.md`, *Two labs on one workstation*).
 
+On a hypervisor that carries other people's guests the lab is given a
+namespace - `namespace = sc` in an untracked `lab.conf` beside `./nist` - and
+then everything it has in libvirt carries it (`sc-rl9-cui-01`, the network
+`sc-lab`, the pool `sc`) and its tools touch nothing else
+(`rl9-171/docs/LAB.md`, *A shared hypervisor*). A lab script never names a
+network, a pool or a guest prefix itself: it takes `LAB_NET`, `LAB_POOL` and
+`LAB_PREFIX` from `lib/lab-env.sh`.
+
 `site.yml` has two plays: the overlay over `cui_hosts`, then
 `nist_log_collector` over `log_hosts`. `./nist inventory show` lists the
 hosts and where each forwards its records.

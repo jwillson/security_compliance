@@ -39,6 +39,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
+. lib/lab-env.sh
 bus=${1:-}; n=${2:-10}; shift 2 2>/dev/null || true
 tpm=1 nic=1 tpm_model=tpm-crb wait=100 reuse=0 profile="" firmware=sb
 while (( $# )); do
@@ -46,16 +47,20 @@ while (( $# )); do
     *) echo "unknown option $1" >&2; exit 2 ;; esac; shift
 done
 [[ "$bus" =~ ^(sata|scsi)$ && "$n" =~ ^[0-9]+$ ]] || { sed -n '3,14p' "$0"; exit 2; }
-NAME=rl9-cdtest-01 VOL=rl9-cdtest-01-boot.iso ISOFILE=iso/Rocky-9.8-x86_64-boot.iso
+NAME=${LAB_PREFIX}rl9-cdtest-01 VOL=${LAB_PREFIX}rl9-cdtest-01-boot.iso ISOFILE=iso/Rocky-9.8-x86_64-boot.iso
 OUT="$ROOT/reports/runs/test-cdrom-boot-$bus$( ((tpm)) || echo -notpm)$( ((nic)) || echo -nonic)$( [[ $tpm_model == tpm-tis ]] && echo -tis)$(case $reuse in 1) echo -reuse;; 2) echo -freshtpm;; 3) echo -freshnvram;; esac)${profile:+-profile-$profile}$( [[ $firmware == sb ]] || echo "-fw-$firmware")-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
 [[ -f "$ISOFILE" ]] || { echo "error: no $ISOFILE (./nist make iso)" >&2; exit 2; }
 V dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - remove it first" >&2; exit 2; }
+# The lab's pool, and its network for the NIC: made if missing, as the
+# builders make them, so this runs on a host that has no lab yet.
+lab_pool_ensure || exit 2
+(( nic )) && { ./vm/lab-network.sh ensure >/dev/null || exit 2; }
 
-V vol-delete --pool default "$VOL" >/dev/null 2>&1
-V vol-create-as default "$VOL" "$(stat -c %s "$ISOFILE")" --format raw >/dev/null \
-  && V vol-upload --pool default "$VOL" "$ISOFILE" || { echo "error: could not upload the boot ISO" >&2; exit 2; }
-ISO=$(V vol-path --pool default "$VOL")
+V vol-delete --pool "$LAB_POOL" "$VOL" >/dev/null 2>&1
+V vol-create-as "$LAB_POOL" "$VOL" "$(stat -c %s "$ISOFILE")" --format raw >/dev/null \
+  && V vol-upload --pool "$LAB_POOL" "$VOL" "$ISOFILE" || { echo "error: could not upload the boot ISO" >&2; exit 2; }
+ISO=$(V vol-path --pool "$LAB_POOL" "$VOL")
 
 # The firmware: libvirt's choice, or a given build uploaded to the pool.
 fw_os="<os firmware='efi'>
@@ -118,21 +123,21 @@ PY
     fi
     for f in OVMF_CODE.secboot.fd OVMF_VARS.secboot.fd; do
       [[ -s "$cache/$f" ]] || { echo "error: $f not in the RPM" >&2; exit 2; }
-      v="rl9-cdtest-rocky-$f"
-      V vol-delete --pool default "$v" >/dev/null 2>&1
+      v="${LAB_PREFIX}rl9-cdtest-rocky-$f"
+      V vol-delete --pool "$LAB_POOL" "$v" >/dev/null 2>&1
       # World-readable: libvirt hands a disk to qemu's user, not a firmware
       # file, and a pool volume is created root-only.
       printf "<volume><name>%s</name><capacity>%s</capacity><target><format type='raw'/><permissions><mode>0644</mode></permissions></target></volume>" \
         "$v" "$(stat -c %s "$cache/$f")" > "$OUT/$v.xml"
-      V vol-create default "$OUT/$v.xml" >/dev/null \
-        && V vol-upload --pool default "$v" "$cache/$f" || { echo "error: could not upload $f" >&2; exit 2; }
+      V vol-create "$LAB_POOL" "$OUT/$v.xml" >/dev/null \
+        && V vol-upload --pool "$LAB_POOL" "$v" "$cache/$f" || { echo "error: could not upload $f" >&2; exit 2; }
       fw_vols+=("$v")
     done
     echo "firmware: $(cat "$cache/version")"
     fw_os="<os>
     <type arch='x86_64' machine='q35'>hvm</type>
-    <loader readonly='yes' secure='yes' type='pflash' format='raw'>$(V vol-path --pool default "${fw_vols[0]}")</loader>
-    <nvram template='$(V vol-path --pool default "${fw_vols[1]}")' templateFormat='raw' format='raw'/>" ;;
+    <loader readonly='yes' secure='yes' type='pflash' format='raw'>$(V vol-path --pool "$LAB_POOL" "${fw_vols[0]}")</loader>
+    <nvram template='$(V vol-path --pool "$LAB_POOL" "${fw_vols[1]}")' templateFormat='raw' format='raw'/>" ;;
   *) echo "error: --firmware sb, nosb or rocky" >&2; exit 2 ;;
 esac
 ctl=""; [[ $bus == scsi ]] && ctl="<controller type='scsi' model='virtio-scsi'/>"
@@ -149,7 +154,7 @@ cat > "$OUT/domain.xml" <<XML
   <devices>
     $ctl
     <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='$ISO'/><target dev='sda' bus='$bus'/><readonly/></disk>
-    $( (( nic )) && echo "<interface type='network'><source network='nist-lab'/><model type='virtio'/></interface>")
+    $( (( nic )) && echo "<interface type='network'><source network='$LAB_NET'/><model type='virtio'/></interface>")
     $( (( tpm )) && echo "<tpm model='$tpm_model'><backend type='emulator' version='2.0'>${profile:+<profile source='$profile'/>}</backend></tpm>")
     <serial type='pty'><target port='0'/></serial>
     <console type='pty'><target type='serial' port='0'/></console>
@@ -159,8 +164,8 @@ XML
 undefine() { V undefine "$NAME" --nvram --tpm >/dev/null 2>&1 || V undefine "$NAME" --nvram >/dev/null 2>&1; }
 cleanup() {
   V destroy "$NAME" >/dev/null 2>&1; undefine
-  V vol-delete --pool default "$VOL" >/dev/null 2>&1
-  for v in ${fw_vols[@]+"${fw_vols[@]}"}; do V vol-delete --pool default "$v" >/dev/null 2>&1; done
+  V vol-delete --pool "$LAB_POOL" "$VOL" >/dev/null 2>&1
+  for v in ${fw_vols[@]+"${fw_vols[@]}"}; do V vol-delete --pool "$LAB_POOL" "$v" >/dev/null 2>&1; done
   ./tools/lab-residue.sh --orphans > "$OUT/residue.txt" 2>&1 || echo "WARN  residue: see $OUT/residue.txt"
 }
 trap cleanup EXIT

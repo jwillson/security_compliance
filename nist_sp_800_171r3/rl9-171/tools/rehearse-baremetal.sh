@@ -39,8 +39,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
+. lib/lab-env.sh
 keep=0; [[ "${1:-}" == --keep ]] && keep=1
-NAME=rl9-bm-01 SERIALNO=NISTBM01 POOL=default
+NAME=${LAB_PREFIX}rl9-bm-01 SERIALNO=NISTBM01 POOL=$LAB_POOL
 export NIST_INVENTORY=inventory/baremetal.yml
 VAULT=inventory/baremetal.vault.yml
 OUT="$ROOT/reports/runs/rehearse-baremetal-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"; chmod 700 "$OUT"
@@ -52,6 +53,7 @@ say() { echo "==> $(date -u +%H:%M) $*" | tee -a "$OUT/summary.txt"; }
 
 "${V[@]}" dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - a rehearsal left behind; remove it first" >&2; exit 2; }
 ./vm/lab-network.sh ensure >/dev/null
+lab_pool_ensure || exit 2
 
 cleanup() {
   [[ -n "${rec:-}" ]] && kill "$rec" 2>/dev/null
@@ -98,7 +100,7 @@ timeout 7200 virt-install --connect "$NIST_LIBVIRT_URI" --name "$NAME" --memory 
   --cpu host-passthrough --machine q35 \
   --boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" \
   --tpm none --disk "pool=$POOL,size=40,format=qcow2,bus=virtio,serial=$SERIALNO" \
-  --cdrom "$iso_path" --network network=nist-lab,model=virtio --graphics none \
+  --cdrom "$iso_path" --network "network=$LAB_NET,model=virtio" --graphics none \
   --console pty,target_type=serial --os-variant rocky9 \
   --noautoconsole --wait -1 > "$OUT/virt-install.log" 2>&1
 vi_rc=$?

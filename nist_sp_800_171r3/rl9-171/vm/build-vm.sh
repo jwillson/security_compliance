@@ -13,7 +13,7 @@
 #   ./build-vm.sh --destroy       remove the VM and everything it left in libvirt
 #
 # It runs in the control-plane container, through the host's libvirt socket:
-# the ISO goes into the default pool (vol-upload), the disk is a pool volume
+# the ISO goes into the lab's pool (vol-upload), the disk is a pool volume
 # with a serial the kickstart names it by (/dev/disk/by-id/virtio-NAME), and
 # the console is recorded by tools/console-record.sh - no sudo, no host file.
 # The ISO carries the admin password's hash, so it is ejected and its volume
@@ -37,6 +37,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT"
+# The lab's network and pool, and on a shared hypervisor the prefix its
+# guests carry (sc-rl9-cui-01): lib/lab-env.sh.
+. "$ROOT/lib/lab-env.sh"
 
 VM_NAME=""
 VM_ROLE="cui"
@@ -53,8 +56,8 @@ VM_RUNTIME_RAM_MB=2048
 VM_VCPUS=2
 VM_DISK_GB=40
 ADMIN_USER="cuiadmin"
-VM_NETWORK="nist-lab"
-POOL=default
+VM_NETWORK=$LAB_NET
+POOL=$LAB_POOL
 SECRETS="$ROOT/.secrets"
 # Every guest this builds is a kickstart-lab host: its inventory is that
 # lab's own, whoever runs this - make or a person (DEFECTS 7.33).
@@ -80,21 +83,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$VM_ROLE" in
-  cui) : "${VM_NAME:=rl9-cui-01}" ;;
-  log) : "${VM_NAME:=rl9-log-01}" ;;
+  cui) : "${VM_NAME:=${LAB_PREFIX}rl9-cui-01}" ;;
+  log) : "${VM_NAME:=${LAB_PREFIX}rl9-log-01}" ;;
   *)   die "unknown role: $VM_ROLE (expected cui or log)" ;;
 esac
 [[ "$VM_NAME" =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] || die "'$VM_NAME' is not a guest name (letters, digits, hyphens; 20 at most - it is the disk's serial)"
+lab_name_ok "$VM_NAME" || exit 1
 ISO_VOL="$VM_NAME-install.iso"
 
 if [[ $DESTROY -eq 1 ]]; then
-  # Only a lab guest: a domain attached to nist-lab, or one already gone (its
-  # inventory entry and host key are still cleaned up). `--name` took any
-  # libvirt domain - a typo, a personal VM - and removed it with all its
-  # storage (issue #6).
+  # Only a lab guest: a domain attached to the lab network, or one already
+  # gone (its inventory entry and host key are still cleaned up). `--name`
+  # took any libvirt domain - a typo, a personal VM - and removed it with all
+  # its storage (issue #6).
   if "${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 &&
-     ! "${V[@]}" domiflist "$VM_NAME" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}'; then
-    die "'$VM_NAME' is not attached to nist-lab, so it is not a lab guest; refusing to destroy it"
+     ! "${V[@]}" domiflist "$VM_NAME" 2>/dev/null | awk -v n="$VM_NETWORK" '$3==n {f=1} END {exit !f}'; then
+    die "'$VM_NAME' is not attached to $VM_NETWORK, so it is not a lab guest; refusing to destroy it"
   fi
   log "destroying $VM_NAME"
   # Everything the guest has in libvirt (DEFECTS 7.18): the domain, its disk
@@ -126,6 +130,7 @@ done
 "$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed: $NIST_INVENTORY is not this lab's - \
 the kickstart lab's own is inventory/kickstart.yml, used unless NIST_INVENTORY names another"
 "${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 && die "domain $VM_NAME already exists - run './nist build-vm --name $VM_NAME --destroy' first"
+lab_pool_ensure || exit 1
 pool_path=$("${V[@]}" pool-dumpxml "$POOL" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
 [[ -n "$pool_path" ]] || die "no storage pool '$POOL' in $NIST_LIBVIRT_URI"
 

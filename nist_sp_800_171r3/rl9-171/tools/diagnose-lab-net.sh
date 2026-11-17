@@ -43,9 +43,9 @@ if [[ -z "${NIST_IN_CONTAINER:-}" ]]; then
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-XML="$HERE/../vm/nist-lab-network.xml"
-NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$XML" | head -1)
-GW=$(sed -n "s:.*<ip address='\([0-9.]*\)'.*:\1:p" "$XML" | head -1)
+. "$HERE/../lib/lab-env.sh"
+NET=$LAB_NET
+GW=$(lab_network_xml | sed -n "s:.*<ip address='\([0-9.]*\)'.*:\1:p" | head -1)
 SUBNET=${GW%.*}
 MIRROR=${1:-${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}}
 HOST=$(sed -E 's#^[a-z]+://([^/:]+).*#\1#' <<<"$MIRROR")
@@ -93,7 +93,7 @@ if nft list ruleset 2>/dev/null | grep -q "$SUBNET\.0/24" || iptables -t nat -S 
   ok "a NAT rule for $SUBNET.0/24"
 else bad "no NAT rule for $SUBNET.0/24 (libvirt adds it when $NET starts; a firewall reload can drop it - restart the network)"; fi
 if iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; }; then
-  bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (./nist lab-network ensure prints the rules)"
+  bad "Docker's FORWARD DROP policy is in place: allow $LAB_BRIDGE in DOCKER-USER (./nist lab-network ensure prints the rules)"
 fi
 
 echo "5. the mirror, over IPv4 and IPv6 separately"
@@ -122,7 +122,7 @@ echo "6. the guests' own path: from inside $NET"
 # is a guest without a VM.
 # Interface names are at most 15 characters.
 NS=nistdiag$$ VETH=nd$$ PROBE=$SUBNET.250
-BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
+BRIDGE=$LAB_BRIDGE
 if ip link show "$BRIDGE" >/dev/null 2>&1; then
   cleanup_ns() { ip netns del "$NS" 2>/dev/null; ip link del "$VETH" 2>/dev/null; rm -rf "/etc/netns/$NS"; }
   trap cleanup_ns EXIT

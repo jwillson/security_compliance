@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # The lab network, nist-lab (vm/nist-lab-network.xml: bridge virbr17,
-# 192.168.171.0/24, NAT), in the system libvirt both labs use.
+# 192.168.171.0/24, NAT), in the system libvirt both labs use. On a
+# hypervisor the lab shares, it has the host's namespace: sc-lab on sc-br0,
+# the same subnet (lib/lab-env.sh; docs/LAB.md, "A shared hypervisor").
 #
 #   vm/lab-network.sh ensure            define, start and autostart it if
 #                                       needed; check the host can carry its
@@ -44,14 +46,14 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Name, bridge and subnet come from the XML, the one place they are defined.
+. "$HERE/../lib/lab-env.sh"
+# Name, bridge and subnet come from the XML, the one place they are defined -
+# under the host's namespace, when it has one (lab_network_xml).
 # NIST_LAB_NETWORK_XML points elsewhere only to test this on a throwaway
 # network (tools/test-lab-network.sh).
-XML="${NIST_LAB_NETWORK_XML:-$HERE/nist-lab-network.xml}"
-NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$XML" | head -1)
-BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
-SUBNET=$(sed -n "s:.*<ip address='\([0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*'.*:\1:p" "$XML" | head -1)
-[[ -n "$NET" && -n "$BRIDGE" && -n "$SUBNET" ]] || { echo "error: cannot read name, bridge and subnet from $XML" >&2; exit 2; }
+NET=$LAB_NET BRIDGE=$LAB_BRIDGE
+SUBNET=$(lab_network_xml | sed -n "s:.*<ip address='\([0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*'.*:\1:p" | head -1)
+[[ -n "$SUBNET" ]] || { echo "error: cannot read the subnet from the lab network's definition" >&2; exit 2; }
 # The host's resolv.conf - what libvirt's dnsmasq reads (another file only for
 # tools/test-lab-network.sh).
 RESOLV="${NIST_RESOLV_CONF:-/host/etc/resolv.conf}"
@@ -107,7 +109,7 @@ definition() {   # FORWARDERS [UUID] -> a temporary XML: the committed one, plus
     /^<\/network>/ && f ~ /%/ { print "  <dnsmasq:options>"; n = split(f, a, " ")
       for (i = 1; i <= n; i++) if (a[i] ~ /%/) print "    <dnsmasq:option value='"'"'server=" a[i] "'"'"'/>"
       print "  </dnsmasq:options>" }
-    { print }' "$XML" > "$out"
+    { print }' <(lab_network_xml) > "$out"
   echo "$out"
 }
 
@@ -136,7 +138,7 @@ and the servers in systemd-resolved's and NetworkManager's files). Fix the host'
     if ip -4 route show | grep -v "dev $BRIDGE" | grep -q "^$SUBNET\.0/24"; then
       die "$SUBNET.0/24 is already routed on this host ($(ip -4 route show | grep "^$SUBNET\.0/24" | head -1)); the lab network needs it"
     fi
-    say "defining $NET from $(basename "$XML")${fwd:+, DNS forwarded to $fwd}"
+    say "defining $NET ($BRIDGE, $SUBNET.0/24)${fwd:+, DNS forwarded to $fwd}"
     DEF=$(definition "$fwd"); "${V[@]}" net-define "$DEF" >/dev/null
   elif [[ "$(forwarders_of | tr ' ' '\n' | sort | xargs)" != "$(tr ' ' '\n' <<<"$fwd" | sort | xargs)" ]]; then
     DEF=$(definition "$fwd" "$("${V[@]}" net-uuid "$NET")"); "${V[@]}" net-define "$DEF" >/dev/null

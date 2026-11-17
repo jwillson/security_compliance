@@ -295,7 +295,10 @@ cannot be applied afterwards:
 - **UEFI + vTPM 2.0**, so LUKS keys can be sealed to platform state (03.13.10).
 
 The VM runs on an isolated libvirt network (`nist-lab`, `virbr17`) rather than
-the shared `default` bridge, which keeps lab traffic separated (03.13.01).
+the shared `default` bridge, which keeps lab traffic separated (03.13.01). On
+a hypervisor that carries other people's guests, a namespace in `lab.conf`
+puts the lab under names of its own, and its tools touch nothing else
+(docs/LAB.md, *A shared hypervisor*).
 
 ```bash
 ./nist build-vm                      # build the CUI host (15-25 min, unattended)
@@ -497,7 +500,8 @@ rl9-171/
 │   ├── lab-ssh.sh, lab-console.sh  into a hardened guest: SSH with both factors, or its console
 │   ├── lab-residue.sh, lab-from-scratch.sh  what the labs left; both rebuilt from nothing
 │   └── secret-scan.sh           gitleaks over the whole history (also in CI)
-├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor; dnsq.py asks a DNS server
+├── lib/                         inventory-env.sh picks the lab; ssh-env.sh adds the MFA factor; dnsq.py asks a DNS server;
+│                                 lab-env.sh names the lab in libvirt (a namespace, on a shared hypervisor)
 ├── site.yml                     two plays: cui_hosts, then log_hosts
 ├── apply.sh  verify.sh  Makefile
 └── reports/                     assessment output (generated)

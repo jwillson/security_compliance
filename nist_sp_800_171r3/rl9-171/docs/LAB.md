@@ -88,6 +88,53 @@ the lab network. `NIST_ROCKY_MIRROR=URL` installs from another mirror. Before
 
 ---
 
+## A shared hypervisor
+
+Everything above takes the hypervisor to be the lab's alone: its network is
+`nist-lab`, its volumes are in libvirt's pool `default`, its guests are
+`rl9-*` and `byo-*`, and `./nist make teardown` looks through every pool for
+those names. On a host that also carries someone else's guests that is wrong
+twice. Nothing says whose a guest or a volume is; and what is theirs can
+have the lab's names - a Rocky boot ISO, a GenericCloud base image, a guest
+called `rl9-cui-01` - and the lab's teardown would delete it (DEFECTS 7.45).
+
+There the lab is given a namespace: one line in `lab.conf`, beside `./nist`.
+The file is the host's - untracked, read by every lab tool, so nothing is
+exported and no command changes.
+
+```
+namespace = sc
+```
+
+| | The lab alone | With `namespace = sc` |
+| --- | --- | --- |
+| Guests | `rl9-cui-01`, `rl9-log-01`, `byo-*` | `sc-rl9-cui-01`, `sc-rl9-log-01`, `sc-byo-*` |
+| Network | `nist-lab` on `virbr17` | `sc-lab` on `sc-br0` - the same 192.168.171.0/24, NAT |
+| Volumes | libvirt's pool `default` | a pool of the lab's own, `sc`, in `/var/lib/libvirt/images/sc`; libvirt makes both on the first build (a pool of that name defined beforehand is used where it is) |
+| The lab's, to teardown, residue and destroy | a guest named `rl9-*`, `byo-*` or `ptest-*`, or on `nist-lab`; those names in any pool | a guest named `sc-rl9-*` or `sc-byo-*`, or on `sc-lab`; the lab's names in the pool `sc` and nowhere else |
+
+A namespace is one to six lowercase letters and digits, a letter first.
+Every guest's name carries the prefix: the default names do, and a name
+given by hand must (`./nist byo-guest build sc-byo-rl9-02 ...`) or it is
+refused. `./nist make teardown` removes the namespace's guests, network and
+volumes and then its pool; a pool that still holds anything else is kept,
+and the teardown fails saying what. Inventories, `.secrets/`, the lab PKI
+and the reports are in the clone, as on any host.
+
+What the lab needs of the host is what *On any host* lists, and its
+operator's agreement to the subnet. It restarts no daemon, uses no `sudo`,
+writes no host file, and touches no network, pool, guest or disk but its own
+- libvirt's `default` network and pool included.
+
+Not in a namespace: the portability host (`./nist portability-host`,
+`./nist portability-run`) wants a second network and nested virtualisation,
+and refuses. `./nist test-lab-network` puts its throwaway copy on
+192.168.179.0/24: ask the host's operator first. And a namespace renames the
+lab, it does not add one - two labs on one host would both want
+192.168.171.0/24.
+
+---
+
 ## Two labs on one workstation
 
 Run only one lab and none of this applies. Run both on one host and the two

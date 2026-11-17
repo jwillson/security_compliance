@@ -30,7 +30,7 @@
 #
 # It runs in the control-plane container, through the host's libvirt socket
 # (TASKS C5): the stock image, each guest's disks and its cloud-init seed are
-# volumes in the default pool - uploaded (vol-upload) or created there, the
+# volumes in the lab's pool - uploaded (vol-upload) or created there, the
 # guest disk backed by the image - so no sudo and no host file. The host needs
 # libvirt, the lab network (vm/lab-network.sh) and, for --tpm, swtpm. On
 # Ubuntu the first vTPM can fail at "Need read/write rights on statedir
@@ -43,13 +43,16 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+# The lab's network and pool, and on a shared hypervisor the prefix its
+# guests carry (sc-byo-rl9-01): lib/lab-env.sh.
+. "$ROOT/lib/lab-env.sh"
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
-POOL=default
+POOL=$LAB_POOL
 BASE_VOL="rocky9-genericcloud-base.qcow2"
 IMAGE_URL="https://dl.rockylinux.org/pub/rocky/9/images/x86_64"
 IMAGE_NAME="Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
-NET=nist-lab
+NET=$LAB_NET
 VIRSH=(virsh -c "$NIST_LIBVIRT_URI")
 SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=5
      -o StrictHostKeyChecking=accept-new)
@@ -58,7 +61,7 @@ die()  { echo "error: $*" >&2; exit 1; }
 say()  { echo "==> $*"; }
 
 # Only a guest this script built may be destroyed: one whose lab directory
-# exists, or whose nist-lab interface carries the lab's MAC prefix. Without
+# exists, or whose lab-network interface carries the lab's MAC prefix. Without
 # this, `destroy` took any libvirt domain name - a typo, or a personal VM -
 # and removed its disks and NVRAM as root (issue #6). The name is also
 # confined to what build accepts, so it cannot carry a path.
@@ -66,9 +69,9 @@ lab_guest() {
   local name=$1 mac
   [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "'$name' is not a guest name (letters, digits, hyphens)"
   [[ -d "$LAB/$name" ]] && return 0
-  mac=$("${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk '/nist-lab/ {print $5}' || true)
+  mac=$("${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk -v n="$NET" '$3==n {print $5}' || true)
   [[ "$mac" == 52:54:00:17:ab:* ]] && return 0
-  die "'$name' is not a guest this script built (no $LAB/$name, no nist-lab interface at 52:54:00:17:ab:*); refusing to touch it"
+  die "'$name' is not a guest this script built (no $LAB/$name, no $NET interface at 52:54:00:17:ab:*); refusing to touch it"
 }
 
 usage() { sed -n '3,37p' "$0"; exit "${1:-0}"; }
@@ -141,7 +144,7 @@ write_seed() {   # NAME DIR DATA_GB USERS...
 # deliberately NOT by vm/build-vm.sh - the "host you already have" case.
 # Key login from the operator's key, sudo that asks for a password.
 hostname: $name
-fqdn: $name.nist-lab
+fqdn: $name.$NET
 manage_etc_hosts: true
 users:
   - name: byoadmin
@@ -216,16 +219,20 @@ cmd_build() {
       *) die "unknown option $1" ;;
     esac
   done
-  [[ "$ip" =~ ^192\.168\.171\.([0-9]+)$ ]] || die "--ip must be on nist-lab (192.168.171.0/24)"
+  [[ "$ip" =~ ^192\.168\.171\.([0-9]+)$ ]] || die "--ip must be on $NET (192.168.171.0/24)"
+  local last=${BASH_REMATCH[1]}
   [[ "$role" == cui || "$role" == log ]] || die "--role is cui or log"
-  # The host can run a guest (DEFECTS 7.19), and nist-lab exists, created if
-  # missing, before anything reads its leases (7.17).
+  lab_name_ok "$name" || exit 1
+  # The host can run a guest (DEFECTS 7.19), and the lab network exists,
+  # created if missing, before anything reads its leases (7.17); the lab's
+  # pool likewise, on a hypervisor where it has its own.
   "$HERE/host-check.sh" >/dev/null || { "$HERE/host-check.sh"; die "this host cannot run the lab yet (above)"; }
   "$HERE/lab-network.sh" ensure
+  lab_pool_ensure || exit 1
   "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && die "$name exists (vm/byo-guest.sh destroy $name first)"
 
   # The MAC is derived from the address, so a rebuild gets the same pin.
-  local last=${BASH_REMATCH[1]} mac dir="$LAB/$name"
+  local mac dir="$LAB/$name"
   mac=$(printf '52:54:00:17:ab:%02x' "$last")
 
   # dnsmasq will not hand a pinned address to a new MAC while an unexpired
@@ -339,6 +346,7 @@ for l in sys.stdin:
 
 cmd_destroy() {
   local name=${1:?name} ip="" mac
+  lab_name_ok "$name" || exit 1
   # Nothing left of it - no domain, no lab directory, no image - is not a
   # refusal but a no-op, so a rebuild after `make teardown` can call this.
   if ! "${VIRSH[@]}" dominfo "$name" >/dev/null 2>&1 && [[ ! -d "$LAB/$name" ]] \
@@ -350,7 +358,7 @@ cmd_destroy() {
   ip=$(cat "$LAB/$name/ip" 2>/dev/null || true)
   # The domain may already be gone (a half-built or half-destroyed guest);
   # destroy still removes whatever files, pin and entries are left.
-  mac=$("${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk '/nist-lab/ {print $5}' || true)
+  mac=$("${VIRSH[@]}" domiflist "$name" 2>/dev/null | awk -v n="$NET" '$3==n {print $5}' || true)
   # No domain means no MAC to read; derive it the way build does.
   if [[ -z "$mac" && "$ip" =~ \.([0-9]+)$ ]]; then mac=$(printf '52:54:00:17:ab:%02x' "${BASH_REMATCH[1]}"); fi
   say "destroying $name"

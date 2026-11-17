@@ -10,6 +10,9 @@
 # name a lab script uses (rl9-*, byo-*). Looked for, through the libvirt
 # socket in the control-plane container: the domains and the networks, and
 # every volume in libvirt's pools - disks, install and seed ISOs, base images.
+# On a hypervisor the lab shares (a namespace in lab.conf, lib/lab-env.sh)
+# the names carry its prefix and only its own pool is looked in - and listed,
+# with anything in it that is not the lab's.
 # A guest's UEFI variables and TPM state go with `undefine --nvram --tpm`,
 # and libvirt keeps its own per-domain logs, rotated by it; neither is in a
 # pool, and neither is looked for here (TASKS C5). The operator-side inputs -
@@ -19,12 +22,13 @@
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/../lib/lab-env.sh"
 V=(virsh -c "$NIST_LIBVIRT_URI")
-NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$HERE/../vm/nist-lab-network.xml" | head -1)
+NET=$LAB_NET
 orphans=0; only_orphans=0
 [[ "${1:-}" == --orphans ]] && only_orphans=1
 
-lab_name() { [[ "$1" =~ ^(rl9|byo|ptest)- ]]; }
+lab_name() { lab_guest_name "$1"; }
 domains=$("${V[@]}" list --all --name 2>/dev/null | awk 'NF' | sort)
 lab_domains=$(for d in $domains; do
   if lab_name "$d" || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
@@ -39,22 +43,26 @@ owner_of() {   # volume name -> the lab domain it belongs to, or empty
   for d in $lab_domains; do [[ "$f" == "$d".* || "$f" == "$d"-* || "$f" == "$d"_* ]] && { echo "$d"; return; }; done
 }
 
-echo "== lab residue in $NIST_LIBVIRT_URI"
+echo "== lab residue in $NIST_LIBVIRT_URI${LAB_NS:+, lab namespace $LAB_NS}"
 for d in $lab_domains; do show domain "$d" "$("${V[@]}" domstate "$d" 2>/dev/null)"; done
 if "${V[@]}" net-info "$NET" >/dev/null 2>&1; then
   show network "$NET" "$([ -n "$lab_domains" ] && echo "in use" || echo "no guest left")"
 fi
-"${V[@]}" net-info nist-ptest >/dev/null 2>&1 && show network nist-ptest "vm/portability-host.sh"
-for pool in $("${V[@]}" pool-list --name 2>/dev/null); do
+[[ -z "$LAB_NS" ]] && "${V[@]}" net-info nist-ptest >/dev/null 2>&1 && show network nist-ptest "vm/portability-host.sh"
+for pool in $(lab_pools); do
   for f in $("${V[@]}" vol-list --pool "$pool" 2>/dev/null | awk 'NR > 2 && NF {print $1}'); do
     case "$f" in
       Rocky-*-boot.iso) show iso "$pool/$f" "staged by an older build-vm.sh; ./nist teardown removes it" ;;
       rocky9-genericcloud-base.qcow2) show base "$pool/$f" "BYO base image" ;;
       ptest-base-*.qcow2) show base "$pool/$f" "portability test image" ;;
-      *) lab_name "$f" || continue; show volume "$pool/$f" "$(owner_of "$f")" ;;
+      *) if lab_name "$f"; then show volume "$pool/$f" "$(owner_of "$f")"
+         elif [[ -n "$LAB_NS" ]]; then show other "$pool/$f" "not one of the lab's names; nothing here removes it"; fi ;;
     esac
   done
 done
+if [[ -n "$LAB_NS" ]] && "${V[@]}" pool-info "$LAB_POOL" >/dev/null 2>&1; then
+  show pool "$LAB_POOL" "this lab's own; ./nist teardown removes it once it is empty"
+fi
 (( orphans )) && echo "== $orphans orphan(s): residue of guests that no longer exist" || echo "== no orphans"
 (( only_orphans && orphans )) && exit 1
 exit 0

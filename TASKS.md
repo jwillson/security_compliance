@@ -344,6 +344,36 @@ which crypto_types forbids).
         (36/33/0/28 and 35/34/0/28); EICAR quarantined in 2 s, the alert on
         the collector, 5/5; the collector at 2 GB with 692 MB available.
 
+## Open — a shared hypervisor
+
+Owner decision, 2026-11-17: run the lab on the owner's server, which also
+carries another lab's guests. Its operator's conditions - everything of ours
+named `sc-`, a NAT network and a storage pool of our own, libvirt's
+`default` network and pool untouched, nothing changed on the host - are what
+a lab namespace gives (`lab.conf`; `lib/lab-env.sh`; docs/LAB.md, *A shared
+hypervisor*). Scope, agreed the same day: the reference lab, then the
+firmware hang of DEFECTS 7.42 measured there, then the BYO lab.
+
+- [ ] **S1 The lab in a namespace** (DEFECTS 7.45 once it is proven).
+      Written, with 21 unit tests (`tests/test_lab_env.py`) that run the real
+      teardown, residue and destroy scripts against a stand-in hypervisor
+      carrying another lab: on the scripts before the change, teardown
+      deleted that lab's boot ISO, base image and two of its disks; in a
+      namespace it touches nothing outside it. On the laptop, 2026-11-17:
+      without a namespace `./nist residue` and `./nist host-check` read as
+      on main, and `./nist test-lab-network` (13/13) and `./nist
+      test-console-record` pass; in a throwaway namespace `t7` residue saw
+      none of the laptop's own lab, the console and CD-ROM boot tests made
+      and used the pool `t7`, and `./nist teardown` removed it and nothing
+      else. **Open:** `./nist make all` on the server in the namespace `sc`,
+      then `./nist make teardown` leaving nothing of ours and everything of
+      theirs; and a rebuild of the laptop's lab with no namespace.
+- [ ] **S2 The firmware hang (7.42) on a third host.** `./nist
+      test-cdrom-boot scsi 8` on the server: Ubuntu's qemu, OVMF and swtpm on
+      other hardware and another kernel than the laptop's.
+- [ ] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
+      release-run byo`.
+
 ## Open — container only
 
 Owner decision, 2026-10-07: the tool runs only in the control-plane container;

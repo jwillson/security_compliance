@@ -54,6 +54,9 @@ if [[ -z "${NIST_INVENTORY:-}" ]]; then
   else export NIST_INVENTORY=inventory/hosts.yml; fi
 fi
 . lib/ssh-env.sh || exit 2
+# On a hypervisor the lab shares, its guests carry the namespace's prefix.
+. lib/lab-env.sh
+P=$LAB_PREFIX
 # An empty inventory is right: the run builds the guests itself, and after
 # `make teardown` that is exactly what there is - refusing it made a rebuild
 # from nothing impossible (DEFECTS 7.25).
@@ -67,9 +70,9 @@ esac
 # Hosts, collector first, and the shape each BYO guest is rebuilt in
 # (docs/LAB.md, BYO guests).
 declare -A BYO_SPEC=(
-  [byo-log-01]="--ip 192.168.171.101 --role log"
-  [byo-rl9-01]="--ip 192.168.171.141"
-  [byo-rl9-02]="--ip 192.168.171.144 --data-disk 10 --tpm --user cuiuser1"
+  ["${P}byo-log-01"]="--ip 192.168.171.101 --role log"
+  ["${P}byo-rl9-01"]="--ip 192.168.171.141"
+  ["${P}byo-rl9-02"]="--ip 192.168.171.144 --data-disk 10 --tpm --user cuiuser1"
 )
 # Failures a host is expected to show, by check id (DEFECTS 2.2): byo-rl9-01
 # has one root filesystem and no volume group; byo-rl9-02 has a volume group
@@ -77,13 +80,13 @@ declare -A BYO_SPEC=(
 # mp-09-luks-tpm-bound and sc-08-luks-cipher fail on a host with no LUKS
 # device at all, where they passed vacuously before (issues #4, #11).
 declare -A EXPECTED_FAIL=(
-  [byo-rl9-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-cipher sc-08-luks-encrypted"
-  [byo-log-01]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-cipher sc-08-luks-encrypted"
-  [byo-rl9-02]="cm-06-mount-options cm-06-tmp-separate"
+  ["${P}byo-rl9-01"]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-cipher sc-08-luks-encrypted"
+  ["${P}byo-log-01"]="cm-06-mount-options cm-06-tmp-separate ac-18-luks-root-or-data mp-03-luks-present mp-09-luks-cipher mp-09-luks-tpm-bound sc-08-luks-cipher sc-08-luks-encrypted"
+  ["${P}byo-rl9-02"]="cm-06-mount-options cm-06-tmp-separate"
 )
 case "$lab" in
-  byo)       hosts=(byo-log-01 byo-rl9-01 byo-rl9-02) ;;
-  kickstart) hosts=(rl9-log-01 rl9-cui-01) ;;
+  byo)       hosts=("${P}byo-log-01" "${P}byo-rl9-01" "${P}byo-rl9-02") ;;
+  kickstart) hosts=("${P}rl9-log-01" "${P}rl9-cui-01") ;;
 esac
 
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -119,7 +122,7 @@ elif [[ "$lab" == byo ]]; then
   done
 else
   for h in "${hosts[@]}"; do
-    role=cui; [[ "$h" == *log* ]] && role=log
+    role=cui; [[ "${h#"$P"}" == *log* ]] && role=log
     say "$h: destroy and reinstall (--role $role)"
     { ./vm/build-vm.sh --role "$role" --name "$h" --destroy && ./vm/build-vm.sh --role "$role" --name "$h"; } \
       >> "$OUT/clean-$h.log" 2>&1 || die "reinstall $h failed (clean-$h.log)"
