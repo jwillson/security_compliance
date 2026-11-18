@@ -364,7 +364,8 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
 - [x] **S1 The lab in a namespace** (DEFECTS 7.45): both labs built,
       assessed and torn down on the server in the namespace `sc`, and what
       is not the lab's there the same before and after.
-      **Open:** the laptop's lab rebuilt with no namespace, on 9.9 -
+      **Open, and deferred by the owner (2026-11-18: the server gives a
+      working lab):** the laptop's lab rebuilt with no namespace, on 9.9 -
       `./nist make destroy && ./nist make all` there. The unit tests and
       the read-only tools say a host without `lab.conf` is as it was; no
       build has. It is also the first build with 7.53's host-key
@@ -375,9 +376,12 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
       cause found: qemu 10.2.1's main loop is asleep while a TPM command
       waits for it, and a question to qemu wakes it. `vm/build-vm.sh` asks
       one every two seconds while a new guest's firmware boots.
-      **Open:** (a) Ubuntu 26.04's qemu has no fix; upstream's is in 10.2.2.
-      When the hosts' qemu carries it, `./nist test-cdrom-boot scsi 8` with
-      no `--kick` says whether the asking can go. (b) That those upstream
+      **Open:** (a) Ubuntu 26.04 has no qemu with upstream's fix, which is
+      in 10.2.2: not in its updates, its proposed or its backports, for
+      `qemu` or `qemu-hwe` (2026-11-18; DEFECTS 7.42). Ubuntu has no
+      report of the hang either; filing one is the owner's. When the
+      hosts' qemu carries the fix, `./nist test-cdrom-boot scsi 8` with no
+      `--kick` says whether the asking can go. (b) That those upstream
       commits are this hang is a reading of them, not a test: it takes a
       qemu that has them. (c) `vm/byo-guest.sh --tpm` does not ask: its
       guest boots a disk, and the one built on the server came up in 40 s;
@@ -385,16 +389,18 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
 - [x] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
       release-run byo` at `6d2e083`: PASS, the three guests as at 1.0.1
       (34/30/5/28 twice, 35/33/1/28), 354 checks (DEFECTS 7.49, 7.50).
-- [ ] **S4 The laptop's `qemu.conf`** - the owner's to decide. The laptop
-      has no `/etc/libvirt/qemu.conf`, so its libvirt runs swtpm as `tss`,
-      and `sudo vm/host-swtpm.sh fix` wrote the override that goes with
-      that (DEFECTS 7.46). Either it stays so, or the packaged file is put
-      back (`qemu.conf.dpkg-dist` beside it is the package's own, and names
-      `swtpm`), `sudo vm/host-swtpm.sh fix` is run in the same change -
-      it then removes the override - and the laptop is rebooted, since
-      libvirtd reads the file when it starts. Not tried: the removal, and
-      what a guest's TPM state written as `tss` does under `swtpm` - so
-      with S1's rebuild, which makes the lab's TPM guests anew.
+- [ ] **S4 The laptop's `qemu.conf`.** Owner decision, 2026-11-18: the
+      override stays for now; putting the packaged file back, which takes
+      a reboot, waits for a later date. The laptop has no
+      `/etc/libvirt/qemu.conf`, so its libvirt runs swtpm as `tss`, and
+      `sudo vm/host-swtpm.sh fix` wrote the override that goes with that
+      (DEFECTS 7.46). Putting it back is the packaged file
+      (`qemu.conf.dpkg-dist` beside it is the package's own, and names
+      `swtpm`), `sudo vm/host-swtpm.sh fix` in the same change - it then
+      removes the override - and a reboot, since libvirtd reads the file
+      when it starts. Not tried: the removal, and what a guest's TPM state
+      written as `tss` does under `swtpm` - so with S1's rebuild, which
+      makes the lab's TPM guests anew.
 
 ## Open — container only
 

@@ -2090,8 +2090,14 @@ public when it had not.*
       the first of them says, and a firmware's first seconds have no other
       activity. Both went into qemu master on 2026-02-23 and are in v10.2.2
       and v11.0.0, not in v10.2.1 (GitHub's compare of the tags). Ubuntu
-      26.04 ships 10.2.1 and its changelog up to ubuntu3.3 names neither;
-      the Rocky 9 machine's qemu-kvm 10.1.0 predates the io_uring loop.
+      26.04 has no qemu with them (Launchpad and the packages' source,
+      read 2026-11-18): `qemu` 1:10.2.1+ds-1ubuntu3.3 and `qemu-hwe`
+      1:10.2.1+ds-1ubuntu4.4 in its updates carry neither change, in the
+      source or in a patch; the uploads waiting in proposed (ubuntu3.4,
+      ubuntu4.5) name neither in their changelogs; and its backports hold
+      no qemu. Ubuntu 26.10's 1:11.0.3 has both. A search of Ubuntu's
+      bugs for qemu, swtpm, edk2 and libvirt found no report of the hang.
+      The Rocky 9 machine's qemu-kvm 10.1.0 predates the io_uring loop.
       Not shown here: that a qemu with those two commits does not hang -
       that takes another qemu on the host.
 
@@ -2203,6 +2209,18 @@ public when it had not.*
       teardown` removed it and nothing else - `./nist residue --others`
       the same 35 lines before and after. 23 unit tests. Not yet built:
       the laptop's lab without a namespace (TASKS S1).
+
+      The commits cited for the runs of 2026-11-17 (7.42, 7.48, 7.50,
+      7.51; TASKS S3) are the published ones. Before its first push the
+      branch was rebuilt once, commit by commit: the server's name taken
+      out of one commit message and out of `TASKS.md` as it stood in the
+      first sixteen commits, and the stand-in hypervisor of
+      `tests/test_lab_env.py` given names of its own. So a run directory
+      kept on the server names its commit as it was then: `4cc3905` is
+      `e7724c3` here, `cfeefbb` `6d2e083`, `324672c` `1302034` and
+      `cf62661` `024bf8f`. Between each of those commits as it ran and
+      as it is published, those two files differ and nothing else - no
+      script, role, check, playbook or catalog file.
 - [x] **7.46 No guest with an emulated TPM could be made on the laptop.** From
       2026-10-16 every such build stopped in swtpm_setup: "Need read/write
       rights on statedir /var/lib/swtpm-localca for user tss". LAB.md called
