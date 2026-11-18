@@ -178,16 +178,22 @@ vi_pid=$!
 }
 install_attempt
 log "watching the install: the console is recorded in $CONSOLE"
-# The firmware's first boot (DEFECTS 7.42): with this firmware (OVMF
-# 2025.11) and an emulated TPM, a new guest's firmware hangs before its boot
-# manager on about half of first boots, printing nothing; a later boot of the
-# same guest does not (tools/test-cdrom-boot.sh --reuse: 7 of 7). So if the
-# console has no BdsDxe 45 s after the start, the guest is stopped, its
+# The firmware's first boot (DEFECTS 7.42). Under Ubuntu 26.04's qemu 10.2.1
+# a new guest with an emulated TPM often stalls in its firmware, printing
+# nothing: the TPM's first command waits for qemu's main loop to start the
+# thread that carries it, and in a firmware's first seconds nothing else
+# wakes that loop (qemu 10.2.2 has upstream's fix for such a missed wake-up;
+# not tried here). A question put to qemu's monitor does wake it, and the
+# firmware reaches GRUB five seconds later (tools/test-cdrom-boot.sh
+# --kick). So while the console has no
+# BdsDxe - the firmware's boot manager - this asks libvirt for the guest's
+# block statistics every five seconds, which changes nothing in the guest.
+# Should 45 s pass without BdsDxe all the same, the guest is stopped, its
 # definition removed with its firmware variables kept and its empty disk
 # deleted, and virt-install runs again under the same name - libvirt reuses
 # a variable store that exists. Nothing has been installed: each attempt is a
 # fresh install. At most three.
-attempt=1 fw_from=0 fw_start=$SECONDS
+attempt=1 fw_from=0 fw_start=$SECONDS woken=0
 started=$SECONDS last_size=-1 last_change=$SECONDS why=""
 while kill -0 "$vi_pid" 2>/dev/null; do
   sleep 5
@@ -195,6 +201,8 @@ while kill -0 "$vi_pid" 2>/dev/null; do
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
   if (( fw_start )); then
     if tail -c +$(( fw_from + 1 )) "$CONSOLE" 2>/dev/null | grep -aq 'BdsDxe'; then
+      if (( woken )); then log "the firmware reached its boot manager within $(( SECONDS - fw_start )) s, after qemu was asked $woken time(s) (DEFECTS 7.42)"
+      else log "the firmware reached its boot manager within $(( SECONDS - fw_start )) s"; fi
       fw_start=0
     elif (( SECONDS - fw_start > 45 )); then
       if (( attempt == 3 )); then why="the firmware did not reach its boot manager on 3 attempts (DEFECTS 7.42)"; break; fi
@@ -203,9 +211,11 @@ while kill -0 "$vi_pid" 2>/dev/null; do
       "${V[@]}" destroy "$VM_NAME" >/dev/null 2>&1; wait "$vi_pid" 2>/dev/null
       "${V[@]}" undefine "$VM_NAME" --keep-nvram >/dev/null 2>&1
       "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1
-      fw_from=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0) fw_start=$SECONDS last_change=$SECONDS
+      fw_from=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0) fw_start=$SECONDS last_change=$SECONDS woken=0
       install_attempt
       continue
+    elif "${V[@]}" domstats --block "$VM_NAME" >/dev/null 2>&1; then
+      woken=$(( woken + 1 ))
     fi
   fi
   # The kickstart ends with `reboot`; an installer that halts or powers off
