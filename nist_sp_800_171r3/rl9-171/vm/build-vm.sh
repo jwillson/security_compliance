@@ -180,14 +180,15 @@ install_attempt
 log "watching the install: the console is recorded in $CONSOLE"
 # The firmware's first boot (DEFECTS 7.42). Under Ubuntu 26.04's qemu 10.2.1
 # a new guest with an emulated TPM often stalls in its firmware, printing
-# nothing: the TPM's first command waits for qemu's main loop to start the
-# thread that carries it, and in a firmware's first seconds nothing else
+# nothing: a TPM command waits for qemu's main loop - the first one for the
+# thread that carries it - and in a firmware's first seconds nothing else
 # wakes that loop (qemu 10.2.2 has upstream's fix for such a missed wake-up;
-# not tried here). A question put to qemu's monitor does wake it, and the
-# firmware reaches GRUB five seconds later (tools/test-cdrom-boot.sh
-# --kick). So while the console has no
-# BdsDxe - the firmware's boot manager - this asks libvirt for the guest's
-# block statistics every five seconds, which changes nothing in the guest.
+# not tried here). A question put to qemu's monitor does wake it, and a
+# boot takes two to four of them (tools/test-cdrom-boot.sh --kick: asked
+# every 2 s, 8 of 8 new guests reached GRUB in 9 to 12 s where 8 of 8 left
+# alone never did). So while the console has no BdsDxe - the firmware's boot
+# manager - this asks libvirt for the guest's block statistics every two
+# seconds, which changes nothing in the guest.
 # Should 45 s pass without BdsDxe all the same, the guest is stopped, its
 # definition removed with its firmware variables kept and its empty disk
 # deleted, and virt-install runs again under the same name - libvirt reuses
@@ -196,7 +197,7 @@ log "watching the install: the console is recorded in $CONSOLE"
 attempt=1 fw_from=0 fw_start=$SECONDS woken=0
 started=$SECONDS last_size=-1 last_change=$SECONDS why=""
 while kill -0 "$vi_pid" 2>/dev/null; do
-  sleep 5
+  sleep $(( fw_start ? 2 : 5 ))
   size=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0)
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
   if (( fw_start )); then
