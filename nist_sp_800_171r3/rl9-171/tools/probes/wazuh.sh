@@ -38,5 +38,7 @@ trusted=$(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/')
 echo "  files under /var/ossec: $owned in the RPM, $trusted in the trust database"
 echo "  bundled python: $(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/framework/python/') trusted"
 for f in /etc/fapolicyd/fapolicyd-filter.conf /etc/fapolicyd/rpm-filter.conf; do
-  [ -f "$f" ] && { echo "  $f:"; grep -vE '^\s*(#|$)' "$f" | sed 's/^/    /' | head -40; }
+  # if, not `[ -f ] &&`: as the last command that made the probe exit 1 on
+  # a host without the second file, and ansible report it FAILED.
+  if [ -f "$f" ]; then echo "  $f:"; grep -vE '^\s*(#|$)' "$f" | sed 's/^/    /' | head -40; fi
 done
