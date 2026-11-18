@@ -337,7 +337,13 @@ sb=$(od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-* 2>/dev/null | awk '{pri
 echo "secure boot   $( [ "$sb" = 1 ] && echo enabled || echo "disabled/unknown")"
 echo "fips          $(cat /proc/sys/crypto/fips_enabled 2>/dev/null)"
 EOF
-  (cd "$ROOT" && ansible "$name" -b -m ansible.builtin.script -a "$probe" -o 2>/dev/null) \
+  # Through lib/ssh-env.sh, as every tool that runs ansible: it records the
+  # guest's host key first. `inventory add` forgets the key recorded for the
+  # address (DEFECTS 7.40) - the one the build's own wait had just recorded -
+  # and ansible, checking host keys strictly, then refused the new guest:
+  # seen on a workstation new to the BYO lab, 2026-11-17 (not yet proven).
+  (cd "$ROOT" && . lib/ssh-env.sh && nist_seed_known_hosts >/dev/null 2>&1
+   ansible "$name" -b -m ansible.builtin.script -a "$probe" -o 2>/dev/null) \
     | python3 -c 'import json,re,sys
 for l in sys.stdin:
     m = re.search(r"=> (\{.*\})\s*$", l)
