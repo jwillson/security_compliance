@@ -100,22 +100,25 @@ echo "# $host:22 SSH-2.0-OpenSSH_9.9"
         self.assertFalse((self.tmp / "none").exists())
 
     def test_the_inventory_forgets_the_comments_with_the_key(self):
-        sys.path.insert(0, str(ROOT / "tools"))
         import importlib.machinery
         import importlib.util
-        loader = importlib.machinery.SourceFileLoader("nist_inventory", str(ROOT / "tools/inventory.py"))
-        inv = importlib.util.module_from_spec(importlib.util.spec_from_loader("nist_inventory", loader))
-        loader.exec_module(inv)
+        from unittest import mock
         home = self.tmp / "home"
         (home / ".ssh").mkdir(parents=True)
         kh = home / ".ssh" / "known_hosts"
         self.kh = kh
         for host in (LAB, OTHER):
             self.sh(f"ssh-keyscan -H {host} >> {kh}")
-        old = os.environ.get("HOME")
-        os.environ["HOME"] = str(home)
-        self.addCleanup(lambda: os.environ.__setitem__("HOME", old) if old is not None else os.environ.pop("HOME"))
-        inv.forget_host_key(LAB, "byo")
+        sys.path.insert(0, str(ROOT / "tools"))
+        self.addCleanup(sys.path.remove, str(ROOT / "tools"))
+        loader = importlib.machinery.SourceFileLoader("nist_inventory", str(ROOT / "tools/inventory.py"))
+        inv = importlib.util.module_from_spec(importlib.util.spec_from_loader("nist_inventory", loader))
+        # Loaded outside the container, inventory.py runs itself again inside
+        # it, in place of the process that loaded it - here the test run,
+        # which CI's Python 3.9 job starts on the runner itself.
+        with mock.patch.dict(os.environ, {"NIST_IN_CONTAINER": "1", "HOME": str(home)}):
+            loader.exec_module(inv)
+            inv.forget_host_key(LAB, "byo")
         self.assertFalse(self.known(LAB))
         self.assertNotIn(f"# {LAB}:", kh.read_text())
         self.assertTrue(self.known(OTHER))

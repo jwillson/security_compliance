@@ -2406,5 +2406,12 @@ public when it had not.*
       comment lines and 3 keys, `nist_keyscan` 3 keys, and after a raw scan
       and `nist_forget_host` an empty file; on the server, the 230 lines
       gone by `nist_forget_host` for the three addresses. 134 unit tests.
+      One of them could not run outside the container, found before the
+      push by running CI's Python 3.9 job in a container of its own
+      (2026-11-18): it loads `tools/inventory.py`, which, loaded outside
+      the container, starts itself again through `./nist` in place of the
+      process that loaded it - there the test run, which ended at "needs
+      podman or docker" with no result. The test now says it is inside
+      for the load, and the 134 pass on Python 3.9 outside the container.
       Not run on a lab host: the builders with it - the server's lab was
       already gone - so the laptop's rebuild (TASKS S1) is its first.
