@@ -5,6 +5,12 @@
 #   tools/lab-residue.sh            what exists, grouped; exit 0
 #   tools/lab-residue.sh --orphans  only what belongs to no defined guest;
 #                                   exit 1 if there is any
+#   tools/lab-residue.sh --others   the opposite: every domain, network, pool
+#                                   and volume here that is not the lab's, by
+#                                   name. On a hypervisor the lab shares, the
+#                                   same listing before and after a teardown
+#                                   is the evidence that the teardown removed
+#                                   the lab and nothing else (DEFECTS 7.45).
 #
 # A lab guest is a libvirt domain attached to the lab network, or one whose
 # name a lab script uses (rl9-*, byo-*). Looked for, through the libvirt
@@ -33,6 +39,25 @@ domains=$("${V[@]}" list --all --name 2>/dev/null | awk 'NF' | sort)
 lab_domains=$(for d in $domains; do
   if lab_name "$d" || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
 done)
+
+if [[ "${1:-}" == --others ]]; then
+  for d in $domains; do grep -qxF "$d" <<<"$lab_domains" || echo "domain   $d"; done
+  for n in $("${V[@]}" net-list --all --name 2>/dev/null | awk 'NF' | sort); do
+    [[ "$n" == "$NET" ]] || { [[ -z "$LAB_NS" && "$n" == nist-ptest ]]; } || echo "network  $n"
+  done
+  for pool in $("${V[@]}" pool-list --all --name 2>/dev/null | awk 'NF' | sort); do
+    [[ -n "$LAB_NS" && "$pool" == "$LAB_POOL" ]] && continue
+    echo "pool     $pool"
+    for f in $("${V[@]}" vol-list --pool "$pool" 2>/dev/null | awk 'NR > 2 && NF {print $1}' | sort); do
+      if [[ -z "$LAB_NS" ]]; then   # alone on a host, the lab's names in any pool are the lab's
+        case "$f" in Rocky-*-boot.iso|rocky9-genericcloud-base.qcow2|ptest-base-*.qcow2) continue ;; esac
+        lab_name "$f" && continue
+      fi
+      echo "volume   $pool/$f"
+    done
+  done
+  exit 0
+fi
 
 show() {   # kind item owner(empty = orphan)
   if [[ -z "$3" ]]; then orphans=$((orphans + 1)); printf '  %-10s %s  (orphan)\n' "$1" "$2"

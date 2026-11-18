@@ -167,6 +167,7 @@ case $cmd in
   vol-info) p=$(pool_arg "$@"); grep -qx "$(last "$@")" "$S/vols/$p" 2>/dev/null ;;
   vol-delete) rec "$@"; p=$(pool_arg "$@"); v=$(last "$@")
     grep -qx "$v" "$S/vols/$p" 2>/dev/null || exit 1; sed -i "/^$v$/d" "$S/vols/$p" ;;
+  net-list) cat "$S/nets" ;;
   net-info) has nets "$1" || exit 1; echo "Active:         yes"; echo "Autostart:      yes" ;;
   net-dumpxml) has nets "$1" || exit 1; echo "<network><name>$1</name></network>" ;;
   net-destroy) rec "$@" ;;
@@ -290,6 +291,29 @@ class Hypervisor(unittest.TestCase):
         for ours in ("sc-rl9-cui-01", "sc-byo-rl9-01", "sc-lab", "sc/rocky9-genericcloud-base.qcow2"):
             self.assertIn(ours, r.stdout)
         self.assertEqual(self.calls(), [])
+
+    def test_others_is_what_is_not_the_labs_and_a_teardown_leaves_it_as_it_was(self):
+        before = self.run_tool("tools/lab-residue.sh", "--others")
+        self.assertEqual(before.returncode, 0, before.stderr)
+        lines = before.stdout.splitlines()
+        for theirs in ("domain   fleet-vm1", "domain   store-1", "domain   rl9-cui-01",
+                       "network  default", "network  uplink", "pool     default", "pool     fleet",
+                       "volume   default/Rocky-9.8-x86_64-boot.iso",
+                       "volume   default/rocky9-genericcloud-base.qcow2", "volume   fleet/store-1.qcow2"):
+            self.assertIn(theirs, lines)
+        self.assertEqual([l for l in lines if "sc-" in l or l.split()[1] == "sc"], [], "nothing of the lab's")
+        self.assertEqual(self.calls(), [], "read-only")
+        self.assertEqual(self.run_tool("vm/lab-teardown.sh", "--yes").returncode, 0)
+        after = self.run_tool("tools/lab-residue.sh", "--others")
+        self.assertEqual(after.stdout, before.stdout)
+
+    def test_without_a_namespace_others_leaves_out_the_labs_names_in_any_pool(self):
+        lines = self.run_tool("tools/lab-residue.sh", "--others", ns=None).stdout.splitlines()
+        self.assertIn("domain   fleet-vm1", lines)
+        self.assertIn("volume   fleet/store-1.qcow2", lines)
+        for taken in ("domain   rl9-cui-01", "volume   default/Rocky-9.8-x86_64-boot.iso",
+                      "volume   default/rocky9-genericcloud-base.qcow2", "volume   fleet/byo-data.qcow2"):
+            self.assertNotIn(taken, lines)
 
     def test_without_a_namespace_every_pool_is_searched_for_the_labs_names(self):
         # What the lab does on a host it has to itself - and why it must be

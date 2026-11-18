@@ -63,7 +63,7 @@ byo-lab-init|vm/byo-lab-init.sh|the BYO lab'"'"'s directory and vault
 byo-guest|vm/byo-guest.sh|a BYO lab guest: build / check / destroy
 lab-network|vm/lab-network.sh|the lab network: ensure / destroy / upstream
 teardown|vm/lab-teardown.sh|remove both labs and all they left
-residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans)
+residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans; --others: what is not theirs)
 diagnose|tools/diagnose-lab-net.sh|why a guest cannot reach the mirror (as root: sudo ./nist diagnose)
 vm-logs|tools/vm-logs.sh|the qemu and TPM emulator logs of a lab guest (as root: sudo ./nist vm-logs NAME)
 install-log|tools/install-log.sh|what an installer said before it stopped
