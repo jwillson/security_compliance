@@ -13,7 +13,9 @@
 # choose another), records the host key if it is new, and supplies the
 # password factor the way lib/ssh-env.sh does for every tool - so nothing is
 # typed, and nothing wrong is offered: three failed attempts lock the account
-# (03.01.08). `sudo` on the host asks for the same password.
+# (03.01.08). `sudo` on the host asks for the same password - in the shell.
+# A COMMAND runs without a terminal, where sudo cannot ask: it fails, and
+# each try counts as a failed attempt (as root: ansible -b, tools/probe.sh).
 #
 # The password comes from the host's ansible_password - the kickstart lab's
 # .secrets/admin_password, or the inventory's vault (for the BYO lab, source
