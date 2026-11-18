@@ -37,6 +37,11 @@ reboot, apply, dry run at `changed=0`, verify.
 | BYO retrofit (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 9 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
 | BYO with a volume group, a TPM and two accounts | `byo-rl9-02` **35/33/1/28** — 2 checks failed, both 03.04.06 (no separate `/tmp`) |
 
+Since then on Rocky 9.9, which the mirror serves now and the lab is on
+(DEFECTS 7.47): both labs built from nothing on a second Ubuntu host,
+2026-11-17, with the same dispositions - 354 checks run, the reference
+hosts 0 failed, the BYO hosts 9, 9 and 2 (DEFECTS 7.45-7.51).
+
 Proven by behaviour, not configuration: an idle SSH session closed at the
 ODP limit (`tools/ssh-idle-test.sh`); GRUB demanding its password to edit an
 entry (`tools/rehearse-grub-edit.py`); the TPM refusing after a PCR 7 change,
@@ -352,27 +357,46 @@ named `sc-`, a NAT network and a storage pool of our own, libvirt's
 `default` network and pool untouched, nothing changed on the host - are what
 a lab namespace gives (`lab.conf`; `lib/lab-env.sh`; docs/LAB.md, *A shared
 hypervisor*). Scope, agreed the same day: the reference lab, then the
-firmware hang of DEFECTS 7.42 measured there, then the BYO lab.
+firmware hang of DEFECTS 7.42 measured there, then the BYO lab. All three
+ran there that day, on Rocky 9.9, which the lab is on since (DEFECTS 7.47);
+what they found is DEFECTS 7.45-7.52 and the end of 7.42. What is left:
 
-- [ ] **S1 The lab in a namespace** (DEFECTS 7.45 once it is proven).
-      Written, with 21 unit tests (`tests/test_lab_env.py`) that run the real
-      teardown, residue and destroy scripts against a stand-in hypervisor
-      carrying another lab: on the scripts before the change, teardown
-      deleted that lab's boot ISO, base image and two of its disks; in a
-      namespace it touches nothing outside it. On the laptop, 2026-11-17:
-      without a namespace `./nist residue` and `./nist host-check` read as
-      on main, and `./nist test-lab-network` (13/13) and `./nist
-      test-console-record` pass; in a throwaway namespace `t7` residue saw
-      none of the laptop's own lab, the console and CD-ROM boot tests made
-      and used the pool `t7`, and `./nist teardown` removed it and nothing
-      else. **Open:** `./nist make all` on the server in the namespace `sc`,
-      then `./nist make teardown` leaving nothing of ours and everything of
-      theirs; and a rebuild of the laptop's lab with no namespace.
-- [ ] **S2 The firmware hang (7.42) on a third host.** `./nist
-      test-cdrom-boot scsi 8` on the server: Ubuntu's qemu, OVMF and swtpm on
-      other hardware and another kernel than the laptop's.
-- [ ] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
-      release-run byo`.
+- [ ] **S1 The lab in a namespace** (DEFECTS 7.45): both labs built and
+      assessed on the server in the namespace `sc`.
+      **Open:** the teardown there - the lab is still up: `./nist residue
+      --others` before and after `./nist teardown --yes` must be the same,
+      and `./nist residue` empty. And the laptop's lab rebuilt with no
+      namespace, on 9.9 -
+      `./nist make destroy && ./nist make all` there. The unit tests and
+      the read-only tools say a host without `lab.conf` is as it was; no
+      build has.
+- [ ] **S2 The firmware hang (7.42) on a third host.** Measured, and its
+      cause found: qemu 10.2.1's main loop is asleep while a TPM command
+      waits for it, and a question to qemu wakes it. `vm/build-vm.sh` asks
+      one every two seconds while a new guest's firmware boots.
+      **Open:** the `make all` that proves it on the server had built both
+      guests on the first attempt and was still applying when this was
+      written: its apply and verify results go into DEFECTS 7.42.
+      (a) Ubuntu 26.04's qemu has no fix; upstream's is in 10.2.2.
+      When the hosts' qemu carries it, `./nist test-cdrom-boot scsi 8` with
+      no `--kick` says whether the asking can go. (b) That those upstream
+      commits are this hang is a reading of them, not a test: it takes a
+      qemu that has them. (c) `vm/byo-guest.sh --tpm` does not ask: its
+      guest boots a disk, and the one built on the server came up in 40 s;
+      its first boot has not been counted.
+- [x] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
+      release-run byo` at `6d2e083`: PASS, the three guests as at 1.0.1
+      (34/30/5/28 twice, 35/33/1/28), 354 checks (DEFECTS 7.49, 7.50).
+- [ ] **S4 The laptop's `qemu.conf`** - the owner's to decide. The laptop
+      has no `/etc/libvirt/qemu.conf`, so its libvirt runs swtpm as `tss`,
+      and `sudo vm/host-swtpm.sh fix` wrote the override that goes with
+      that (DEFECTS 7.46). Either it stays so, or the packaged file is put
+      back (`qemu.conf.dpkg-dist` beside it is the package's own, and names
+      `swtpm`), `sudo vm/host-swtpm.sh fix` is run in the same change -
+      it then removes the override - and the laptop is rebooted, since
+      libvirtd reads the file when it starts. Not tried: the removal, and
+      what a guest's TPM state written as `tss` does under `swtpm` - so
+      with S1's rebuild, which makes the lab's TPM guests anew.
 
 ## Open — container only
 

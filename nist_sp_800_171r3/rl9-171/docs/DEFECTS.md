@@ -2040,6 +2040,69 @@ public when it had not.*
       handling (kernel 7.0 here, 5.14 on the Rocky machine), qemu 10.2 and
       the swtpm 0.10 binary - none of which the lab can swap without
       changing the host. The build retry stands.
+
+      The cause, 2026-11-17, found on a third host. The owner's server is
+      Ubuntu 26.04 as the laptop is, with the same packages (qemu
+      1:10.2.1+ds-1ubuntu3.3, OVMF 2025.11-3ubuntu7.3, swtpm
+      0.10.1+ds-1ubuntu3, libvirt 12.0.0-1ubuntu5.6), another Intel CPU and
+      kernel 7.0.0-34 (the laptop 7.0.0-43), and it hangs more than the
+      laptop does. New guests left alone, by `./nist test-cdrom-boot scsi
+      8`: 8 of 8 with a TPM and 0 of 6 without; with a TPM, 6 of 6 on the
+      host's OVMF without Secure Boot (the laptop 1 of 8) and 7 of 7 on
+      Rocky 9's edk2-ovmf 20241117. So it needs neither Secure Boot nor
+      this firmware, only the TPM. One guest booted eight times hung on
+      boots 1 and 2 and reached GRUB in 6 to 7 s on boots 3 to 8, whether
+      its TPM state was kept (`--reuse`) or fresh each time
+      (`--fresh-tpm`): the third boot is the first that works, and the
+      build made three attempts. In the lab's builds there the first
+      attempt hung on 3 of 4 guests and a retry on 2 of 5, and both guests
+      of one `make all` installed on their third.
+
+      A hung guest's first CPU runs at 100 %, three quarters of that
+      outside the guest, in qemu and the kernel - a polling loop of I/O
+      exits; its second CPU has done nothing; swtpm has used a tenth of a
+      second in a minute and a half and sits idle; and qemu has no `worker`
+      thread. qemu's TPM backend hands each command to its thread pool
+      (`backends/tpm/tpm_backend.c`), and the pool has its first worker
+      made by qemu's main loop (`util/thread-pool.c`, `spawn_thread`: "ask
+      the main thread to create one"). The command is waiting for the main
+      loop, and the loop is asleep. Waking it ends the hang. Three hung
+      boots whose registers were read through qemu's monitor reached GRUB
+      about five seconds after the reading - at 44 s, GRUB at 49 s; at 10 s,
+      at 14 s; at 45 s, at 51 s - between boots that hung when left alone.
+      `./nist test-cdrom-boot --kick S` does it on purpose and without the
+      monitor's taint, asking libvirt for the guest's block statistics
+      (`virsh domstats --block`, read-only) every S seconds until GRUB
+      shows: new guests on the server, 0 of 8 hung asked every 5 s (GRUB at
+      15 to 24 s) and 0 of 8 every 2 s (GRUB at 9 to 12 s), each boot
+      taking two to four questions; on the laptop the one boot of ten that
+      stalled that evening reached GRUB at 24 s, asked at 20 s.
+
+      Upstream has since fixed two faults of this kind. From 10.2 qemu's
+      main loop watches its file descriptors through io_uring ("aio-posix:
+      integrate fdmon into glib event loop"; in v10.2.0, not in v10.1.0).
+      In that loop, work a CPU thread queued while it emulated a device
+      access did not wake it ("aio-posix: notify main loop when SQEs are
+      queued"), and a completion that arrived while the loop was
+      submitting went unnoticed until its next wake-up ("fdmon-io_uring:
+      check CQ ring directly in gsource_check") - "a bit hard to detect, as
+      it also relies on the ppoll loop not waking up for other activity",
+      the first of them says, and a firmware's first seconds have no other
+      activity. Both went into qemu master on 2026-02-23 and are in v10.2.2
+      and v11.0.0, not in v10.2.1 (GitHub's compare of the tags). Ubuntu
+      26.04 ships 10.2.1 and its changelog up to ubuntu3.3 names neither;
+      the Rocky 9 machine's qemu-kvm 10.1.0 predates the io_uring loop.
+      Not shown here: that a qemu with those two commits does not hang -
+      that takes another qemu on the host.
+
+      *Fix:* until the console shows BdsDxe, `vm/build-vm.sh` asks libvirt
+      for the guest's block statistics every two seconds and logs how long
+      the firmware took and how often it was asked; the stop-and-retry
+      after 45 s stays as the fallback. On the server at `024bf8f`,
+      `./nist make destroy && ./nist make all`: both guests' firmware
+      reached its boot manager on the first attempt, in 10 and 11 s, each
+      asked four times, and both installed. The apply and verify of that
+      run had not finished when this was written (TASKS S2).
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
@@ -2090,3 +2153,216 @@ public when it had not.*
       password from a 0600 file in /dev/shm named by NIST_ASKPASS_FILE, which
       is only read and goes with the container. *Proven*: the file prints the
       lab password (compared offline), then one login to rl9-cui-01.
+- [x] **7.45 On a hypervisor the lab shares, its teardown would have deleted
+      what is not its own.** The lab took the same names on every host - the
+      network `nist-lab`, libvirt's pool `default`, guests `rl9-*` and
+      `byo-*` - and `./nist make teardown` and `./nist residue` looked
+      through every pool for them. Found before it did harm, when the owner
+      decided (2026-11-17) to run the lab on a server that also carries
+      another lab's guests: nothing says whose a guest or a volume is, and
+      theirs can have the lab's names. *Evidence:* `tests/test_lab_env.py`
+      runs the real teardown, residue and destroy scripts against a
+      stand-in hypervisor that carries another lab. On the scripts before
+      the change, teardown deleted that lab's Rocky boot ISO and
+      GenericCloud base image from `default`, the disk of its guest named
+      `rl9-cui-01`, and a `byo-*` volume from a third pool. *Fix:* a
+      namespace: one line, `namespace = sc`, in an untracked `lab.conf`
+      beside `./nist`, read by every lab script through `lib/lab-env.sh` -
+      nothing to export, no command changed. With it the guests are
+      `sc-rl9-*` and `sc-byo-*`, the network `sc-lab` on `sc-br0` with the
+      subnet unchanged, and the volumes in a pool of the lab's own, `sc`,
+      which libvirt makes with its directory on the first build. A guest is
+      the lab's only by the prefix or by sitting on the lab's network, and a
+      volume only by being in the lab's pool, which goes last, once empty;
+      a name outside the namespace is refused, and so is the portability
+      host, which wants a second network. Without `lab.conf` nothing
+      changes. No lab script names a network, a pool or a guest prefix
+      itself any more. `./nist residue --others` lists what on the host is
+      not the lab's, so a teardown can be shown to have left it alone
+      (docs/LAB.md, *A shared hypervisor*). *Proven* on the owner's server,
+      2026-11-17, beside the other lab's six guests and with nothing
+      changed on the host - no sudo, no package, no daemon restarted:
+      `./nist make all` twice (7.47, 7.48), `./nist make destroy` between
+      them taking the two guests and the network and leaving the pool; the
+      BYO lab (7.49, 7.50); the boot tests of 7.42; the teardown there, with `./nist residue --others` taken
+      before and after it, is still to run (TASKS S1).
+      On the laptop, the same day: without a namespace `./nist residue` and
+      `./nist host-check` read as on main, and `./nist test-lab-network`
+      (13/13) and `./nist test-console-record` pass; in a throwaway
+      namespace `t7` residue saw none of the laptop's own lab, the console
+      and CD-ROM boot tests made and used the pool `t7`, and `./nist
+      teardown` removed it and nothing else - `./nist residue --others`
+      the same 35 lines before and after. 23 unit tests. Not yet built:
+      the laptop's lab without a namespace (TASKS S1).
+- [x] **7.46 No guest with an emulated TPM could be made on the laptop.** From
+      2026-10-16 every such build stopped in swtpm_setup: "Need read/write
+      rights on statedir /var/lib/swtpm-localca for user tss". LAB.md called
+      it Ubuntu's packaging and prescribed a chown of the directory. It is
+      not the packaging. The laptop has no `/etc/libvirt/qemu.conf` - only
+      `qemu.conf.dpkg-dist`, identical to the file the installed package
+      ships - so libvirt runs swtpm as `tss`, its built-in default, while
+      swtpm-tools gives the directory to `swtpm`, the user the packaged
+      qemu.conf names. A stock Ubuntu 26.04 agrees with itself: on the
+      owner's server every TPM guest the lab made on 2026-11-17 started its
+      emulator with nothing changed on the host. And the chown does not
+      last: systemd-tmpfiles put the packaged owner back. *Fix:*
+      `vm/host-swtpm.sh`. `check` (read-only; exit 1 on a mismatch) compares
+      the user qemu.conf names, or `tss` without one, with the directory's
+      owner and with the tmpfiles line that will own it at the next boot.
+      `sudo vm/host-swtpm.sh fix` writes
+      `/etc/tmpfiles.d/swtpm-tmpfiles.conf` naming libvirt's user - under the
+      packaged file's name, so it replaces that line - or removes it once
+      the two agree without it; it edits no libvirt file and never restarts
+      libvirtd. With `./nist diagnose` and `./nist vm-logs` it is the third
+      place the toolkit asks for sudo (owner decision 2026-11-17: a change
+      to the workstation is a committed script, never made by hand).
+      *Proven* on the laptop, 2026-11-17: check failed; fix; check passed,
+      and passed again after `systemd-tmpfiles --create`; three TPM guests
+      then started where swtpm_setup had refused. Not run: the removal of
+      the override, which needs qemu.conf back - whether to restore it is
+      the owner's to decide (TASKS S4).
+- [x] **7.47 `make iso` failed on a new host once Rocky 9.9 was out, and the
+      lab had been on 9.9 since that day.** The first `./nist make all` on
+      the owner's server (2026-11-17) ended at the ISO: 404 for
+      `9/isos/x86_64/Rocky-9.8-x86_64-boot.iso`. The mirror's `9/` follows
+      the newest minor release, so the boot ISO of the one before leaves it
+      when the next is published; a workstation that already held the ISO
+      never asked. *Fix:* the ISO is fetched from its release's own
+      directory beside `9/` (`.../9.9/isos/x86_64`), then from the vault
+      (`dl.rockylinux.org/vault/rocky/VERSION`), where old releases stay,
+      and is kept only if its SHA-256 is the one in that directory's
+      CHECKSUM. The next build showed that only the ISO had been 9.8: the
+      installer and every `dnf` after it take their packages from `9/`, and
+      the guests installed from the 9.8 ISO reported "Rocky Linux release
+      9.9". Owner decision the same day: the lab is 9.9, what a host that
+      applies its updates runs. `ISO_VERSION` in the Makefile says so, and
+      the four scripts that read the ISO name it (`vm/build-vm.sh`,
+      `install/iso.sh`, `tools/test-cdrom-boot.sh`,
+      `tools/test-console-record.sh`). `nist_supported_minor_version` in the
+      role's defaults says 9.9 too; nothing reads it. `sudo ./nist diagnose`
+      asked `9/` for 8 MB of the same 9.8 ISO, from inside the lab network,
+      to tell a path MTU problem from a blocked NAT: it got the 404 and
+      called a sound network "a path MTU problem (a VPN or tunnel on this
+      host)". It asks for the installer's image now
+      (`BaseOS/x86_64/os/images/install.img`, `.treeinfo`'s stage2), a name
+      every minor release has. *Proven* 2026-11-17: on the owner's server
+      9.8 and then 9.9 each fetched from its own directory, checksum OK,
+      and the lab built from each; the vault on the laptop, by
+      `NIST_ROCKY_MIRROR` set to a directory that does not exist and
+      `./nist make iso ISO_VERSION=9.8` - 404, then the vault's copy,
+      checksum OK and identical to the one from the release directory; the
+      diagnosis on the laptop - that FAIL and exit 1 before, with every
+      other layer ok, and "every layer works" after. What 9.9 changed in
+      the hosts is 7.48.
+- [x] **7.48 On Rocky 9.9 Wazuh's manager did not start: fapolicyd had not
+      yet trusted its package.** The first reference lab built on 9.9 (the
+      owner's server, 2026-11-17) ended its apply with `failed=2`: "Unable
+      to start service wazuh-manager" on both hosts, in the third play; the
+      overlay itself had applied. *Evidence:* `./nist probe wazuh` (extended
+      for it). The unit's journal: "PermissionError: [Errno 1] Operation not
+      permitted: '/var/ossec/framework/python/lib/python3.10/abc.py'", then
+      "wazuh-apid: Configuration error. Exiting"; 56 fapolicyd denials for
+      the package's own `python3.10`. fapolicyd is 2.0.1 on 9.9 (9.8's
+      AppStream has 1.4.5; the trial passed there on 2026-10-13) and sizes
+      its trust database itself (`db_max_size = auto`): of the 24 006 files
+      the package owns under /var/ossec, 1 594 were in it, 945 of the
+      bundled Python's. Eighteen minutes after the failure its journal said
+      "autosize: trust DB full at 8 MiB - grew to 10 MiB, retrying rebuild"
+      and published a generation of 31 029 entries, 19 680 of them the
+      bundled Python; the manager then started by hand. So the role had
+      started the manager while most of its package was not in the
+      database, and its handler that asks fapolicyd for a rebuild runs only
+      at the end of the play. *Fix:* before it starts the manager,
+      `nist_wazuh` asks the trust database for one file of the bundled
+      Python's library (`abc.py`, the one refused), requests a rebuild
+      (`fapolicyd-cli --update`) each time it is not there, and waits - 30
+      tries, 10 s apart. *Proven* 2026-11-17 by `./nist make destroy &&
+      ./nist make all` there on 9.9 at `e7724c3`: the wait retried once on
+      each host and the manager started; apply `failed=0`, the second apply
+      `changed=1`; sc-rl9-cui-01 36/33/0/28 and sc-rl9-log-01 35/34/0/28, 0
+      of 354 checks failed; `./nist test-wazuh` 5/5, the test file
+      quarantined in 2 s. Four hours and twenty minutes after the boot that
+      ended that build the test passed again on the CUI host, and on the
+      collector the manager was still the one started at that boot: no
+      fapolicyd or SELinux denial in the last hour, one trust database
+      published since the boot (31 029 entries, ten minutes into it),
+      20 171 of the package's files in it. The probe prints fapolicyd's
+      record of its database since boot and when the manager started; and
+      since 7.51 a manager that is not running is a deviation in every
+      assessment, the host's daily one included.
+- [x] **7.49 `./nist byo-lab-init` could not make the BYO lab's directory on
+      a workstation that never had one.** `./nist` mounts that directory
+      into the container only if it exists, and the command that creates it
+      runs inside: "install: cannot create directory
+      '~/.local/share/nist-byo-lab': Permission denied", with the home
+      directory spelled out (the owner's server, 2026-11-17). The laptop's
+      directory was made in September, before the tool moved into the
+      container (7.37), so it never showed there. *Fix:* `./nist` makes the
+      directory, 0700, before that one command. *Proven* on the server: the
+      init completed - the vault, its password file, `env.sh`.
+- [x] **7.50 A BYO guest just built was refused by the build's own check.**
+      `byo-guest build` waits for the guest with `StrictHostKeyChecking=
+      accept-new`, which records its host key; then `./nist inventory add`
+      forgets the key recorded for that address (7.40, 2026-10-09) - the one
+      just recorded - and the check that ends the build runs ansible, which
+      checks host keys strictly: "Using a SSH password instead of a key is
+      not possible because Host Key checking is enabled". No BYO guest had
+      been built since 7.40, which was proven on a planted entry; the last
+      builds on the laptop are of 2026-10-07. The first one after it, on the
+      owner's server on 2026-11-17, stopped the release run at its first
+      guest. *Fix:* the check sources `lib/ssh-env.sh` and records the
+      guest's key, as apply and verify do, before it runs ansible. *Proven*
+      there: the check on the guest that had failed, then the release run's
+      three builds. That run, `./nist release-run byo` at `6d2e083`, the
+      first of the BYO lab on Rocky 9.9 and in a namespace (7.45): PASS -
+      sc-byo-log-01 and sc-byo-rl9-01 34/30/5/28 with 9 of 354 checks
+      failed, sc-byo-rl9-02 35/33/1/28 with 2, each settled at `changed=0`
+      and failing only where a retrofit is expected to (2.2); the same
+      when assessed again at `1302034` with 7.51's checks
+      (`--reverify`).
+- [x] **7.51 An installed opt-in that was not working was reported MANUAL,
+      not as a deviation.** In the first reference lab on 9.9 (7.48) Wazuh's
+      manager had failed to start on both hosts, and the assessment that
+      followed counted no check failed:
+      `si-02-realtime-detection-running` was MANUAL, "not assessed
+      automatically: failed". `manual_if_absent` turns a non-zero exit
+      status into MANUAL - it is how a check says its component is not on
+      the host - and the check, having found the package with rpm, ended in
+      `systemctl is-active wazuh-manager`, which exits 3 for a unit that
+      has failed. The one state the check is there to find read as the
+      component's absence. Two ClamAV checks had the same shape, on
+      `systemctl is-enabled`: `si-02-freshclam-enabled` and
+      `si-02-clamav-scan-timer` would have called an installed ClamAV with
+      its timer disabled MANUAL. *Fix:* each of the three ends with status
+      0 once its package is found (`... 2>&1 || true`), so the unit's state
+      is compared with what is expected and a wrong one is FAIL; the header
+      of `audit/checks.yml` says what `manual_if_absent` asks of a command.
+      `tests/test_assessor.py` (`OptedInComponents`) runs every
+      `manual_if_absent` check that asks systemctl about a unit, as shipped:
+      installed with the unit failed, inactive, disabled or missing is
+      FAIL - MANUAL seven times on the checks before the fix - installed
+      and right is PASS, not installed is still MANUAL. `./nist test-wazuh`
+      gained a step: it stops the manager, assesses 03.14.02 and wants FAIL,
+      starts it and wants PASS. *Proven* on the owner's server, 2026-11-17,
+      at `1302034`: `./nist test-wazuh sc-rl9-cui-01 sc-rl9-log-01` 7/7 -
+      "with the manager stopped, the assessment reports
+      si-02-realtime-detection-running FAIL", "started again, it reports
+      PASS" - and both labs assessed again with the corrected checks, as
+      they were: the reference hosts 36/33/0/28 and 35/34/0/28 with 0 of
+      354 failed (ClamAV, not installed, still MANUAL), the BYO hosts as in
+      7.50. 126 unit tests.
+- [x] **7.52 The runbook's own example locked an account.** `docs/RUNBOOK.md`
+      showed `./nist lab-ssh rl9-cui-01 'sudo systemctl status auditd'`. A
+      command given to `lab-ssh` runs without a terminal, where sudo cannot
+      ask for its password - "sudo: a terminal is required to read the
+      password" - and each such try is a failed authentication to
+      pam_faillock. One login with three of them locked the reference CUI
+      host's admin out for the fifteen minutes of 03.01.08 while 7.48 was
+      being read, and the tools' next connections were refused. *Evidence* (the
+      owner's server, 2026-11-17, on a BYO guest about to be removed):
+      `./nist lab-ssh sc-byo-rl9-01 "sudo true; sudo true; sudo true"`,
+      then the next login - "Permission denied (password)". A single try
+      followed by a good login leaves no record: success clears the count.
+      *Fix:* the runbook shows a command that needs no sudo, says why, and
+      names what does work as root - sudo in the interactive shell, ansible
+      with become, a probe; `tools/lab-ssh.sh`'s header says the same.

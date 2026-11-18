@@ -66,12 +66,15 @@ the likely causes, leaving the VM up to inspect. An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
-7.30). A guest whose firmware never reaches its boot manager - the firmware
-and emulated TPM on some hosts hang on a new guest's first boot - is booted
-again, on the variables it has, up to three times; the installer must then
-name itself on the console before an install counts as finished, and the ISO
-is a virtio-scsi CD-ROM (DEFECTS 7.42; `./nist test-cdrom-boot` measures a
-host, `sudo ./nist vm-logs NAME` shows qemu's side). The inventory is checked
+7.30). A new guest with an emulated TPM can stall in its firmware until
+something wakes qemu - Ubuntu 26.04's qemu 10.2.1 does this (DEFECTS 7.42).
+So until the firmware reaches its boot manager the build asks libvirt for the
+guest's block statistics every two seconds, which wakes it and changes
+nothing; a guest that is still not there after 45 s is booted again, on the
+variables it has, up to three times. The installer must then name itself on
+the console before an install counts as finished, and the ISO is a
+virtio-scsi CD-ROM (`./nist test-cdrom-boot` measures a host and with
+`--kick` shows the cure; `sudo ./nist vm-logs NAME` shows qemu's side). The inventory is checked
 before the install starts (7.31); after any
 failure, `./nist make destroy` and `./nist make all` repeat it from nothing. The usual cause of a stall is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
@@ -118,8 +121,10 @@ Every guest's name carries the prefix: the default names do, and a name
 given by hand must (`./nist byo-guest build sc-byo-rl9-02 ...`) or it is
 refused. `./nist make teardown` removes the namespace's guests, network and
 volumes and then its pool; a pool that still holds anything else is kept,
-and the teardown fails saying what. Inventories, `.secrets/`, the lab PKI
-and the reports are in the clone, as on any host.
+and the teardown fails saying what. `./nist residue --others` lists what on
+the host is not the lab's - guests, networks, pools and volumes, by name:
+taken before and after a teardown, the two listings are the same. Inventories,
+`.secrets/`, the lab PKI and the reports are in the clone, as on any host.
 
 What the lab needs of the host is what *On any host* lists, and its
 operator's agreement to the subnet. It restarts no daemon, uses no `sudo`,
@@ -181,8 +186,9 @@ second factor.
 | `byo-log-01` | .101 | log | The collector the BYO CUI hosts forward to over TLS. |
 | `byo-rl9-02` | .144 | cui | What the reference lacks (DEFECTS 5.6): a 10 GB data disk carrying `vg_sys` with all of it free (the LUKS path, 6b.5), a TPM 2.0 (the role's clevis `tpm2` bind), and a second interactive account `cuiuser1` (6b.4). |
 
-All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`
-9.8, cloud-init, UEFI with Secure Boot, 3 GB, 2 vCPU); their shapes are
+All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`,
+the mirror's latest - 9.9 since 2026-11 - cloud-init, UEFI with Secure Boot,
+3 GB, 2 vCPU); their shapes are
 `BYO_SPEC` in `tools/release-run.sh`, and `release-run.sh byo` rebuilds all
 three from the stock image, every time. `byo-rl9-01` and `byo-log-01` were
 first built by hand on 2026-09-17 and replaced by script builds on

@@ -242,7 +242,9 @@ an Ubuntu workstation with no `.secrets/`: the dry run completes on the
 never-applied host, the apply completes with one reboot, and the assessment
 reports **34 satisfied, 30 partial, 5 not satisfied, 28 organizational** —
 351 checks, 9 failed — against 36 / 33 / 0 / 28 for a host on which every
-check passes.
+check passes. The same on Rocky 9.9, the image the mirror serves now
+(2026-11-17, on a second Ubuntu host): 34 / 30 / 5 / 28, 9 of 354 checks
+failed.
 Every failure is an install-time limit the role records rather than hides:
 
 | Requirement | Check | Why a retrofit cannot satisfy it |
@@ -540,8 +542,8 @@ refresh, malware scan, and security errata (`dnf-automatic`).
 
 | | Proven | Expected to work, not run |
 |---|---|---|
-| **Target** | Rocky Linux 9.8, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images | Other Rocky Linux 9 minors. **Not RHEL 9** yet: `site.yml` refuses it, since the role and checks name Rocky's GPG key, release file, repository IDs and EFI path (ODP-REVIEW I3) |
-| **Control workstation and lab host** | Ubuntu 26.04 (both labs); Rocky Linux 9 (the kickstart lab from nothing: `./nist make all`, 0 of 351 checks failed, natively 2026-10-06 and container-only 2026-10-12; the full reference lab - the CUI host, its collector, Wazuh standalone on both - 2026-10-13: rl9-cui-01 36/33/0/28 and rl9-log-01 35/34/0/28, 0 of 354 failed; `./nist test-wazuh` 5/5, the EICAR file quarantined in 2 s); ubuntu-24.04 in CI for everything that needs no host | Fedora and other Linux with the tools below (`./nist make host-check` names what is missing) |
+| **Target** | Rocky Linux 9.9, x86_64, UEFI with Secure Boot, OpenSSH 9.9 — a kickstart install and stock GenericCloud images (9.8 through release 1.0.1; a guest takes its packages from the mirror's `9/`, which became 9.9 - DEFECTS 7.47) | Other Rocky Linux 9 minors. **Not RHEL 9** yet: `site.yml` refuses it, since the role and checks name Rocky's GPG key, release file, repository IDs and EFI path (ODP-REVIEW I3) |
+| **Control workstation and lab host** | Ubuntu 26.04 (both labs; and on a second machine, shared with another lab's guests, in a namespace, 2026-11-17 on Rocky 9.9: the reference lab 36/33/0/28 and 35/34/0/28, 0 of 354 failed, `./nist test-wazuh` 7/7, and the BYO release run - docs/LAB.md, *A shared hypervisor*); Rocky Linux 9 (the kickstart lab from nothing: `./nist make all`, 0 of 351 checks failed, natively 2026-10-06 and container-only 2026-10-12; the full reference lab - the CUI host, its collector, Wazuh standalone on both - 2026-10-13: rl9-cui-01 36/33/0/28 and rl9-log-01 35/34/0/28, 0 of 354 failed; `./nist test-wazuh` 5/5, the EICAR file quarantined in 2 s); ubuntu-24.04 in CI for everything that needs no host | Fedora and other Linux with the tools below (`./nist make host-check` names what is missing) |
 
 **OpenSSH before 9.2** — the 8.7p1 of early Rocky 9 minors — has no
 `ChannelTimeout`. The role then warns, leaves the idle-session settings out,

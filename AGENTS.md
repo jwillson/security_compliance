@@ -122,9 +122,10 @@ The tool runs only in its control-plane container: every entry point enters
 it by itself (`lib/container.sh`), and the host needs podman or docker and,
 for the lab, the hypervisor - nothing else (owner decision 2026-10-07, TASKS
 C). Never add a host-side tool or a `sudo` to a workstation script; libvirt
-is reached through its socket. Two exceptions, each the owner's decision:
-`sudo ./nist diagnose`, and `sudo vm/host-swtpm.sh fix`, which makes the TPM
-emulator's CA directory follow the user libvirt runs it as (2026-11-17).
+is reached through its socket. Three commands ask for sudo, each the owner's
+decision: `sudo ./nist diagnose`, `sudo ./nist vm-logs NAME` (read-only), and
+`sudo vm/host-swtpm.sh fix`, which makes the TPM emulator's CA directory
+follow the user libvirt runs it as (2026-11-17).
 
 Hardening an existing host needs neither the VM targets nor `.secrets/`. Its
 secrets - the admin password, the GRUB password (03.10.07), the LUKS
