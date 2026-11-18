@@ -11,7 +11,11 @@
 #      path of ~4000 characters, Linux's limit being 4096 - must reach the
 #      collector whole. It is about 6 KB, under rsyslog's 8 KB message, so
 #      these alerts are not cut (the trial asked whether they would be);
-#   and Wazuh's memory is read before and after.
+#   5. with the manager stopped, the assessment must report
+#      si-02-realtime-detection-running FAIL - not MANUAL, as it did for a
+#      manager that had failed to start (DEFECTS 7.51) - and PASS once the
+#      manager is started again;
+#   and Wazuh's memory is read before and after steps 1-4.
 #
 #   tools/test-wazuh.sh rl9-cui-01 rl9-log-01
 #
@@ -96,5 +100,30 @@ fi
 
 after=$(mem)
 echo "==> Wazuh on $host: ${after} MB resident after"
+
+# 5. A manager that is not running is a deviation. When it had failed to
+# start, both hosts of a lab reported the check MANUAL and the assessment
+# counted nothing (DEFECTS 7.51): stopped here, assessed, started, assessed.
+running_check() {   # LOG: the check's status in the assessment LOG records
+  local json; json=$(grep -oE 'reports/[^ ]+\.json' "$1" | tail -1)
+  [[ -n "$json" && -f "$json" ]] || { echo no-report; return; }
+  python3 - "$json" <<'PY'
+import json, sys
+print(next((c["status"] for r in json.load(open(sys.argv[1]))["requirements"]
+            for c in r.get("checks", []) if c["id"] == "si-02-realtime-detection-running"), "not-run"))
+PY
+}
+trap 'on "$host" "systemctl start wazuh-manager" >/dev/null 2>&1' EXIT   # never left stopped
+on "$host" "systemctl stop wazuh-manager; systemctl is-active wazuh-manager" > "$OUT/stopped.txt"
+./verify.sh --host "$host" --requirement 03.14.02 > "$OUT/verify-stopped.log" 2>&1
+s=$(running_check "$OUT/verify-stopped.log")
+if [[ "$s" == FAIL ]]; then ok "with the manager stopped, the assessment reports si-02-realtime-detection-running FAIL"
+else bad "with the manager stopped ($(tr '\n' ' ' < "$OUT/stopped.txt")), si-02-realtime-detection-running is $s, not FAIL"; fi
+on "$host" "systemctl start wazuh-manager; systemctl is-active wazuh-manager" > "$OUT/started.txt"
+trap - EXIT
+./verify.sh --host "$host" --requirement 03.14.02 > "$OUT/verify-started.log" 2>&1
+s=$(running_check "$OUT/verify-started.log")
+if [[ "$s" == PASS ]]; then ok "started again, it reports PASS"
+else bad "started again ($(tr '\n' ' ' < "$OUT/started.txt")), si-02-realtime-detection-running is $s, not PASS"; fi
 echo "==> $([ $fails -eq 0 ] && echo PASS || echo FAIL): Wazuh standalone ($fails failed) - $OUT"
 (( fails == 0 ))
