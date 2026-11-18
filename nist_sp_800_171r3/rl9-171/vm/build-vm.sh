@@ -40,6 +40,7 @@ cd "$ROOT"
 # The lab's network and pool, and on a shared hypervisor the prefix its
 # guests carry (sc-rl9-cui-01): lib/lab-env.sh.
 . "$ROOT/lib/lab-env.sh"
+. "$ROOT/lib/known-hosts.sh"          # nist_keyscan, nist_forget_host
 
 VM_NAME=""
 VM_ROLE="cui"
@@ -111,7 +112,7 @@ if [[ $DESTROY -eq 1 ]]; then
     || "${V[@]}" undefine "$VM_NAME" --nvram --remove-all-storage >/dev/null 2>&1 || true
   "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1 || true
   "${V[@]}" vol-delete --pool "$POOL" "$ISO_VOL" >/dev/null 2>&1 || true
-  [[ -n "$ip" && -f "$SECRETS/known_hosts" ]] && ssh-keygen -R "$ip" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
+  [[ -n "$ip" ]] && nist_forget_host "$ip" "$SECRETS/known_hosts"
   "$ROOT/tools/inventory.py" remove "$VM_NAME" >/dev/null 2>&1 || true
   log "destroyed"
   exit 0
@@ -300,12 +301,12 @@ log "inventory now:"
 # longer exists: forget it, then record this guest's key once its sshd
 # answers (DEFECTS 7.24).
 touch "$SECRETS/known_hosts"; chmod 600 "$SECRETS/known_hosts"
-ssh-keygen -R "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
+nist_forget_host "$IP" "$SECRETS/known_hosts"
 log "waiting for SSH"
 ssh_up=0
 for _ in $(seq 1 60); do
   if ! ssh-keygen -F "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1; then
-    ssh-keyscan -H "$IP" 2>/dev/null >> "$SECRETS/known_hosts" || true
+    nist_keyscan "$IP" "$SECRETS/known_hosts"
   fi
   if ssh -i "$SECRETS/id_rsa" -o StrictHostKeyChecking=yes \
          -o UserKnownHostsFile="$SECRETS/known_hosts" -o ConnectTimeout=5 \

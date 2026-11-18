@@ -46,6 +46,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 # The lab's network and pool, and on a shared hypervisor the prefix its
 # guests carry (sc-byo-rl9-01): lib/lab-env.sh.
 . "$ROOT/lib/lab-env.sh"
+. "$ROOT/lib/known-hosts.sh"          # nist_forget_host
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
 KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
 POOL=$LAB_POOL
@@ -302,7 +303,7 @@ cmd_build() {
     ${extra[@]+"${extra[@]}"} \
     --graphics none --console pty,target_type=serial
 
-  ssh-keygen -R "$ip" >/dev/null 2>&1 || true
+  nist_forget_host "$ip" "$HOME/.ssh/known_hosts"
   wait_ready "$ip"
 
   say "inventory"
@@ -379,7 +380,7 @@ cmd_destroy() {
   [[ -n "$mac" && -n "$ip" ]] && "${VIRSH[@]}" net-update "$NET" delete ip-dhcp-host \
     "<host mac='$mac' name='$name' ip='$ip'/>" --live --config >/dev/null 2>&1 || true
   (cd "$ROOT" && ./tools/inventory.py remove "$name") 2>/dev/null || true
-  [[ -n "$ip" ]] && ssh-keygen -R "$ip" >/dev/null 2>&1 || true
+  [[ -n "$ip" ]] && nist_forget_host "$ip" "$HOME/.ssh/known_hosts"
   # The seed and the per-guest passwords stay in $LAB/$name, so a rebuild
   # reuses the same passwords. Remove that directory by hand to forget them.
   if [[ -d "$LAB/$name" ]]; then say "gone (kept $LAB/$name)"; else say "gone"; fi

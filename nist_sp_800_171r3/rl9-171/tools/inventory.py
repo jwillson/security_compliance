@@ -236,6 +236,12 @@ def forget_host_key(ip: str, connection: str) -> None:
         subprocess.run(["ssh-keygen", "-R", ip, "-f", str(kh)], capture_output=True)
         Path(str(kh) + ".old").unlink(missing_ok=True)   # ssh-keygen's copy, the old key in it
         print(f"forgot the host key recorded for {ip} in {kh}; the next connection records its current one")
+    # And the comment lines ssh-keyscan left for the address, which ssh-keygen
+    # -R keeps (lib/known-hosts.sh; DEFECTS 7.53).
+    lines = kh.read_text().splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith(f"# {ip}:")]
+    if len(kept) != len(lines):
+        kh.write_text("".join(kept))
 
 
 def cmd_add(args) -> int:
