@@ -149,7 +149,11 @@ if ip link show "$BRIDGE" >/dev/null 2>&1; then
   elif inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 ${pin[@]+"${pin[@]}"} "$MIRROR/BaseOS/x86_64/os/.treeinfo" 2>/dev/null; then
     ok "from $PROBE, a small file from $MIRROR${pin:+ (address given)}"
     (( resolved )) || info "so the way out works: the guests' fault is DNS alone (layers 1 and 3)"
-    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 ${pin[@]+"${pin[@]}"} "$MIRROR/isos/x86_64/Rocky-9.8-x86_64-boot.iso" 2>/dev/null; then
+    # 8 MB of the installer's image, which every minor release has under this
+    # name (.treeinfo, stage2). It was the boot ISO, whose name carries the
+    # minor release: 9.8's left 9/ when 9.9 came out, the fetch got a 404,
+    # and a sound network was called an MTU problem (DEFECTS 7.47).
+    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 ${pin[@]+"${pin[@]}"} "$MIRROR/BaseOS/x86_64/os/images/install.img" 2>/dev/null; then
       ok "from $PROBE, 8 MB from $MIRROR"
     else bad "from $PROBE the small file came but 8 MB did not: a path MTU problem (a VPN or tunnel on this host) - lower the lab network's MTU, or NIST_ROCKY_MIRROR=URL to a nearer mirror"; fi
   else bad "from $PROBE nothing comes from $MIRROR${pin:+ even with its address given}, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi
