@@ -15,6 +15,9 @@
 #     --firmware F    sb (default: libvirt's Secure Boot OVMF), nosb (the host's
 #                     OVMF without Secure Boot), rocky (Rocky 9's edk2-ovmf
 #                     Secure Boot build, from its mirror, uploaded to the pool)
+#     --kick S        S seconds into a boot that has not reached GRUB, ask
+#                     qemu one thing through libvirt (virsh domstats --block,
+#                     read-only), and once more every S seconds after
 #
 # What it found on the Ubuntu laptop, 2026-10-13 (qemu 1:10.2.1+ds-1ubuntu3.2,
 # OVMF 2025.11-3ubuntu7.3, swtpm 0.10.1): with a TPM, a new guest's firmware
@@ -29,6 +32,15 @@
 # 20241117 hung 6/8 here too, swtpm's null profile 5/8, the host's OVMF
 # without Secure Boot (no SMM) 1/8 (DEFECTS 7.42).
 #
+# 2026-11-17, on a second Ubuntu 26.04 host (the same qemu, another machine):
+# 8/8 with a TPM and 0/6 without, and with a TPM 6/6 without Secure Boot and
+# 7/7 on Rocky's OVMF - so it is neither the firmware nor Secure Boot. It is
+# qemu: the hung guest's TPM command waits for qemu's main loop, which is
+# asleep, and anything that wakes the loop ends the hang - a question to the
+# monitor, and GRUB follows about five seconds later. --kick asks one
+# (DEFECTS 7.42 has the measurements and the upstream fix, in qemu 10.2.2).
+# vm/build-vm.sh therefore asks while it waits for the firmware.
+#
 # Each guest is like a lab guest (q35, Secure Boot firmware, TPM, a NIC on
 # nist-lab, no disk), removed afterwards; tools/lab-residue.sh must then find
 # no orphan. Needs the boot ISO (./nist make iso). Runs in the control-plane
@@ -41,14 +53,14 @@ ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
 . lib/lab-env.sh
 bus=${1:-}; n=${2:-10}; shift 2 2>/dev/null || true
-tpm=1 nic=1 tpm_model=tpm-crb wait=100 reuse=0 profile="" firmware=sb
+tpm=1 nic=1 tpm_model=tpm-crb wait=100 reuse=0 profile="" firmware=sb kick=0
 while (( $# )); do
-  case $1 in --no-tpm) tpm=0 ;; --no-nic) nic=0 ;; --tpm-tis) tpm_model=tpm-tis ;; --wait) wait=$2; shift ;; --reuse) reuse=1 ;; --fresh-tpm) reuse=2 ;; --fresh-nvram) reuse=3 ;; --tpm-profile) profile=$2; shift ;; --firmware) firmware=$2; shift ;;
+  case $1 in --no-tpm) tpm=0 ;; --no-nic) nic=0 ;; --tpm-tis) tpm_model=tpm-tis ;; --wait) wait=$2; shift ;; --reuse) reuse=1 ;; --fresh-tpm) reuse=2 ;; --fresh-nvram) reuse=3 ;; --tpm-profile) profile=$2; shift ;; --firmware) firmware=$2; shift ;; --kick) kick=$2; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;; esac; shift
 done
-[[ "$bus" =~ ^(sata|scsi)$ && "$n" =~ ^[0-9]+$ ]] || { sed -n '3,14p' "$0"; exit 2; }
+[[ "$bus" =~ ^(sata|scsi)$ && "$n" =~ ^[0-9]+$ && "$kick" =~ ^[0-9]+$ ]] || { sed -n '3,20p' "$0"; exit 2; }
 NAME=${LAB_PREFIX}rl9-cdtest-01 VOL=${LAB_PREFIX}rl9-cdtest-01-boot.iso ISOFILE=iso/Rocky-9.9-x86_64-boot.iso
-OUT="$ROOT/reports/runs/test-cdrom-boot-$bus$( ((tpm)) || echo -notpm)$( ((nic)) || echo -nonic)$( [[ $tpm_model == tpm-tis ]] && echo -tis)$(case $reuse in 1) echo -reuse;; 2) echo -freshtpm;; 3) echo -freshnvram;; esac)${profile:+-profile-$profile}$( [[ $firmware == sb ]] || echo "-fw-$firmware")-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
+OUT="$ROOT/reports/runs/test-cdrom-boot-$bus$( ((tpm)) || echo -notpm)$( ((nic)) || echo -nonic)$( [[ $tpm_model == tpm-tis ]] && echo -tis)$(case $reuse in 1) echo -reuse;; 2) echo -freshtpm;; 3) echo -freshnvram;; esac)${profile:+-profile-$profile}$( [[ $firmware == sb ]] || echo "-fw-$firmware")$( ((kick)) && echo "-kick$kick")-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 V() { virsh -c "$NIST_LIBVIRT_URI" "$@"; }
 [[ -f "$ISOFILE" ]] || { echo "error: no $ISOFILE (./nist make iso)" >&2; exit 2; }
 V dominfo "$NAME" >/dev/null 2>&1 && { echo "error: $NAME exists - remove it first" >&2; exit 2; }
@@ -187,10 +199,15 @@ for i in $(seq 1 "$n"); do
   # reaches it is a failure too.
   timeout $(( wait + 50 )) script -qfc "virsh -c '$NIST_LIBVIRT_URI' console --force $NAME" "$log" </dev/null >/dev/null 2>&1 &
   rec=$!
-  started=$SECONDS grub=0
+  started=$SECONDS grub=0 kicks=0 kicked=""
   while (( SECONDS - started < wait )); do
     grep -aq 'GRUB' "$log" 2>/dev/null && { grub=1; break; }
     [[ "$(V domstate "$NAME" 2>/dev/null)" == running ]] || break
+    # The kick: any question libvirt puts to qemu's monitor will do - this
+    # one reads the block statistics and changes nothing.
+    if (( kick )) && (( SECONDS - started >= kick * (kicks + 1) )); then
+      V domstats --block "$NAME" >/dev/null 2>&1; kicks=$((kicks + 1)); kicked="${kicked:+$kicked, }$(( SECONDS - started ))s"
+    fi
     sleep 1
   done
   if (( grub )); then
@@ -202,7 +219,7 @@ for i in $(seq 1 "$n"); do
   t=$(( SECONDS - started ))
   if [[ "$state" == *crashed* ]]; then crashed=$((crashed + 1)); echo "boot $i: qemu crashed at ${t}s ($state)"
   elif (( ! grub )); then crashed=$((crashed + 1)); echo "boot $i: no GRUB after ${t}s ($state)"
-  else booted=$((booted + 1)); echo "boot $i: GRUB at $(( t - 30 ))s or so, then survived 30 s of reading the CD ($state)"; fi
+  else booted=$((booted + 1)); echo "boot $i: GRUB at $(( t - 30 ))s or so${kicked:+ (qemu asked at $kicked)}, then survived 30 s of reading the CD ($state)"; fi
   V destroy "$NAME" >/dev/null 2>&1
   case $reuse in
     0) undefine ;;
@@ -210,5 +227,5 @@ for i in $(seq 1 "$n"); do
     3) V undefine "$NAME" --nvram --keep-tpm >/dev/null && V define "$OUT/domain.xml" >/dev/null ;;
   esac
 done
-echo "==> $bus CD-ROM, tpm=$tpm ($tpm_model${profile:+, profile $profile}) nic=$nic firmware=$firmware: $crashed of $n boots failed - $OUT"
+echo "==> $bus CD-ROM, tpm=$tpm ($tpm_model${profile:+, profile $profile}) nic=$nic firmware=$firmware$( ((kick)) && echo " kick=${kick}s"): $crashed of $n boots failed - $OUT"
 (( crashed == 0 ))
