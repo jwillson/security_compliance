@@ -125,6 +125,12 @@ and the teardown fails saying what. `./nist residue --others` lists what on
 the host is not the lab's - guests, networks, pools and volumes, by name:
 taken before and after a teardown, the two listings are the same. Inventories,
 `.secrets/`, the lab PKI and the reports are in the clone, as on any host.
+Outside libvirt the lab writes only in the home of the user who runs it, and
+a teardown keeps what a rebuild needs there: the clone with its ISO, the
+control-plane image in podman's store, and the BYO lab's directory
+(`~/.local/share/nist-byo-lab`). A BYO guest's host key is recorded in that
+user's `~/.ssh/known_hosts` and forgotten when the guest is destroyed
+(DEFECTS 7.53).
 
 What the lab needs of the host is what *On any host* lists, and its
 operator's agreement to the subnet. It restarts no daemon, uses no `sudo`,

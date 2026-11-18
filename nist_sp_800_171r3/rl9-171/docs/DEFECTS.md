@@ -2098,11 +2098,16 @@ public when it had not.*
       *Fix:* until the console shows BdsDxe, `vm/build-vm.sh` asks libvirt
       for the guest's block statistics every two seconds and logs how long
       the firmware took and how often it was asked; the stop-and-retry
-      after 45 s stays as the fallback. On the server at `024bf8f`,
-      `./nist make destroy && ./nist make all`: both guests' firmware
-      reached its boot manager on the first attempt, in 10 and 11 s, each
-      asked four times, and both installed. The apply and verify of that
-      run had not finished when this was written (TASKS S2).
+      after 45 s stays as the fallback. *Proven* on the server at
+      `024bf8f` by `./nist make destroy && ./nist make all`: both guests'
+      firmware reached its boot manager on the first attempt, in 10 and
+      11 s, each asked four times - "the firmware reached its boot manager
+      within 10 s, after qemu was asked 4 time(s)" - where the two `make
+      all` before it had made five retries for their four guests; apply
+      `failed=0`,
+      the second apply `changed=1`; sc-rl9-cui-01 36/33/0/28 and
+      sc-rl9-log-01 35/34/0/28, 0 of 354 checks failed. Open: Ubuntu's
+      qemu, and a BYO guest's first boot, which is not asked (TASKS S2).
 - [x] **7.43 03.14.02 claimed more than the host does, and the ClamAV opt-in
       could not have worked.** 03.14.02 was classed technical, but statement
       c.1 asks for real-time scanning of files from external sources as they
@@ -2184,8 +2189,12 @@ public when it had not.*
       changed on the host - no sudo, no package, no daemon restarted:
       `./nist make all` twice (7.47, 7.48), `./nist make destroy` between
       them taking the two guests and the network and leaving the pool; the
-      BYO lab (7.49, 7.50); the boot tests of 7.42; the teardown there, with `./nist residue --others` taken
-      before and after it, is still to run (TASKS S1).
+      BYO lab (7.49, 7.50); the boot tests of 7.42; then `./nist teardown --yes` with five guests up: "PASS: nothing
+      of the labs is left" - no `sc-` guest, network or pool, and the
+      pool's directory gone - and `./nist residue --others` the same 14
+      lines before and after it: the other lab's six guests, libvirt's
+      `default` network, and its pool with its six volumes. What stays is
+      in the home of the user who ran it (docs/LAB.md), and 7.53.
       On the laptop, the same day: without a namespace `./nist residue` and
       `./nist host-check` read as on main, and `./nist test-lab-network`
       (13/13) and `./nist test-console-record` pass; in a throwaway
@@ -2366,3 +2375,36 @@ public when it had not.*
       *Fix:* the runbook shows a command that needs no sudo, says why, and
       names what does work as root - sudo in the interactive shell, ansible
       with become, a probe; `tools/lab-ssh.sh`'s header says the same.
+- [x] **7.53 Every scan of a host key left comment lines in `known_hosts`
+      for good.** After the teardown on the owner's server (7.45) the
+      `~/.ssh/known_hosts` of the user who ran the lab held 230 lines and no
+      key: "# 192.168.171.101:22 SSH-2.0-OpenSSH_9.9" and its like, 75 to
+      80 for each of the three BYO addresses. ssh-keyscan prints such a
+      line for every key type it asks a host for - five for a host with
+      three keys - and the tools appended its output as it came; ssh-keygen
+      -R then removes the host's keys and leaves the comments. The laptop's
+      `~/.ssh/known_hosts` holds 2 720 lines, 2 430 of them these, and the
+      kickstart lab's `.secrets/known_hosts` 530 of 539. ssh ignores them;
+      they are litter in a file that is the operator's own, on a real
+      deployment's workstation too. *Fix:* `lib/known-hosts.sh`.
+      `nist_keyscan` appends a host's keys and nothing else;
+      `nist_forget_host` removes a host's keys, ssh-keygen's `.old` copy
+      of them, and the comment lines scans of that host left, and touches
+      no other line. Every place that scanned or forgot goes through them
+      (`lib/ssh-env.sh`, `tools/lab-ssh.sh`, `vm/build-vm.sh`,
+      `vm/byo-guest.sh`), and `./nist inventory add` drops the comments
+      with the key - so an address's old lines go the next time its key is
+      forgotten, and nothing sweeps a file the tool was not asked about.
+      Lines for an address no guest takes again stay: most of those in
+      `.secrets/known_hosts`, the lab's own file, whose guests had a new
+      address from DHCP at each build.
+      `tests/test_known_hosts.py`, with the real ssh-keygen: a scan records
+      no comment; forgetting takes one host's lines and leaves another
+      host's, the operator's own comment and the file's mode; an address
+      that begins another is not taken for it; no tool calls ssh-keyscan
+      itself. *Proven* against a real sshd (OpenSSH 10.2): the raw scan 5
+      comment lines and 3 keys, `nist_keyscan` 3 keys, and after a raw scan
+      and `nist_forget_host` an empty file; on the server, the 230 lines
+      gone by `nist_forget_host` for the three addresses. 134 unit tests.
+      Not run on a lab host: the builders with it - the server's lab was
+      already gone - so the laptop's rebuild (TASKS S1) is its first.

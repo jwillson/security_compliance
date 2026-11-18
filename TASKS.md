@@ -40,7 +40,7 @@ reboot, apply, dry run at `changed=0`, verify.
 Since then on Rocky 9.9, which the mirror serves now and the lab is on
 (DEFECTS 7.47): both labs built from nothing on a second Ubuntu host,
 2026-11-17, with the same dispositions - 354 checks run, the reference
-hosts 0 failed, the BYO hosts 9, 9 and 2 (DEFECTS 7.45-7.51).
+hosts 0 failed, the BYO hosts 9, 9 and 2 (DEFECTS 7.45-7.53).
 
 Proven by behaviour, not configuration: an idle SSH session closed at the
 ODP limit (`tools/ssh-idle-test.sh`); GRUB demanding its password to edit an
@@ -359,25 +359,23 @@ a lab namespace gives (`lab.conf`; `lib/lab-env.sh`; docs/LAB.md, *A shared
 hypervisor*). Scope, agreed the same day: the reference lab, then the
 firmware hang of DEFECTS 7.42 measured there, then the BYO lab. All three
 ran there that day, on Rocky 9.9, which the lab is on since (DEFECTS 7.47);
-what they found is DEFECTS 7.45-7.52 and the end of 7.42. What is left:
+what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
 
-- [ ] **S1 The lab in a namespace** (DEFECTS 7.45): both labs built and
-      assessed on the server in the namespace `sc`.
-      **Open:** the teardown there - the lab is still up: `./nist residue
-      --others` before and after `./nist teardown --yes` must be the same,
-      and `./nist residue` empty. And the laptop's lab rebuilt with no
-      namespace, on 9.9 -
+- [x] **S1 The lab in a namespace** (DEFECTS 7.45): both labs built,
+      assessed and torn down on the server in the namespace `sc`, and what
+      is not the lab's there the same before and after.
+      **Open:** the laptop's lab rebuilt with no namespace, on 9.9 -
       `./nist make destroy && ./nist make all` there. The unit tests and
       the read-only tools say a host without `lab.conf` is as it was; no
-      build has.
-- [ ] **S2 The firmware hang (7.42) on a third host.** Measured, and its
+      build has. It is also the first build with 7.53's host-key
+      functions; rebuilding the BYO guests after it (`./nist release-run
+      byo`) is what clears the comment lines the laptop's
+      `~/.ssh/known_hosts` holds for their three addresses, 2 410 of them.
+- [x] **S2 The firmware hang (7.42) on a third host.** Measured, and its
       cause found: qemu 10.2.1's main loop is asleep while a TPM command
       waits for it, and a question to qemu wakes it. `vm/build-vm.sh` asks
       one every two seconds while a new guest's firmware boots.
-      **Open:** the `make all` that proves it on the server had built both
-      guests on the first attempt and was still applying when this was
-      written: its apply and verify results go into DEFECTS 7.42.
-      (a) Ubuntu 26.04's qemu has no fix; upstream's is in 10.2.2.
+      **Open:** (a) Ubuntu 26.04's qemu has no fix; upstream's is in 10.2.2.
       When the hosts' qemu carries it, `./nist test-cdrom-boot scsi 8` with
       no `--kick` says whether the asking can go. (b) That those upstream
       commits are this hang is a reading of them, not a test: it takes a
