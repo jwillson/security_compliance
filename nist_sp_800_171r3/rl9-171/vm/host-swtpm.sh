@@ -23,8 +23,8 @@
 # override instead, which would otherwise break TPM guests the other way
 # round. It never restarts libvirtd, edits no libvirt file and touches no
 # guest. This runs on the host, not in the control-plane container, and
-# `fix` as root: with `./nist diagnose`, the only places the toolkit asks for
-# sudo (owner decision 2026-11-17).
+# `fix` as root: with `./nist diagnose` and `./nist vm-logs`, the only places
+# the toolkit asks for sudo (owner decision 2026-11-17).
 #
 set -euo pipefail
 DIR=/var/lib/swtpm-localca
@@ -32,7 +32,7 @@ CONF=/etc/libvirt/qemu.conf
 OVERRIDE=/etc/tmpfiles.d/swtpm-tmpfiles.conf
 PACKAGED=/usr/lib/tmpfiles.d/swtpm-tmpfiles.conf
 cmd=${1:-}
-[[ "$cmd" == check || "$cmd" == fix ]] || { sed -n '3,29p' "$0"; exit 2; }
+[[ "$cmd" == check || "$cmd" == fix ]] || { sed -n '3,27p' "$0"; exit 2; }
 
 if [[ -e "$CONF" && ! -r "$CONF" ]]; then
   echo "error: $CONF is not readable as $(id -un): sudo vm/host-swtpm.sh $cmd" >&2; exit 2
