@@ -63,7 +63,7 @@ byo-lab-init|vm/byo-lab-init.sh|the BYO lab'"'"'s directory and vault
 byo-guest|vm/byo-guest.sh|a BYO lab guest: build / check / destroy
 lab-network|vm/lab-network.sh|the lab network: ensure / destroy / upstream
 teardown|vm/lab-teardown.sh|remove both labs and all they left
-residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans)
+residue|tools/lab-residue.sh|what the labs have in libvirt (--orphans; --others: what is not theirs)
 diagnose|tools/diagnose-lab-net.sh|why a guest cannot reach the mirror (as root: sudo ./nist diagnose)
 vm-logs|tools/vm-logs.sh|the qemu and TPM emulator logs of a lab guest (as root: sudo ./nist vm-logs NAME)
 install-log|tools/install-log.sh|what an installer said before it stopped
@@ -95,6 +95,11 @@ script=$(awk -F'|' -v c="$1" '$1 == c {print $2}' <<<"$COMMANDS")
 if [[ -n "$script" ]]; then
   [[ "$1" == diagnose ]] && export NIST_PRIVILEGED=1
   [[ "$1" == vm-logs ]] && host_logs=1
+  # The BYO lab's directory is mounted only if it exists, and its first
+  # command is the one that makes it: on a new workstation byo-lab-init
+  # could not create it inside the container ("Permission denied", the
+  # owner's server, 2026-11-17). Made here, 0700, as byo-lab-init makes it.
+  [[ "$1" == byo-lab-init ]] && install -d -m 0700 "$LAB"
   shift; set -- "$HERE/$script" "$@"
 fi
 

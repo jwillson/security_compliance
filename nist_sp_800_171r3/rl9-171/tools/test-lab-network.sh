@@ -5,7 +5,9 @@
 # guest on it are untouched - `ensure` must define, start and autostart it, a
 # second run must change nothing, and `destroy` must remove it; on the real
 # nist-lab, with guests on it, `destroy` must refuse and `destroy-if-unused`
-# keep it. The copy is removed at the end whatever happens.
+# keep it. The copy is removed at the end whatever happens. (The real
+# network is the host's lab network, whatever its namespace calls it; the
+# copy is named after it and takes 192.168.179.0/24.)
 #
 # DNS (DEFECTS 7.29), on the copy: with a resolv.conf that lists no
 # nameserver, `ensure` must give the network a forwarder this host answers
@@ -20,21 +22,23 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.." || exit 2
+. lib/lab-env.sh
+T_NET="$LAB_NET-nettest" T_BRIDGE=virbr179
+[[ -n "$LAB_NS" ]] && T_BRIDGE="$LAB_NS-br9"
 V=(virsh -c "$NIST_LIBVIRT_URI")
 fails=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
 xml=$(mktemp --suffix=.xml) empty=$(mktemp)
-fwd() { "${V[@]}" net-dumpxml --inactive nist-lab-nettest 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | xargs; }
-sed -e 's:<name>nist-lab</name>:<name>nist-lab-nettest</name>:' -e "s:virbr17:virbr179:" \
-    -e 's/192\.168\.171\./192.168.179./g' -e "s:<domain name='nist-lab':<domain name='nist-lab-nettest':" \
-    vm/nist-lab-network.xml > "$xml"
-cleanup() { "${V[@]}" net-destroy nist-lab-nettest >/dev/null 2>&1; "${V[@]}" net-undefine nist-lab-nettest >/dev/null 2>&1; rm -f "$xml" "$empty"; }
+fwd() { "${V[@]}" net-dumpxml --inactive "$T_NET" 2>/dev/null | grep -oE "forwarder addr='[^']*'|server=[^']*" | xargs; }
+lab_network_xml | sed -e "s:<name>$LAB_NET</name>:<name>$T_NET</name>:" -e "s:<bridge name='$LAB_BRIDGE':<bridge name='$T_BRIDGE':" \
+    -e 's/192\.168\.171\./192.168.179./g' -e "s:<domain name='$LAB_NET':<domain name='$T_NET':" > "$xml"
+cleanup() { "${V[@]}" net-destroy "$T_NET" >/dev/null 2>&1; "${V[@]}" net-undefine "$T_NET" >/dev/null 2>&1; rm -f "$xml" "$empty"; }
 trap cleanup EXIT
-"${V[@]}" net-info nist-lab-nettest >/dev/null 2>&1 && { echo "error: nist-lab-nettest already exists" >&2; exit 2; }
+"${V[@]}" net-info "$T_NET" >/dev/null 2>&1 && { echo "error: $T_NET already exists" >&2; exit 2; }
 
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
-info=$("${V[@]}" net-info nist-lab-nettest 2>/dev/null)
+info=$("${V[@]}" net-info "$T_NET" 2>/dev/null)
 [[ $rc -eq 0 ]] && grep -q 'Active: *yes' <<<"$info" && grep -q 'Autostart: *yes' <<<"$info" \
   && ok "a missing network is defined, started and set to autostart" || bad "rc=$rc: $out"
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
@@ -52,26 +56,26 @@ had=$(fwd)
 out=$(NIST_RESOLV_CONF="$empty" NIST_ROCKY_MIRROR=https://nist-lab-nettest.invalid/x NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 [[ $rc -eq 0 && -n "$had" && "$(fwd)" == "$had" && "$out" == *"keeping"* ]] \
   && ok "no resolver found: the network keeps the forwarder it has ($had)" || bad "keep forwarder: rc=$rc had='$had' now='$(fwd)': $out"
-out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+out=$(NIST_LAB_DNS="fe80::1%$T_BRIDGE 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 f=$(fwd)
-[[ $rc -eq 0 && "$f" == *"server=fe80::1%virbr179"* && "$f" == *"addr=192.0.2.53"* ]] \
+[[ $rc -eq 0 && "$f" == *"server=fe80::1%$T_BRIDGE"* && "$f" == *"addr=192.0.2.53"* ]] \
   && ok "NIST_LAB_DNS: a scoped link-local and a plain address both define" || bad "NIST_LAB_DNS: rc=$rc forwarders='$f': $out"
-out=$(NIST_LAB_DNS="fe80::1%virbr179 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
+out=$(NIST_LAB_DNS="fe80::1%$T_BRIDGE 192.0.2.53" NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 [[ $rc -eq 0 && -z "$(grep '^==>' <<<"$out")" ]] && ok "and a second run with them changes nothing" || bad "NIST_LAB_DNS second run: rc=$rc: $out"
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh ensure 2>&1); rc=$?
 if grep -q '^nameserver' /host/etc/resolv.conf; then
   [[ $rc -eq 0 && -z "$(fwd)" ]] && ok "with resolv.conf's nameservers back, the forwarders go" || bad "revert: rc=$rc forwarders='$(fwd)': $out"
 fi
 out=$(NIST_LAB_NETWORK_XML="$xml" ./vm/lab-network.sh destroy 2>&1); rc=$?
-gone=$("${V[@]}" net-info nist-lab-nettest 2>&1)
+gone=$("${V[@]}" net-info "$T_NET" 2>&1)
 [[ $rc -eq 0 && "$gone" == *"not found"* ]] && ok "destroy removes an unused network" || bad "destroy: rc=$rc: $out"
 out=$(./vm/lab-network.sh destroy 2>&1); rc=$?
-[[ $rc -ne 0 && "$out" == *"still used by"* ]] && ok "destroy refuses the real nist-lab while guests use it, naming them" || bad "destroy of nist-lab: rc=$rc: $out"
+[[ $rc -ne 0 && "$out" == *"still used by"* ]] && ok "destroy refuses the real $LAB_NET while guests use it, naming them" || bad "destroy of $LAB_NET: rc=$rc: $out"
 out=$(./vm/lab-network.sh destroy-if-unused 2>&1); rc=$?
-[[ $rc -eq 0 && "$out" == *"keeping nist-lab"* ]] && ok "destroy-if-unused keeps nist-lab while it is in use" || bad "destroy-if-unused: rc=$rc: $out"
+[[ $rc -eq 0 && "$out" == *"keeping $LAB_NET"* ]] && ok "destroy-if-unused keeps $LAB_NET while it is in use" || bad "destroy-if-unused: rc=$rc: $out"
 # Captured, not piped to grep -q: its early exit would fail the pipeline with
 # virsh's SIGPIPE under pipefail.
-real=$("${V[@]}" net-info nist-lab 2>/dev/null)
-grep -q 'Active: *yes' <<<"$real" && ok "the real nist-lab is still active" || bad "nist-lab is not active"
+real=$("${V[@]}" net-info "$LAB_NET" 2>/dev/null)
+grep -q 'Active: *yes' <<<"$real" && ok "the real $LAB_NET is still active" || bad "$LAB_NET is not active"
 echo "==> $([ $fails -eq 0 ] && echo PASS || echo FAIL): lab network ($fails failed)"
 exit $(( fails > 0 ))

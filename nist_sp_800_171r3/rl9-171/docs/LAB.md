@@ -66,12 +66,15 @@ the likely causes, leaving the VM up to inspect. An installer that halts
 itself - anaconda giving up - is caught at once rather than after the
 twenty minutes, and either way the stop shows what the installer said
 (`tools/install-log.sh NAME`, which also reads a log left behind; DEFECTS
-7.30). A guest whose firmware never reaches its boot manager - the firmware
-and emulated TPM on some hosts hang on a new guest's first boot - is booted
-again, on the variables it has, up to three times; the installer must then
-name itself on the console before an install counts as finished, and the ISO
-is a virtio-scsi CD-ROM (DEFECTS 7.42; `./nist test-cdrom-boot` measures a
-host, `sudo ./nist vm-logs NAME` shows qemu's side). The inventory is checked
+7.30). A new guest with an emulated TPM can stall in its firmware until
+something wakes qemu - Ubuntu 26.04's qemu 10.2.1 does this (DEFECTS 7.42).
+So until the firmware reaches its boot manager the build asks libvirt for the
+guest's block statistics every two seconds, which wakes it and changes
+nothing; a guest that is still not there after 45 s is booted again, on the
+variables it has, up to three times. The installer must then name itself on
+the console before an install counts as finished, and the ISO is a
+virtio-scsi CD-ROM (`./nist test-cdrom-boot` measures a host and with
+`--kick` shows the cure; `sudo ./nist vm-logs NAME` shows qemu's side). The inventory is checked
 before the install starts (7.31); after any
 failure, `./nist make destroy` and `./nist make all` repeat it from nothing. The usual cause of a stall is a guest
 that cannot reach the Rocky mirror: forwarding off, a firewall, or Docker's
@@ -85,6 +88,61 @@ from, or the one `NIST_LAB_DNS="IP ..."` names (DEFECTS 7.29).
 the lab network. `NIST_ROCKY_MIRROR=URL` installs from another mirror. Before
 2026-10-05 the install waited forever, unseen - 48 hours on one host (DEFECTS
 7.17).
+
+---
+
+## A shared hypervisor
+
+Everything above takes the hypervisor to be the lab's alone: its network is
+`nist-lab`, its volumes are in libvirt's pool `default`, its guests are
+`rl9-*` and `byo-*`, and `./nist make teardown` looks through every pool for
+those names. On a host that also carries someone else's guests that is wrong
+twice. Nothing says whose a guest or a volume is; and what is theirs can
+have the lab's names - a Rocky boot ISO, a GenericCloud base image, a guest
+called `rl9-cui-01` - and the lab's teardown would delete it (DEFECTS 7.45).
+
+There the lab is given a namespace: one line in `lab.conf`, beside `./nist`.
+The file is the host's - untracked, read by every lab tool, so nothing is
+exported and no command changes.
+
+```
+namespace = sc
+```
+
+| | The lab alone | With `namespace = sc` |
+| --- | --- | --- |
+| Guests | `rl9-cui-01`, `rl9-log-01`, `byo-*` | `sc-rl9-cui-01`, `sc-rl9-log-01`, `sc-byo-*` |
+| Network | `nist-lab` on `virbr17` | `sc-lab` on `sc-br0` - the same 192.168.171.0/24, NAT |
+| Volumes | libvirt's pool `default` | a pool of the lab's own, `sc`, in `/var/lib/libvirt/images/sc`; libvirt makes both on the first build (a pool of that name defined beforehand is used where it is) |
+| The lab's, to teardown, residue and destroy | a guest named `rl9-*`, `byo-*` or `ptest-*`, or on `nist-lab`; those names in any pool | a guest named `sc-rl9-*` or `sc-byo-*`, or on `sc-lab`; the lab's names in the pool `sc` and nowhere else |
+
+A namespace is one to six lowercase letters and digits, a letter first.
+Every guest's name carries the prefix: the default names do, and a name
+given by hand must (`./nist byo-guest build sc-byo-rl9-02 ...`) or it is
+refused. `./nist make teardown` removes the namespace's guests, network and
+volumes and then its pool; a pool that still holds anything else is kept,
+and the teardown fails saying what. `./nist residue --others` lists what on
+the host is not the lab's - guests, networks, pools and volumes, by name:
+taken before and after a teardown, the two listings are the same. Inventories,
+`.secrets/`, the lab PKI and the reports are in the clone, as on any host.
+Outside libvirt the lab writes only in the home of the user who runs it, and
+a teardown keeps what a rebuild needs there: the clone with its ISO, the
+control-plane image in podman's store, and the BYO lab's directory
+(`~/.local/share/nist-byo-lab`). A BYO guest's host key is recorded in that
+user's `~/.ssh/known_hosts` and forgotten when the guest is destroyed
+(DEFECTS 7.53).
+
+What the lab needs of the host is what *On any host* lists, and its
+operator's agreement to the subnet. It restarts no daemon, uses no `sudo`,
+writes no host file, and touches no network, pool, guest or disk but its own
+- libvirt's `default` network and pool included.
+
+Not in a namespace: the portability host (`./nist portability-host`,
+`./nist portability-run`) wants a second network and nested virtualisation,
+and refuses. `./nist test-lab-network` puts its throwaway copy on
+192.168.179.0/24: ask the host's operator first. And a namespace renames the
+lab, it does not add one - two labs on one host would both want
+192.168.171.0/24.
 
 ---
 
@@ -134,8 +192,9 @@ second factor.
 | `byo-log-01` | .101 | log | The collector the BYO CUI hosts forward to over TLS. |
 | `byo-rl9-02` | .144 | cui | What the reference lacks (DEFECTS 5.6): a 10 GB data disk carrying `vg_sys` with all of it free (the LUKS path, 6b.5), a TPM 2.0 (the role's clevis `tpm2` bind), and a second interactive account `cuiuser1` (6b.4). |
 
-All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`
-9.8, cloud-init, UEFI with Secure Boot, 3 GB, 2 vCPU); their shapes are
+All three are built by `vm/byo-guest.sh` (stock `Rocky-9-GenericCloud-Base`,
+the mirror's latest - 9.9 since 2026-11 - cloud-init, UEFI with Secure Boot,
+3 GB, 2 vCPU); their shapes are
 `BYO_SPEC` in `tools/release-run.sh`, and `release-run.sh byo` rebuilds all
 three from the stock image, every time. `byo-rl9-01` and `byo-log-01` were
 first built by hand on 2026-09-17 and replaced by script builds on
@@ -191,10 +250,19 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   Python's GObject bindings; a `PATH` that puts a venv's `python3` first
   breaks it. In the control-plane image the venv is last on `PATH`.
 - **vTPM: "Need read/write rights on statedir /var/lib/swtpm-localca for user
-  tss".** libvirt runs swtpm as `tss`; Ubuntu's package leaves the local CA
-  directory owned by `swtpm`. It is the host's to fix, once, since the tool no
-  longer touches host files: `sudo install -d -m 0750 -o tss -g root
-  /var/lib/swtpm-localca`.
+  tss".** Not Ubuntu's packaging, as this said until 2026-11-17, but a host
+  whose `/etc/libvirt/qemu.conf` is gone: libvirt then runs swtpm as `tss`,
+  its built-in default, while the package gives the directory to `swtpm` -
+  the user its own qemu.conf names, so a stock Ubuntu 26.04 needs nothing.
+  The chown this recommended does not last: systemd-tmpfiles gave the
+  directory back on the laptop on 2026-10-16, and no TPM guest could be made
+  there for a month. `vm/host-swtpm.sh check` says whether the two agree, and
+  `sudo vm/host-swtpm.sh fix` writes a tmpfiles override naming the user
+  libvirt uses (or removes it once they agree without it) - no libvirtd
+  restart, which on Ubuntu 26.04 has left the daemon unrecoverable short of
+  a reboot. *Proven* on the laptop: check failed, fix, check passed and
+  stayed so across `systemd-tmpfiles --create`, and three TPM guests started
+  where swtpm_setup had refused.
 - **A pinned address handed to someone else.** dnsmasq will not give a pinned
   address to a new MAC while an unexpired lease holds it for another, and the
   guest silently takes a different address. `byo-guest.sh` derives the MAC

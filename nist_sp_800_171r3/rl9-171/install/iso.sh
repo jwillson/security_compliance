@@ -102,7 +102,7 @@ else
   cp "$key" "$pubkey"
 fi
 key_given=$key; key=$pubkey
-iso=iso/Rocky-9.8-x86_64-boot.iso
+iso=iso/Rocky-9.9-x86_64-boot.iso
 [[ -f "$iso" ]] || die "$iso missing (make iso)"
 [[ -n "$out" ]] || out="iso/${name}-install.iso"
 

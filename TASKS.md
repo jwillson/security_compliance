@@ -37,6 +37,11 @@ reboot, apply, dry run at `changed=0`, verify.
 | BYO retrofit (`inventory/hosts.yml`) | `byo-rl9-01`, `byo-log-01` **34/30/5/28** — 9 checks failed, all five requirements the documented retrofit limits (no volume group, no separate `/tmp`; DEFECTS 2.2) |
 | BYO with a volume group, a TPM and two accounts | `byo-rl9-02` **35/33/1/28** — 2 checks failed, both 03.04.06 (no separate `/tmp`) |
 
+Since then on Rocky 9.9, which the mirror serves now and the lab is on
+(DEFECTS 7.47): both labs built from nothing on a second Ubuntu host,
+2026-11-17, with the same dispositions - 354 checks run, the reference
+hosts 0 failed, the BYO hosts 9, 9 and 2 (DEFECTS 7.45-7.53).
+
 Proven by behaviour, not configuration: an idle SSH session closed at the
 ODP limit (`tools/ssh-idle-test.sh`); GRUB demanding its password to edit an
 entry (`tools/rehearse-grub-edit.py`); the TPM refusing after a PCR 7 change,
@@ -343,6 +348,59 @@ which crypto_types forbids).
         rl9-cui-01 rl9-log-01`: both hosts with Wazuh, 0 of 354 failed
         (36/33/0/28 and 35/34/0/28); EICAR quarantined in 2 s, the alert on
         the collector, 5/5; the collector at 2 GB with 692 MB available.
+
+## Open — a shared hypervisor
+
+Owner decision, 2026-11-17: run the lab on the owner's server, which also
+carries another lab's guests. Its operator's conditions - everything of ours
+named `sc-`, a NAT network and a storage pool of our own, libvirt's
+`default` network and pool untouched, nothing changed on the host - are what
+a lab namespace gives (`lab.conf`; `lib/lab-env.sh`; docs/LAB.md, *A shared
+hypervisor*). Scope, agreed the same day: the reference lab, then the
+firmware hang of DEFECTS 7.42 measured there, then the BYO lab. All three
+ran there that day, on Rocky 9.9, which the lab is on since (DEFECTS 7.47);
+what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
+
+- [x] **S1 The lab in a namespace** (DEFECTS 7.45): both labs built,
+      assessed and torn down on the server in the namespace `sc`, and what
+      is not the lab's there the same before and after.
+      **Open, and deferred by the owner (2026-11-18: the server gives a
+      working lab):** the laptop's lab rebuilt with no namespace, on 9.9 -
+      `./nist make destroy && ./nist make all` there. The unit tests and
+      the read-only tools say a host without `lab.conf` is as it was; no
+      build has. It is also the first build with 7.53's host-key
+      functions; rebuilding the BYO guests after it (`./nist release-run
+      byo`) is what clears the comment lines the laptop's
+      `~/.ssh/known_hosts` holds for their three addresses, 2 410 of them.
+- [x] **S2 The firmware hang (7.42) on a third host.** Measured, and its
+      cause found: qemu 10.2.1's main loop is asleep while a TPM command
+      waits for it, and a question to qemu wakes it. `vm/build-vm.sh` asks
+      one every two seconds while a new guest's firmware boots.
+      **Open:** (a) Ubuntu 26.04 has no qemu with upstream's fix, which is
+      in 10.2.2: not in its updates, its proposed or its backports, for
+      `qemu` or `qemu-hwe` (2026-11-18; DEFECTS 7.42). Ubuntu has no
+      report of the hang either; filing one is the owner's. When the
+      hosts' qemu carries the fix, `./nist test-cdrom-boot scsi 8` with no
+      `--kick` says whether the asking can go. (b) That those upstream
+      commits are this hang is a reading of them, not a test: it takes a
+      qemu that has them. (c) `vm/byo-guest.sh --tpm` does not ask: its
+      guest boots a disk, and the one built on the server came up in 40 s;
+      its first boot has not been counted.
+- [x] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
+      release-run byo` at `6d2e083`: PASS, the three guests as at 1.0.1
+      (34/30/5/28 twice, 35/33/1/28), 354 checks (DEFECTS 7.49, 7.50).
+- [ ] **S4 The laptop's `qemu.conf`.** Owner decision, 2026-11-18: the
+      override stays for now; putting the packaged file back, which takes
+      a reboot, waits for a later date. The laptop has no
+      `/etc/libvirt/qemu.conf`, so its libvirt runs swtpm as `tss`, and
+      `sudo vm/host-swtpm.sh fix` wrote the override that goes with that
+      (DEFECTS 7.46). Putting it back is the packaged file
+      (`qemu.conf.dpkg-dist` beside it is the package's own, and names
+      `swtpm`), `sudo vm/host-swtpm.sh fix` in the same change - it then
+      removes the override - and a reboot, since libvirtd reads the file
+      when it starts. Not tried: the removal, and what a guest's TPM state
+      written as `tss` does under `swtpm` - so with S1's rebuild, which
+      makes the lab's TPM guests anew.
 
 ## Open — container only
 

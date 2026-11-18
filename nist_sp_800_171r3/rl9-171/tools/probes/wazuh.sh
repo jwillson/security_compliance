@@ -26,3 +26,26 @@ ausearch -m FANOTIFY -ts recent -i 2>/dev/null | grep -oE 'path=[^ ]+|exe=[^ ]+'
 journalctl -u fapolicyd --since -1h --no-pager -q 2>/dev/null | grep -i deny | tail -8 | sed 's/^/  /'
 echo "--- SELinux denials since the last hour"
 ausearch -m AVC -ts recent -i 2>/dev/null | grep -oE 'comm=[^ ]+ .*name=[^ ]+|scontext=[^ ]+ tcontext=[^ ]+' | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /'
+# What fapolicyd trusts of the package (the bundled Python was refused on
+# Rocky 9.9, 2026-11-17): the release, fapolicyd's version, how many of the
+# package's files under /var/ossec are in the trust database, and the
+# filter that decides which RPM files go into it.
+echo "--- fapolicyd's trust of the package"
+echo "  release:       $(cat /etc/rocky-release 2>/dev/null)"
+echo "  fapolicyd:     $(rpm -q fapolicyd 2>/dev/null)"
+owned=$(rpm -ql wazuh-manager 2>/dev/null | grep -c '^/var/ossec/')
+trusted=$(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/')
+echo "  files under /var/ossec: $owned in the RPM, $trusted in the trust database"
+echo "  bundled python: $(fapolicyd-cli --dump-db 2>/dev/null | grep -c ' /var/ossec/framework/python/') trusted"
+# How the trust database got there, and whether it has changed since:
+# fapolicyd 2.0 sizes it itself, and the manager was first started while the
+# package had not fitted into it (DEFECTS 7.48).
+echo "  the trust database since boot (fapolicyd's journal; the last 12 of $(journalctl -u fapolicyd -b --no-pager -q 2>/dev/null | grep -cE 'Published trust DB|trust DB full|shrinking map') events):"
+journalctl -u fapolicyd -b --no-pager -q 2>/dev/null | grep -E 'Published trust DB|trust DB full|shrinking map' | tail -12 \
+  | sed -E 's/^([A-Z][a-z]+ +[0-9]+ [0-9:]+) \S+ fapolicyd\[[0-9]+\]: /    \1  /'
+echo "  manager:       active since $(systemctl show wazuh-manager -p ActiveEnterTimestamp --value 2>/dev/null), boot at $(uptime -s 2>/dev/null)"
+for f in /etc/fapolicyd/fapolicyd-filter.conf /etc/fapolicyd/rpm-filter.conf; do
+  # if, not `[ -f ] &&`: as the last command that made the probe exit 1 on
+  # a host without the second file, and ansible report it FAILED.
+  if [ -f "$f" ]; then echo "  $f:"; grep -vE '^\s*(#|$)' "$f" | sed 's/^/    /' | head -40; fi
+done

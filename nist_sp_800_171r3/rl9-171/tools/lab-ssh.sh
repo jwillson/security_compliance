@@ -13,7 +13,9 @@
 # choose another), records the host key if it is new, and supplies the
 # password factor the way lib/ssh-env.sh does for every tool - so nothing is
 # typed, and nothing wrong is offered: three failed attempts lock the account
-# (03.01.08). `sudo` on the host asks for the same password.
+# (03.01.08). `sudo` on the host asks for the same password - in the shell.
+# A COMMAND runs without a terminal, where sudo cannot ask: it fails, and
+# each try counts as a failed attempt (as root: ansible -b, tools/probe.sh).
 #
 # The password comes from the host's ansible_password - the kickstart lab's
 # .secrets/admin_password, or the inventory's vault (for the BYO lab, source
@@ -41,7 +43,7 @@ print(v.get("ansible_host", ""), v.get("ansible_user", ""),
       m.group(1) if m else os.path.expanduser("~/.ssh/known_hosts"))')
 [[ -n "${addr:-}" ]] || { echo "error: $host is not in $NIST_INVENTORY" >&2; exit 2; }
 mkdir -p "$(dirname "$kh")"; touch "$kh"; chmod 600 "$kh"
-ssh-keygen -F "$addr" -f "$kh" >/dev/null 2>&1 || ssh-keyscan -H "$addr" >> "$kh" 2>/dev/null
+ssh-keygen -F "$addr" -f "$kh" >/dev/null 2>&1 || nist_keyscan "$addr" "$kh"
 # The knowledge factor: answered from the inventory, never typed or exported.
 if pwfile=$(nist_askpass_for "$host"); then
   export SSH_ASKPASS="$PWD/lib/askpass.sh" SSH_ASKPASS_REQUIRE=force NIST_ASKPASS_FILE="$pwfile"

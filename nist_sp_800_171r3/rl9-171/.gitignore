@@ -5,6 +5,10 @@
 iso/*.iso
 iso/CHECKSUM
 
+# This host's lab settings - a namespace, on a hypervisor the lab shares
+# (lib/lab-env.sh; docs/LAB.md, "A shared hypervisor").
+lab.conf
+
 # Generated per-host, not part of the baseline.
 # Every live inventory: one per lab (NIST_INVENTORY). The example is tracked.
 inventory/*.yml
