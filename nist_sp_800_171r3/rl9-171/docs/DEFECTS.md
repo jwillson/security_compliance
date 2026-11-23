@@ -2096,8 +2096,10 @@ public when it had not.*
       source or in a patch; the uploads waiting in proposed (ubuntu3.4,
       ubuntu4.5) name neither in their changelogs; and its backports hold
       no qemu. Ubuntu 26.10's 1:11.0.3 has both. A search of Ubuntu's
-      bugs for qemu, swtpm, edk2 and libvirt found no report of the hang.
-      The Rocky 9 machine's qemu-kvm 10.1.0 predates the io_uring loop.
+      bugs for qemu, swtpm, edk2 and libvirt found no report of the hang,
+      and the owner filed one on 2026-11-23: Launchpad bug 2175639, against
+      Ubuntu's qemu (TASKS S2). The Rocky 9 machine's qemu-kvm 10.1.0
+      predates the io_uring loop.
       Not shown here: that a qemu with those two commits does not hang -
       that takes another qemu on the host.
 

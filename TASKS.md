@@ -378,8 +378,10 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
       one every two seconds while a new guest's firmware boots.
       **Open:** (a) Ubuntu 26.04 has no qemu with upstream's fix, which is
       in 10.2.2: not in its updates, its proposed or its backports, for
-      `qemu` or `qemu-hwe` (2026-11-18; DEFECTS 7.42). Ubuntu has no
-      report of the hang either; filing one is the owner's. When the
+      `qemu` or `qemu-hwe` (2026-11-18; DEFECTS 7.42). The owner reported
+      the hang to Ubuntu on 2026-11-23:
+      https://bugs.launchpad.net/ubuntu/+source/qemu/+bug/2175639. That
+      report is where to watch for an upload with the fix. When the
       hosts' qemu carries the fix, `./nist test-cdrom-boot scsi 8` with no
       `--kick` says whether the asking can go. (b) That those upstream
       commits are this hang is a reading of them, not a test: it takes a
@@ -401,6 +403,21 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
       when it starts. Not tried: the removal, and what a guest's TPM state
       written as `tss` does under `swtpm` - so with S1's rebuild, which
       makes the lab's TPM guests anew.
+- [ ] **S5 The mirror's 9.9 boot ISO downloads as a mix of two builds.**
+      Rocky published a second build of the 9.9 boot ISO (20261118.0; the
+      first is 20261112.0), and the mirror's `CHECKSUM` now gives the
+      second's sum for `Rocky-9.9-x86_64-boot.iso`. On 2026-11-23 that
+      name, downloaded to the laptop the way `make iso` does it, came as a
+      mix: the first build's bytes at some offsets, not at others, and the
+      SHA-256 of neither. `make iso` rejects and removes such a file, so a
+      host with no ISO cannot build while the mirror serves this. The
+      laptop and the server each hold the first build - the one the
+      reference lab was proven with, still in `CHECKSUM` under its dated
+      name - so their builds are not affected, and no lab has been built
+      from the second. Open: whether the mirror settles (`make iso` on a
+      host with no ISO says), and if it does not, fetching the build under
+      the dated name `CHECKSUM` lists with the same sum. Not tried: a
+      download under a dated name.
 
 ## Open — container only
 
