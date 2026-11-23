@@ -43,9 +43,9 @@ if [[ -z "${NIST_IN_CONTAINER:-}" ]]; then
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-XML="$HERE/../vm/nist-lab-network.xml"
-NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$XML" | head -1)
-GW=$(sed -n "s:.*<ip address='\([0-9.]*\)'.*:\1:p" "$XML" | head -1)
+. "$HERE/../lib/lab-env.sh"
+NET=$LAB_NET
+GW=$(lab_network_xml | sed -n "s:.*<ip address='\([0-9.]*\)'.*:\1:p" | head -1)
 SUBNET=${GW%.*}
 MIRROR=${1:-${NIST_ROCKY_MIRROR:-https://dl.rockylinux.org/pub/rocky/9}}
 HOST=$(sed -E 's#^[a-z]+://([^/:]+).*#\1#' <<<"$MIRROR")
@@ -93,7 +93,7 @@ if nft list ruleset 2>/dev/null | grep -q "$SUBNET\.0/24" || iptables -t nat -S 
   ok "a NAT rule for $SUBNET.0/24"
 else bad "no NAT rule for $SUBNET.0/24 (libvirt adds it when $NET starts; a firewall reload can drop it - restart the network)"; fi
 if iptables -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP' && { command -v docker >/dev/null 2>&1 || ip link show docker0 >/dev/null 2>&1; }; then
-  bad "Docker's FORWARD DROP policy is in place: allow virbr17 in DOCKER-USER (./nist lab-network ensure prints the rules)"
+  bad "Docker's FORWARD DROP policy is in place: allow $LAB_BRIDGE in DOCKER-USER (./nist lab-network ensure prints the rules)"
 fi
 
 echo "5. the mirror, over IPv4 and IPv6 separately"
@@ -122,7 +122,7 @@ echo "6. the guests' own path: from inside $NET"
 # is a guest without a VM.
 # Interface names are at most 15 characters.
 NS=nistdiag$$ VETH=nd$$ PROBE=$SUBNET.250
-BRIDGE=$(sed -n "s:.*<bridge name='\([^']*\)'.*:\1:p" "$XML" | head -1)
+BRIDGE=$LAB_BRIDGE
 if ip link show "$BRIDGE" >/dev/null 2>&1; then
   cleanup_ns() { ip netns del "$NS" 2>/dev/null; ip link del "$VETH" 2>/dev/null; rm -rf "/etc/netns/$NS"; }
   trap cleanup_ns EXIT
@@ -149,7 +149,11 @@ if ip link show "$BRIDGE" >/dev/null 2>&1; then
   elif inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 30 ${pin[@]+"${pin[@]}"} "$MIRROR/BaseOS/x86_64/os/.treeinfo" 2>/dev/null; then
     ok "from $PROBE, a small file from $MIRROR${pin:+ (address given)}"
     (( resolved )) || info "so the way out works: the guests' fault is DNS alone (layers 1 and 3)"
-    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 ${pin[@]+"${pin[@]}"} "$MIRROR/isos/x86_64/Rocky-9.8-x86_64-boot.iso" 2>/dev/null; then
+    # 8 MB of the installer's image, which every minor release has under this
+    # name (.treeinfo, stage2). It was the boot ISO, whose name carries the
+    # minor release: 9.8's left 9/ when 9.9 came out, the fetch got a 404,
+    # and a sound network was called an MTU problem (DEFECTS 7.47).
+    if inside curl -4 -fsS -o /dev/null --connect-timeout 10 --max-time 60 -r 0-8388607 ${pin[@]+"${pin[@]}"} "$MIRROR/BaseOS/x86_64/os/images/install.img" 2>/dev/null; then
       ok "from $PROBE, 8 MB from $MIRROR"
     else bad "from $PROBE the small file came but 8 MB did not: a path MTU problem (a VPN or tunnel on this host) - lower the lab network's MTU, or NIST_ROCKY_MIRROR=URL to a nearer mirror"; fi
   else bad "from $PROBE nothing comes from $MIRROR${pin:+ even with its address given}, though this host reaches it: the lab's NAT out is blocked (firewalld, Docker, a VPN's policy) - layer 4"; fi

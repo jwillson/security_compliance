@@ -12,6 +12,8 @@
 #   - UEFI firmware with Secure Boot (the role seals to PCR 7, the Secure
 #     Boot state) - what libvirt's domain capabilities offer;
 #   - an emulated TPM (swtpm) for the guests that seal to one;
+#   - the storage pool the lab's volumes go in: libvirt's `default`, or on a
+#     shared hypervisor the lab's own, which the first build makes;
 #   - memory for the guests the lab runs: kickstart 4 GiB each (the CUI host,
 #     then the collector), BYO 3 GiB each (two CUI hosts and a collector).
 # Missing pieces are named with the host's package command (apt, dnf or
@@ -21,8 +23,9 @@
 #
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib/container.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/lab-env.sh"
 lab=${1:-all}
-[[ "$lab" =~ ^(kickstart|byo|all)$ ]] || { sed -n '3,21p' "$0"; exit 2; }
+[[ "$lab" =~ ^(kickstart|byo|all)$ ]] || { sed -n '3,23p' "$0"; exit 2; }
 V=(virsh -c "$NIST_LIBVIRT_URI")
 fails=0
 ok()   { echo "  ok    $*"; }
@@ -36,7 +39,7 @@ case " ${ID:-} ${ID_LIKE:-} " in
   *" arch "*) pkgs="sudo pacman -S --needed qemu-full libvirt swtpm edk2-ovmf dnsmasq" ;;
   *) pkgs="" ;;
 esac
-echo "== $(hostname): ${PRETTY_NAME:-unknown OS}, checking for the $lab lab, through $NIST_LIBVIRT_URI"
+echo "== $(hostname): ${PRETTY_NAME:-unknown OS}, checking for the $lab lab, through $NIST_LIBVIRT_URI${LAB_NS:+, in the lab namespace $LAB_NS}"
 
 if ! "${V[@]}" uri >/dev/null 2>&1; then
   bad "libvirt does not answer at $NIST_LIBVIRT_URI as $(id -un). Start it on the host - \
@@ -59,8 +62,9 @@ else
   else bad "no emulated TPM: install swtpm and swtpm-tools"; fi
 fi
 
-pool=$("${V[@]}" pool-dumpxml default 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
-if [[ -n "$pool" ]]; then ok "storage pool default ($pool)"
+pool=$("${V[@]}" pool-dumpxml "$LAB_POOL" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
+if [[ -n "$pool" ]]; then ok "storage pool $LAB_POOL ($pool)"
+elif [[ -n "$LAB_NS" ]]; then note "storage pool $LAB_POOL, this lab's own: the first build makes it, at $LAB_POOL_PATH"
 else bad "no storage pool 'default': sudo virsh pool-define-as default dir --target /var/lib/libvirt/images; sudo virsh pool-autostart default; sudo virsh pool-start default"; fi
 
 need_mb=0

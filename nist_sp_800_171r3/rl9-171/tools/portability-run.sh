@@ -25,6 +25,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
+. lib/lab-env.sh
+[[ -z "$LAB_NS" ]] || { echo "error: the portability run is not for a shared hypervisor (lab namespace $LAB_NS): vm/portability-host.sh says why" >&2; exit 2; }
 distro=${1:?usage: tools/portability-run.sh rocky9|fedora [--keep]}; keep=${2:-}
 [[ -z "$(git status --porcelain)" ]] || { echo "error: the worktree has changes; the result is for a commit" >&2; exit 2; }
 commit=$(git rev-parse --short HEAD)

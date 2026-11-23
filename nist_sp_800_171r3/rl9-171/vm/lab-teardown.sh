@@ -13,6 +13,11 @@
 # cloud-init seeds in the BYO lab directory. Then tools/lab-residue.sh must
 # find nothing, or this exits 1 saying what is left.
 #
+# On a hypervisor the lab shares (a namespace in lab.conf, lib/lab-env.sh)
+# only the namespace is looked at: guests that carry its prefix or sit on its
+# network, and the volumes in its own pool, which goes last, once empty.
+# Nothing else on the host is the lab's, whatever it is called.
+#
 # Kept, because they are inputs rather than residue and a rebuild needs them:
 # .secrets/ (the kickstart lab's key and passwords), iso/ (the downloaded
 # ISO), and the BYO lab directory's secrets and tooling. Remove those by hand
@@ -23,18 +28,20 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
+. lib/lab-env.sh
 V=(virsh -c "$NIST_LIBVIRT_URI")
 LAB="${NIST_BYO_LAB:-$HOME/.local/share/nist-byo-lab}"
-NET=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' vm/nist-lab-network.xml | head -1)
+NET=$LAB_NET
 say() { echo "==> $*"; }
 
 guests=$(for d in $("${V[@]}" list --all --name 2>/dev/null); do
-  if [[ "$d" =~ ^(rl9|byo|ptest)- ]] || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
+  if lab_guest_name "$d" || "${V[@]}" domiflist "$d" 2>/dev/null | awk -v n="$NET" '$3==n {f=1} END {exit !f}'; then echo "$d"; fi
 done | sort)
 
-echo "This removes both labs from $(hostname):"
+echo "This removes both labs from $(hostname)${LAB_NS:+ - what is in the lab namespace $LAB_NS, and nothing else}:"
 echo "  guests:  ${guests:-none}" | tr '\n' ' '; echo
-echo "  and the lab network, the BYO base image, and any lab volume left in a pool."
+if [[ -n "$LAB_NS" ]]; then echo "  and the lab network $NET, every lab volume in the pool $LAB_POOL, and that pool."
+else echo "  and the lab network, the BYO base image, and any lab volume left in a pool."; fi
 echo "  Kept: .secrets/, iso/, and the secrets in $LAB."
 if [[ "${1:-}" != --yes ]]; then
   read -r -p "Type 'teardown' to go on: " answer
@@ -42,13 +49,14 @@ if [[ "${1:-}" != --yes ]]; then
 fi
 
 for g in $guests; do
-  if [[ "$g" == ptest-* ]]; then
+  base=${g#"$LAB_PREFIX"}                # the name without the namespace's prefix
+  if [[ -z "$LAB_NS" && "$g" == ptest-* ]]; then
     say "$g (portability test host)"; ./vm/portability-host.sh destroy "${g#ptest-}" || true
-  elif [[ "$g" == byo-* ]]; then
+  elif [[ "$base" == byo-* ]]; then
     say "$g (BYO)"; ./vm/byo-guest.sh destroy "$g" || true
     rm -rf "${LAB:?}/$g"                 # its cloud-init seed and passwords
   else
-    role=cui; [[ "$g" == *log* ]] && role=log
+    role=cui; [[ "$base" == *log* ]] && role=log
     # The destroy reads the guest's address from the inventory that holds it
     # (to forget its host key) and then removes its entry there.
     inv=inventory/hosts.yml
@@ -76,14 +84,20 @@ purge_dir() {   # PATH
   done < <("${V[@]}" vol-list --pool "$tmp" --details 2>/dev/null | awk 'NR > 2 && NF {print $1, $3}')
   "${V[@]}" pool-destroy "$tmp" >/dev/null 2>&1
 }
-for pool in $("${V[@]}" pool-list --name 2>/dev/null); do
+# Every pool, where the lab has the host to itself; its own pool alone, in a
+# namespace - another lab's boot ISO or base image has the same name.
+for pool in $(lab_pools); do
   ppath=$("${V[@]}" pool-dumpxml "$pool" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
   while read -r f t; do
-    [[ "$f" =~ ^(rl9|byo|ptest)- || "$f" == Rocky-*-boot.iso || "$f" == rocky9-genericcloud-base.qcow2 ]] || continue
+    lab_guest_name "$f" || [[ "$f" == Rocky-*-boot.iso || "$f" == rocky9-genericcloud-base.qcow2 ]] || continue
     [[ "$t" == dir && -n "$ppath" ]] && purge_dir "$ppath/$f"
     "${V[@]}" vol-delete --pool "$pool" "$f" >/dev/null 2>&1 && echo "    $pool/$f"
   done < <("${V[@]}" vol-list --pool "$pool" --details 2>/dev/null | awk 'NR > 2 && NF {print $1, $3}')
 done
+if [[ -n "$LAB_NS" ]]; then
+  say "the lab's pool"
+  lab_pool_remove && echo "    $LAB_POOL" || echo "    $LAB_POOL kept: something is still in it (below)"
+fi
 
 echo
 ./tools/lab-residue.sh

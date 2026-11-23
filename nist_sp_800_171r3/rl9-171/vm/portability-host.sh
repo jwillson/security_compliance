@@ -29,6 +29,11 @@ KEY="${NIST_BYO_KEY:-$HOME/.ssh/id_rsa}"
 NET=nist-ptest BRIDGE=virbr180 SUBNET=192.168.180
 say() { echo "==> $*"; }
 die() { echo "error: $*" >&2; exit 1; }
+# Not on a hypervisor the lab shares: a second network and nested
+# virtualisation are more than a lab namespace was agreed to hold, and
+# nothing here is proven under one (lib/lab-env.sh).
+. "$HERE/../lib/lab-env.sh"
+[[ -z "$LAB_NS" ]] || die "a portability host is not built on a shared hypervisor (lab namespace $LAB_NS): it takes a second network and nested virtualisation"
 
 cmd=${1:-}; distro=${2:-}
 [[ "$cmd" =~ ^(build|destroy|address)$ && "$distro" =~ ^(rocky9|fedora)$ ]] || { sed -n '3,20p' "$0"; exit 2; }

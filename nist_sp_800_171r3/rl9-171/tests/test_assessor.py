@@ -7,6 +7,7 @@ not exist. Run with `make test`.
 import argparse
 import importlib.machinery
 import importlib.util
+import re
 import subprocess
 import sys
 import tempfile
@@ -578,6 +579,66 @@ class PoamRegisterCheck(unittest.TestCase):
 
     def test_a_stale_assessment_fails(self):
         self.assertEqual(self.status(self.FAILING, self.HEAD + "P1,03.04.06,deviation,Open\n", age_hours=72), "FAIL")
+
+
+class OptedInComponents(unittest.TestCase):
+    """An optional component that is installed and broken is a deviation.
+
+    manual_if_absent reads a non-zero exit status as "the component is not
+    there". `systemctl is-active` and `is-enabled` exit non-zero for a unit
+    that is there and wrong, so a check that ended in one reported MANUAL for
+    an installed Wazuh whose service had failed (two hosts, 2026-11-17;
+    DEFECTS 7.51). Every such check runs here as written, with only what
+    reads the host replaced: the package query by its answer, and systemctl
+    by a state and the exit status systemctl gives with it.
+    """
+
+    PACKAGE = re.compile(r"rpm -q (?:--whatprovides )?\S+ >/dev/null 2>&1")
+    UNIT = re.compile(r"systemctl is-(active|enabled) \S+ 2>&1")
+    RIGHT = {"active": "active", "enabled": "enabled"}
+    WRONG = {"active": [("failed", 3), ("inactive", 3), ("activating", 3)],
+             "enabled": [("disabled", 1), ("'Failed to get unit file state: No such file or directory'", 1)]}
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        checks = yaml.safe_load((ROOT / "audit/checks.yml").read_text())["checks"]
+        cls.odp = yaml.safe_load((ROOT / "catalog/overlay-rocky9.yml").read_text())["odp"]
+        cls.checks = {c["id"]: c for c in checks
+                      if c.get("manual_if_absent") and cls.UNIT.search(c["command"])}
+
+    def status(self, cid, installed, state="", rc=0):
+        check = dict(self.checks[cid])
+        cmd, n = self.PACKAGE.subn("true" if installed else "false", check["command"])
+        self.assertEqual(n, 1, f"{cid} no longer asks rpm whether its component is installed")
+        cmd, n = self.UNIT.subn(f"{{ echo {state}; (exit {rc}); }}", cmd)
+        self.assertEqual(n, 1, f"{cid} no longer asks systemctl for its unit's state")
+        check["command"] = cmd
+        return na.Runner(self.odp).run(check)["status"]
+
+    def verb(self, cid):
+        return self.UNIT.search(self.checks[cid]["command"]).group(1)
+
+    def test_the_opt_in_checks_are_the_ones_tested(self):
+        self.assertLessEqual({"si-02-freshclam-enabled", "si-02-clamav-scan-timer",
+                              "si-02-realtime-detection-running"}, set(self.checks))
+
+    def test_installed_and_wrong_is_a_deviation(self):
+        for cid in self.checks:
+            for state, rc in self.WRONG[self.verb(cid)]:
+                with self.subTest(cid=cid, state=state):
+                    self.assertEqual(self.status(cid, True, state, rc), "FAIL")
+
+    def test_installed_and_right_passes(self):
+        for cid in self.checks:
+            with self.subTest(cid):
+                self.assertEqual(self.status(cid, True, self.RIGHT[self.verb(cid)], 0), "PASS")
+
+    def test_not_installed_is_manual(self):
+        for cid in self.checks:
+            with self.subTest(cid):
+                self.assertEqual(self.status(cid, False), "MANUAL")
+
 
 if __name__ == "__main__":
     unittest.main()

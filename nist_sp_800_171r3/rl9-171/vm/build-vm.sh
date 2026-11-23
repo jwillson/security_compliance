@@ -13,7 +13,7 @@
 #   ./build-vm.sh --destroy       remove the VM and everything it left in libvirt
 #
 # It runs in the control-plane container, through the host's libvirt socket:
-# the ISO goes into the default pool (vol-upload), the disk is a pool volume
+# the ISO goes into the lab's pool (vol-upload), the disk is a pool volume
 # with a serial the kickstart names it by (/dev/disk/by-id/virtio-NAME), and
 # the console is recorded by tools/console-record.sh - no sudo, no host file.
 # The ISO carries the admin password's hash, so it is ejected and its volume
@@ -37,6 +37,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT"
+# The lab's network and pool, and on a shared hypervisor the prefix its
+# guests carry (sc-rl9-cui-01): lib/lab-env.sh.
+. "$ROOT/lib/lab-env.sh"
+. "$ROOT/lib/known-hosts.sh"          # nist_keyscan, nist_forget_host
 
 VM_NAME=""
 VM_ROLE="cui"
@@ -53,8 +57,8 @@ VM_RUNTIME_RAM_MB=2048
 VM_VCPUS=2
 VM_DISK_GB=40
 ADMIN_USER="cuiadmin"
-VM_NETWORK="nist-lab"
-POOL=default
+VM_NETWORK=$LAB_NET
+POOL=$LAB_POOL
 SECRETS="$ROOT/.secrets"
 # Every guest this builds is a kickstart-lab host: its inventory is that
 # lab's own, whoever runs this - make or a person (DEFECTS 7.33).
@@ -80,21 +84,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$VM_ROLE" in
-  cui) : "${VM_NAME:=rl9-cui-01}" ;;
-  log) : "${VM_NAME:=rl9-log-01}" ;;
+  cui) : "${VM_NAME:=${LAB_PREFIX}rl9-cui-01}" ;;
+  log) : "${VM_NAME:=${LAB_PREFIX}rl9-log-01}" ;;
   *)   die "unknown role: $VM_ROLE (expected cui or log)" ;;
 esac
 [[ "$VM_NAME" =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] || die "'$VM_NAME' is not a guest name (letters, digits, hyphens; 20 at most - it is the disk's serial)"
+lab_name_ok "$VM_NAME" || exit 1
 ISO_VOL="$VM_NAME-install.iso"
 
 if [[ $DESTROY -eq 1 ]]; then
-  # Only a lab guest: a domain attached to nist-lab, or one already gone (its
-  # inventory entry and host key are still cleaned up). `--name` took any
-  # libvirt domain - a typo, a personal VM - and removed it with all its
-  # storage (issue #6).
+  # Only a lab guest: a domain attached to the lab network, or one already
+  # gone (its inventory entry and host key are still cleaned up). `--name`
+  # took any libvirt domain - a typo, a personal VM - and removed it with all
+  # its storage (issue #6).
   if "${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 &&
-     ! "${V[@]}" domiflist "$VM_NAME" 2>/dev/null | awk '$3=="nist-lab" {f=1} END {exit !f}'; then
-    die "'$VM_NAME' is not attached to nist-lab, so it is not a lab guest; refusing to destroy it"
+     ! "${V[@]}" domiflist "$VM_NAME" 2>/dev/null | awk -v n="$VM_NETWORK" '$3==n {f=1} END {exit !f}'; then
+    die "'$VM_NAME' is not attached to $VM_NETWORK, so it is not a lab guest; refusing to destroy it"
   fi
   log "destroying $VM_NAME"
   # Everything the guest has in libvirt (DEFECTS 7.18): the domain, its disk
@@ -107,7 +112,7 @@ if [[ $DESTROY -eq 1 ]]; then
     || "${V[@]}" undefine "$VM_NAME" --nvram --remove-all-storage >/dev/null 2>&1 || true
   "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1 || true
   "${V[@]}" vol-delete --pool "$POOL" "$ISO_VOL" >/dev/null 2>&1 || true
-  [[ -n "$ip" && -f "$SECRETS/known_hosts" ]] && ssh-keygen -R "$ip" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
+  [[ -n "$ip" ]] && nist_forget_host "$ip" "$SECRETS/known_hosts"
   "$ROOT/tools/inventory.py" remove "$VM_NAME" >/dev/null 2>&1 || true
   log "destroyed"
   exit 0
@@ -118,7 +123,7 @@ fi
 for f in admin_password_hash id_rsa id_rsa.pub; do
   [[ -f "$SECRETS/$f" ]] || die "missing $SECRETS/$f"
 done
-[[ -f iso/Rocky-9.8-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.8-x86_64-boot.iso (./nist make iso)"
+[[ -f iso/Rocky-9.9-x86_64-boot.iso ]] || die "boot ISO not found: iso/Rocky-9.9-x86_64-boot.iso (./nist make iso)"
 # The lab network: nothing created it on a new host, so the build failed or
 # hung there (DEFECTS 7.17). Only what is missing is done.
 "$HERE/lab-network.sh" ensure
@@ -126,6 +131,7 @@ done
 "$ROOT/tools/inventory.py" check "$VM_NAME" || die "nothing installed: $NIST_INVENTORY is not this lab's - \
 the kickstart lab's own is inventory/kickstart.yml, used unless NIST_INVENTORY names another"
 "${V[@]}" dominfo "$VM_NAME" >/dev/null 2>&1 && die "domain $VM_NAME already exists - run './nist build-vm --name $VM_NAME --destroy' first"
+lab_pool_ensure || exit 1
 pool_path=$("${V[@]}" pool-dumpxml "$POOL" 2>/dev/null | sed -n 's:.*<path>\(.*\)</path>.*:\1:p' | head -1)
 [[ -n "$pool_path" ]] || die "no storage pool '$POOL' in $NIST_LIBVIRT_URI"
 
@@ -173,23 +179,32 @@ vi_pid=$!
 }
 install_attempt
 log "watching the install: the console is recorded in $CONSOLE"
-# The firmware's first boot (DEFECTS 7.42): with this firmware (OVMF
-# 2025.11) and an emulated TPM, a new guest's firmware hangs before its boot
-# manager on about half of first boots, printing nothing; a later boot of the
-# same guest does not (tools/test-cdrom-boot.sh --reuse: 7 of 7). So if the
-# console has no BdsDxe 45 s after the start, the guest is stopped, its
+# The firmware's first boot (DEFECTS 7.42). Under Ubuntu 26.04's qemu 10.2.1
+# a new guest with an emulated TPM often stalls in its firmware, printing
+# nothing: a TPM command waits for qemu's main loop - the first one for the
+# thread that carries it - and in a firmware's first seconds nothing else
+# wakes that loop (qemu 10.2.2 has upstream's fix for such a missed wake-up;
+# not tried here). A question put to qemu's monitor does wake it, and a
+# boot takes two to four of them (tools/test-cdrom-boot.sh --kick: asked
+# every 2 s, 8 of 8 new guests reached GRUB in 9 to 12 s where 8 of 8 left
+# alone never did). So while the console has no BdsDxe - the firmware's boot
+# manager - this asks libvirt for the guest's block statistics every two
+# seconds, which changes nothing in the guest.
+# Should 45 s pass without BdsDxe all the same, the guest is stopped, its
 # definition removed with its firmware variables kept and its empty disk
 # deleted, and virt-install runs again under the same name - libvirt reuses
 # a variable store that exists. Nothing has been installed: each attempt is a
 # fresh install. At most three.
-attempt=1 fw_from=0 fw_start=$SECONDS
+attempt=1 fw_from=0 fw_start=$SECONDS woken=0
 started=$SECONDS last_size=-1 last_change=$SECONDS why=""
 while kill -0 "$vi_pid" 2>/dev/null; do
-  sleep 5
+  sleep $(( fw_start ? 2 : 5 ))
   size=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0)
   if [[ "$size" != "$last_size" ]]; then last_size=$size; last_change=$SECONDS; fi
   if (( fw_start )); then
     if tail -c +$(( fw_from + 1 )) "$CONSOLE" 2>/dev/null | grep -aq 'BdsDxe'; then
+      if (( woken )); then log "the firmware reached its boot manager within $(( SECONDS - fw_start )) s, after qemu was asked $woken time(s) (DEFECTS 7.42)"
+      else log "the firmware reached its boot manager within $(( SECONDS - fw_start )) s"; fi
       fw_start=0
     elif (( SECONDS - fw_start > 45 )); then
       if (( attempt == 3 )); then why="the firmware did not reach its boot manager on 3 attempts (DEFECTS 7.42)"; break; fi
@@ -198,9 +213,11 @@ while kill -0 "$vi_pid" 2>/dev/null; do
       "${V[@]}" destroy "$VM_NAME" >/dev/null 2>&1; wait "$vi_pid" 2>/dev/null
       "${V[@]}" undefine "$VM_NAME" --keep-nvram >/dev/null 2>&1
       "${V[@]}" vol-delete --pool "$POOL" "$VM_NAME.qcow2" >/dev/null 2>&1
-      fw_from=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0) fw_start=$SECONDS last_change=$SECONDS
+      fw_from=$(stat -c %s "$CONSOLE" 2>/dev/null || echo 0) fw_start=$SECONDS last_change=$SECONDS woken=0
       install_attempt
       continue
+    elif "${V[@]}" domstats --block "$VM_NAME" >/dev/null 2>&1; then
+      woken=$(( woken + 1 ))
     fi
   fi
   # The kickstart ends with `reboot`; an installer that halts or powers off
@@ -284,12 +301,12 @@ log "inventory now:"
 # longer exists: forget it, then record this guest's key once its sshd
 # answers (DEFECTS 7.24).
 touch "$SECRETS/known_hosts"; chmod 600 "$SECRETS/known_hosts"
-ssh-keygen -R "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1 || true
+nist_forget_host "$IP" "$SECRETS/known_hosts"
 log "waiting for SSH"
 ssh_up=0
 for _ in $(seq 1 60); do
   if ! ssh-keygen -F "$IP" -f "$SECRETS/known_hosts" >/dev/null 2>&1; then
-    ssh-keyscan -H "$IP" 2>/dev/null >> "$SECRETS/known_hosts" || true
+    nist_keyscan "$IP" "$SECRETS/known_hosts"
   fi
   if ssh -i "$SECRETS/id_rsa" -o StrictHostKeyChecking=yes \
          -o UserKnownHostsFile="$SECRETS/known_hosts" -o ConnectTimeout=5 \

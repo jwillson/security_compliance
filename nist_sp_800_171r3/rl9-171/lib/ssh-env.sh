@@ -22,6 +22,7 @@
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/lib/inventory-env.sh" || return 1 2>/dev/null || exit 1
+. "$ROOT_DIR/lib/known-hosts.sh"      # nist_keyscan, nist_forget_host
 
 # A direct ssh (tools/lab-ssh.sh) has no ansible to answer for it: this writes
 # the password ansible_password gives HOST into a 0600 file in the
@@ -73,7 +74,7 @@ nist_seed_known_hosts() {
     # Already trusted? Leave it alone - a changed key should raise an error,
     # not be silently re-accepted.
     ssh-keygen -F "$h" -f "$kh" >/dev/null 2>&1 && continue
-    ssh-keyscan -H "$h" >> "$kh" 2>/dev/null
+    nist_keyscan "$h" "$kh"
   done < <(nist_host_known_hosts)
 }
 
@@ -89,8 +90,8 @@ nist_refresh_known_hosts() {
   local h kh
   while IFS=$'\t' read -r h kh; do
     [ -n "$h" ] && [ -f "$kh" ] || continue
-    ssh-keygen -R "$h" -f "$kh" >/dev/null 2>&1
-    ssh-keyscan -H "$h" >> "$kh" 2>/dev/null
+    nist_forget_host "$h" "$kh"
+    nist_keyscan "$h" "$kh"
     chmod 600 "$kh"
   done < <(nist_host_known_hosts)
 }

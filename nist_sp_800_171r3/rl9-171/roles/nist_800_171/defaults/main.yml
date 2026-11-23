@@ -182,7 +182,7 @@ nist_luks_passphrase: >-
      or '' }}
 
 # --- 03.16.02 Supported components ---
-nist_supported_minor_version: "9.8"
+nist_supported_minor_version: "9.9"
 
 # Internal: set by tasks that need a reboot to take effect.
 nist_reboot_required: false

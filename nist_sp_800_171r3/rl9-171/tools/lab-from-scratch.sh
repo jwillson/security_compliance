@@ -30,6 +30,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT" || exit 2
+. lib/lab-env.sh
 [[ "${1:-}" == --yes ]] || { sed -n '3,24p' "$0"; echo "(pass --yes: it destroys every lab guest)"; exit 2; }
 from=teardown; [[ "${2:-}" == --from && -n "${3:-}" ]] && from=$3
 started=0
@@ -53,7 +54,7 @@ step() {   # name command... (in the control-plane container, as everything)
 
 step teardown "./vm/lab-teardown.sh --yes"
 step kickstart-all "make all"
-step kickstart-wazuh "./tools/test-wazuh.sh rl9-cui-01 rl9-log-01"
+step kickstart-wazuh "./tools/test-wazuh.sh ${LAB_PREFIX}rl9-cui-01 ${LAB_PREFIX}rl9-log-01"
 step byo-init "./vm/byo-lab-init.sh"
 step byo-release "source $LAB/env.sh && ./tools/release-run.sh byo"
 say "residue now:"; ./tools/lab-residue.sh | tee -a "$OUT/summary.txt"

@@ -122,7 +122,10 @@ The tool runs only in its control-plane container: every entry point enters
 it by itself (`lib/container.sh`), and the host needs podman or docker and,
 for the lab, the hypervisor - nothing else (owner decision 2026-10-07, TASKS
 C). Never add a host-side tool or a `sudo` to a workstation script; libvirt
-is reached through its socket.
+is reached through its socket. Three commands ask for sudo, each the owner's
+decision: `sudo ./nist diagnose`, `sudo ./nist vm-logs NAME` (read-only), and
+`sudo vm/host-swtpm.sh fix`, which makes the TPM emulator's CA directory
+follow the user libvirt runs it as (2026-11-17).
 
 Hardening an existing host needs neither the VM targets nor `.secrets/`. Its
 secrets - the admin password, the GRUB password (03.10.07), the LUKS
@@ -147,6 +150,14 @@ make the operator export it. `lib/inventory-env.sh` refuses an inventory that
 mixes kickstart-lab hosts (`.secrets/` key) with hosts you brought — each needs
 its own second SSH factor, and the wrong one is a faillock strike
 (`rl9-171/docs/LAB.md`, *Two labs on one workstation*).
+
+On a hypervisor that carries other people's guests the lab is given a
+namespace - `namespace = sc` in an untracked `lab.conf` beside `./nist` - and
+then everything it has in libvirt carries it (`sc-rl9-cui-01`, the network
+`sc-lab`, the pool `sc`) and its tools touch nothing else
+(`rl9-171/docs/LAB.md`, *A shared hypervisor*). A lab script never names a
+network, a pool or a guest prefix itself: it takes `LAB_NET`, `LAB_POOL` and
+`LAB_PREFIX` from `lib/lab-env.sh`.
 
 `site.yml` has two plays: the overlay over `cui_hosts`, then
 `nist_log_collector` over `log_hosts`. `./nist inventory show` lists the

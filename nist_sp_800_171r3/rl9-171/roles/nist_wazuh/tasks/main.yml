@@ -217,6 +217,31 @@
     mode: "0644"
   tags: ["03.14.02"]
 
+- name: "03.04.08 | Wait until fapolicyd trusts the Wazuh package"
+  # fapolicyd 2.0 (Rocky 9.9) sizes its trust database itself and grows it
+  # only on a later rebuild: the package's 24 000 files filled it, the
+  # manager was started while most were still untrusted, and its own Python
+  # was refused its standard library ("Operation not permitted", 56 denials;
+  # seen 2026-11-17 on both hosts of a fresh lab). One file of that library
+  # stands for the package: asked for until the database holds it, with a
+  # rebuild requested each time it does not.
+  ansible.builtin.shell:
+    cmd: |
+      systemctl is-active -q fapolicyd || exit 0
+      f=$(ls /var/ossec/framework/python/lib/python3*/abc.py 2>/dev/null | head -1)
+      [ -n "$f" ] || exit 0
+      fapolicyd-cli --dump-db 2>/dev/null | awk -v f="$f" '$2 == f {ok = 1} END {exit !ok}' && exit 0
+      fapolicyd-cli --update >/dev/null 2>&1
+      exit 1
+    executable: /bin/bash
+  register: nist_wazuh_trusted
+  until: nist_wazuh_trusted.rc == 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  when: not (ansible_check_mode and nist_wazuh_pkg is changed)
+  tags: ["03.14.02", "03.04.08"]
+
 - name: "03.14.02 | Start the Wazuh manager"
   ansible.builtin.systemd:
     name: wazuh-manager

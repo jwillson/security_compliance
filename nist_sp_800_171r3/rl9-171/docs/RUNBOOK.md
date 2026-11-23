@@ -302,11 +302,19 @@ is typed and nothing wrong is offered (three wrong passwords lock the
 account, 03.01.08):
 
 ```bash
-./nist lab-ssh rl9-cui-01                         # a shell
-./nist lab-ssh rl9-cui-01 'sudo systemctl status auditd'
+./nist lab-ssh rl9-cui-01                         # a shell; sudo in it asks for the admin password
+./nist lab-ssh rl9-cui-01 'systemctl is-active auditd'    # one command - not sudo, see below
 ./nist lab-console rl9-cui-01                     # the serial console, when SSH cannot
-./nist bash -c '. lib/ssh-env.sh && ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'   # ansible by hand: the inventory and its vault
+./nist bash -c '. lib/ssh-env.sh && ansible rl9-cui-01 -b -m shell -a "systemctl status auditd"'   # as root, by ansible: the inventory and its vault
 ```
+
+A command given to `lab-ssh` runs without a terminal, and there `sudo`
+cannot ask for its password: "sudo: a terminal is required to read the
+password". Each such try is a failed authentication, and three in one login
+lock the account for fifteen minutes (03.01.08) - this page showed `sudo` as
+that command until one login with three of them locked a lab host's admin
+out (2026-11-17). For a command as root use the ansible line above, or a
+probe (`./nist probe`).
 
 Both find the host in whichever lab's inventory lists it. What you must not do is
 "fix" a refused login by relaxing `AuthenticationMethods`, which is the

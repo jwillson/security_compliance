@@ -6,8 +6,15 @@ PDF    := NIST.SP.800-171r3.pdf
 # nearer or proxied one). NIST_CURL_OPTS adds curl options - -4 where this
 # host's IPv6 route carries nothing (tools/diagnose-lab-net.sh says so).
 ROCKY_MIRROR := $(or $(NIST_ROCKY_MIRROR),https://dl.rockylinux.org/pub/rocky/9)
-ISO_URL := $(ROCKY_MIRROR)/isos/x86_64/Rocky-9.8-x86_64-boot.iso
-ISO     := iso/Rocky-9.8-x86_64-boot.iso
+# The boot ISO is a point release, and the mirror's 9/ follows the newest:
+# when 9.9 came out, 9/isos/ no longer held 9.8 and `make iso` failed on every
+# new host (404, first seen 2026-11-17). So it is fetched from the release's
+# own directory beside 9/, then from the vault, where old releases stay.
+# The release is the one 9/ serves - what the installer and every `dnf`
+# after it take their packages from (owner decision 2026-11-17: 9.9).
+ISO_VERSION := 9.9
+ISO_DIRS := $(patsubst %/9,%/$(ISO_VERSION),$(ROCKY_MIRROR))/isos/x86_64 https://dl.rockylinux.org/vault/rocky/$(ISO_VERSION)/isos/x86_64
+ISO     := iso/Rocky-$(ISO_VERSION)-x86_64-boot.iso
 
 # Every target runs in the control-plane container (TASKS C2): run outside
 # it, make runs again inside, through ./nist, with the same goals - so a host
@@ -130,11 +137,15 @@ iso: $(ISO)
 
 $(ISO):
 	@mkdir -p iso
-	curl -fL --retry 3 --connect-timeout 20 $(NIST_CURL_OPTS) -o $@ $(ISO_URL) \
-	  || { rm -f $@; echo "the ISO download failed: tools/diagnose-lab-net.sh tests the path to the mirror"; exit 1; }
-	@cd iso && curl -fsSL --connect-timeout 20 $(NIST_CURL_OPTS) -O $(ROCKY_MIRROR)/isos/x86_64/CHECKSUM \
-	  && grep -A1 "Rocky-9.8-x86_64-boot.iso:" CHECKSUM | grep SHA256 \
-	  | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c -
+	@for d in $(ISO_DIRS); do \
+	   echo "fetching $$d/$(notdir $@)"; \
+	   curl -fL --retry 3 --connect-timeout 20 $(NIST_CURL_OPTS) -o $@ $$d/$(notdir $@) \
+	     && curl -fsSL --connect-timeout 20 $(NIST_CURL_OPTS) -o iso/CHECKSUM $$d/CHECKSUM && break; \
+	   rm -f $@; \
+	 done; \
+	 [ -f $@ ] || { echo "the ISO download failed: tools/diagnose-lab-net.sh tests the path to the mirror"; exit 1; }
+	@cd iso && grep -A1 "$(notdir $@):" CHECKSUM | grep SHA256 \
+	  | sed 's/SHA256 (\(.*\)) = \(.*\)/\2  \1/' | sha256sum -c - || { rm -f $(notdir $@); exit 1; }
 
 vm: host-check secrets iso catalog-present
 	./vm/build-vm.sh

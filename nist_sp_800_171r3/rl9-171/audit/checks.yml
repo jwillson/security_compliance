@@ -18,7 +18,13 @@
 # overlay updates the role and these checks together.
 #
 # manual_if_absent: true  -> a missing optional component degrades to MANUAL
-#                            rather than counting as a deviation.
+#                            rather than counting as a deviation. "Missing"
+#                            is a non-zero exit status, so a command that has
+#                            found the component must end with status 0 and
+#                            let its output decide: `systemctl is-active`
+#                            exits 3 for "failed", and an installed Wazuh
+#                            whose service had failed read as MANUAL
+#                            (DEFECTS 7.51).
 #
 # ok_rc: [0, ...]          -> exit statuses under which the output counts as
 #                            evidence. expect_empty and expect_no_match are
@@ -2261,7 +2267,9 @@ checks:
       # clamav-update is a name clamav-freshclam provides, and `rpm -q` asks
       # for package names: it reported ClamAV absent where it was installed.
       rpm -q --whatprovides clamav-update >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
-      systemctl is-enabled clamav-freshclam 2>&1
+      # Installed: from here the output decides, not the exit status -
+      # is-enabled exits 1 for "disabled", which read as absent (7.51).
+      systemctl is-enabled clamav-freshclam 2>&1 || true
     expect_match: "^(enabled|static)$"
     manual_if_absent: true
 
@@ -2269,7 +2277,8 @@ checks:
     description: Scheduled scanning runs at the ODP frequency
     command: |
       rpm -q clamav >/dev/null 2>&1 || { echo "clamav not installed"; exit 1; }
-      systemctl is-enabled nist-malware-scan.timer 2>&1
+      # Installed: the output decides, not is-enabled's exit status (7.51).
+      systemctl is-enabled nist-malware-scan.timer 2>&1 || true
     expect_output: "enabled"
     manual_if_absent: true
 
@@ -2288,7 +2297,10 @@ checks:
     command: |
       # Opt-in (roles/nist_wazuh, TASKS W1): absent, say so plainly.
       rpm -q wazuh-manager >/dev/null 2>&1 || { echo "wazuh not installed"; exit 1; }
-      systemctl is-active wazuh-manager 2>&1
+      # Installed: the output decides, not the exit status. is-active exits 3
+      # for "failed", which read as absent: both hosts of a lab whose manager
+      # had not started reported MANUAL here (2026-11-17; 7.51).
+      systemctl is-active wazuh-manager 2>&1 || true
     expect_output: "active"
     manual_if_absent: true
 
