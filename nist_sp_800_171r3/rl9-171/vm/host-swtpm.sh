@@ -22,17 +22,29 @@
 # it. When the two agree without it (qemu.conf restored), it removes that
 # override instead, which would otherwise break TPM guests the other way
 # round. It never restarts libvirtd, edits no libvirt file and touches no
-# guest. This runs on the host, not in the control-plane container, and
+# guest.
+#
+# libvirt reads qemu.conf when its daemon starts. A file written since is not
+# what the running daemon does: it goes on running swtpm as the user it read
+# then (the owner's laptop, 2026-11-24: the packaged file put back, a daemon
+# that could not be restarted, and no new TPM guest once the directory had
+# followed the file). So both commands go by the running daemon - while it
+# has not read the file, by the owner of its swtpm log directory, which
+# libvirt sets each time it prepares a guest's TPM - and say that `fix` is
+# to be run again once the daemon has restarted.
+#
+# This runs on the host, not in the control-plane container, and
 # `fix` as root: with `./nist diagnose` and `./nist vm-logs`, the only places
 # the toolkit asks for sudo (owner decision 2026-11-17).
 #
 set -euo pipefail
 DIR=/var/lib/swtpm-localca
+LOGDIR=/var/log/swtpm/libvirt/qemu
 CONF=/etc/libvirt/qemu.conf
 OVERRIDE=/etc/tmpfiles.d/swtpm-tmpfiles.conf
 PACKAGED=/usr/lib/tmpfiles.d/swtpm-tmpfiles.conf
 cmd=${1:-}
-[[ "$cmd" == check || "$cmd" == fix ]] || { sed -n '3,27p' "$0"; exit 2; }
+[[ "$cmd" == check || "$cmd" == fix ]] || { sed -n '3,38p' "$0"; exit 2; }
 
 if [[ -e "$CONF" && ! -r "$CONF" ]]; then
   echo "error: $CONF is not readable as $(id -un): sudo vm/host-swtpm.sh $cmd" >&2; exit 2
@@ -44,6 +56,28 @@ if [[ -r "$CONF" ]]; then
 fi
 [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "error: '$user' is not a user name ($why)" >&2; exit 2; }
 packaged=$(awk '$1 == "d" && $2 == "'"$DIR"'" {print $4}' "$PACKAGED" 2>/dev/null | tail -1)
+# Has the running daemon read $CONF as it is? Not if the file is younger than
+# the daemon (libvirtd on Ubuntu; virtqemud where libvirt runs modular).
+unread=
+if [[ -e "$CONF" ]]; then
+  for unit in libvirtd.service virtqemud.service; do
+    pid=$(systemctl show -P MainPID "$unit" 2>/dev/null) || continue
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+    up=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ') || continue
+    [[ "$up" =~ ^[0-9]+$ ]] || continue
+    (( $(date +%s) - $(stat -c %Y "$CONF") < up )) && unread=${unit%.service}
+  done
+fi
+later=
+if [[ -n "$unread" ]]; then
+  now=$(stat -c %U "$LOGDIR" 2>/dev/null || true)
+  if [[ -z "$now" ]]; then
+    echo "error: $CONF was written after $unread started, and with no $LOGDIR nothing says which user $unread runs swtpm as. Restart $unread - or reboot the host, where a restart is not safe (docs/LAB.md)." >&2; exit 2
+  fi
+  if [[ "$now" != "$user" ]]; then
+    later=$user user=$now why="$unread has not read $CONF, written since it started; $LOGDIR is $now's"
+  fi
+fi
 owner=$(stat -c %U "$DIR" 2>/dev/null || echo none)
 
 echo "libvirt runs swtpm as:   $user  ($why)"
@@ -60,6 +94,9 @@ if [[ "$cmd" == check ]]; then
   fi
   if [[ "$packaged" == "$user" && -e "$OVERRIDE" ]]; then
     echo "MISMATCH soon: $OVERRIDE is no longer needed and names another owner than the package. Fix: sudo vm/host-swtpm.sh fix"; exit 1
+  fi
+  if [[ -n "$later" ]]; then
+    echo "ok for now: a new TPM guest can be made. When $unread next starts it reads $CONF and runs swtpm as $later: run sudo vm/host-swtpm.sh fix again then."; exit 0
   fi
   echo "ok: a new TPM guest can be made, and it stays so"; exit 0
 fi

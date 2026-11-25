@@ -2435,3 +2435,57 @@ public when it had not.*
       for the load, and the 134 pass on Python 3.9 outside the container.
       Not run on a lab host: the builders with it - the server's lab was
       already gone - so the laptop's rebuild (TASKS S1) is its first.
+- [x] **7.54 The laptop's libvirt was not what Ubuntu ships, and its guests
+      were not confined as a stock host confines them.** `qemu.conf` (7.46)
+      was one of eight packaged configuration files missing there, and two
+      more were changed: `sudo dpkg -V` with the libvirt packages' names
+      lists them. `/etc/libvirt` was emptied on the evening libvirt was
+      installed - the directories libvirt made again carry that time - and
+      dpkg does not put back a configuration file an admin removed, so
+      every upgrade since had left them out. One of the two changed is
+      AppArmor's template for guests,
+      `/etc/apparmor.d/libvirt/TEMPLATE.qemu`: it gave every guest read,
+      write and lock on all of `/var/lib/libvirt/images`, where a stock
+      host lets a guest reach its own disks. What the lab proved on the
+      laptop it proved under that template; the stock one is what the
+      owner's server has, where 7.45 to 7.53 ran. Also not the package's:
+      none of the 24 network filters a new install defines, a network hook
+      and a socket drop-in earlier work had left, and the `default`
+      network's address range. *Fix* (owner decision, 2026-11-24: put it
+      back): each file from the package that owns it, out of the package
+      file in apt's cache and checked against dpkg's record of the
+      installed one before it went in; the network filters copied as the
+      package's install script copies them; the hook and the drop-in
+      removed; the networks and storage pools earlier work had left
+      undefined. libvirtd was not restarted - not safe on that host
+      (LAB.md) - so the running daemon keeps what it had read until the
+      laptop's next boot (TASKS S4). The script that did it names other
+      projects' objects, so it stays in the laptop's untracked run
+      directory, with the state before and after and a copy of all it
+      removed or replaced. *Proven:* `sudo dpkg -V` of the libvirt and
+      swtpm packages prints nothing; a network event after the hook was
+      gone is no error to the running daemon; and under the packaged
+      template `./nist test-cdrom-boot scsi 2 --kick 2` booted two new TPM
+      guests to GRUB, 0 of 2 failed, with no TPM state and no storage pool
+      left behind. What every guest ever started does leave, on any Ubuntu
+      host, is a file `/etc/apparmor.d/libvirt/libvirt-UUID`, root's: the
+      laptop held 350 of guests long gone, and the server holds 139 dated
+      the two days the lab ran there. `./nist residue` does not see them
+      and the tool, without root, cannot remove them (LAB.md).
+- [x] **7.55 `vm/host-swtpm.sh` went by `qemu.conf`, not by the daemon
+      that had yet to read it.** With the packaged `qemu.conf` back on the
+      laptop (7.54) `fix` did as written: the file names `swtpm`, so it
+      removed the override and gave the CA directory to `swtpm`, and
+      `check` said "ok: a new TPM guest can be made". None could: libvirt
+      reads the file when its daemon starts, the daemon had been up since
+      the last boot, and it went on running swtpm as `tss`. *Fix:* both
+      commands go by the running daemon. When `qemu.conf` is younger than
+      the daemon (libvirtd, or virtqemud where libvirt runs modular), the
+      user is the owner of libvirt's swtpm log directory, which libvirt
+      sets each time it prepares a guest's TPM; `fix` then writes or keeps
+      the override for that user, and `check` ends "ok for now", names the
+      user the daemon will take once it has restarted, and says to run
+      `fix` again then. *Proven* on the laptop, 2026-11-24: `check`
+      MISMATCH where it had said ok; `fix`; `check` "ok for now"; then the
+      two TPM guests of 7.54. Not run: the second `fix`, after the
+      laptop's next boot (TASKS S4), and a host with modular daemons.

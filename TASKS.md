@@ -365,7 +365,8 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
       assessed and torn down on the server in the namespace `sc`, and what
       is not the lab's there the same before and after.
       **Open, and deferred by the owner (2026-11-18: the server gives a
-      working lab):** the laptop's lab rebuilt with no namespace, on 9.9 -
+      working lab; 2026-11-24: after the laptop's next boot, S4):** the
+      laptop's lab rebuilt with no namespace, on 9.9 -
       `./nist make destroy && ./nist make all` there. The unit tests and
       the read-only tools say a host without `lab.conf` is as it was; no
       build has. It is also the first build with 7.53's host-key
@@ -391,18 +392,19 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
 - [x] **S3 The BYO lab there.** `./nist byo-lab-init`, then `./nist
       release-run byo` at `6d2e083`: PASS, the three guests as at 1.0.1
       (34/30/5/28 twice, 35/33/1/28), 354 checks (DEFECTS 7.49, 7.50).
-- [ ] **S4 The laptop's `qemu.conf`.** Owner decision, 2026-11-18: the
-      override stays for now; putting the packaged file back, which takes
-      a reboot, waits for a later date. The laptop has no
-      `/etc/libvirt/qemu.conf`, so its libvirt runs swtpm as `tss`, and
-      `sudo vm/host-swtpm.sh fix` wrote the override that goes with that
-      (DEFECTS 7.46). Putting it back is the packaged file
-      (`qemu.conf.dpkg-dist` beside it is the package's own, and names
-      `swtpm`), `sudo vm/host-swtpm.sh fix` in the same change - it then
-      removes the override - and a reboot, since libvirtd reads the file
-      when it starts. Not tried: the removal, and what a guest's TPM state
-      written as `tss` does under `swtpm` - so with S1's rebuild, which
-      makes the lab's TPM guests anew.
+- [ ] **S4 The laptop's libvirt, back to the package's** (DEFECTS 7.54,
+      7.55). Owner decision, 2026-11-24: put `qemu.conf` back and clear
+      what earlier work left in the laptop's libvirt. Done that day, on
+      disk: `sudo dpkg -V` of the libvirt packages prints nothing. Not in
+      effect yet: libvirtd was not restarted, and the reboot that restarts
+      it waits for the owner (2026-11-24: not now). Until then the running
+      daemon runs swtpm as `tss`, and the override naming `tss` stays
+      (`sudo vm/host-swtpm.sh check`: "ok for now").
+      **Open, after the laptop's next boot:** `sudo vm/host-swtpm.sh fix`,
+      which then removes the override; `sudo dpkg -V` again; `virsh
+      nwfilter-list`, 24 where there were none; and S1's rebuild, which
+      makes the lab's guests anew under the packaged configuration. Not
+      tried: what a guest's TPM state written as `tss` does under `swtpm`.
 - [ ] **S5 The mirror's 9.9 boot ISO downloads as a mix of two builds.**
       Rocky published a second build of the 9.9 boot ISO (20261118.0; the
       first is 20261112.0), and the mirror's `CHECKSUM` now gives the
@@ -418,6 +420,42 @@ what they found is DEFECTS 7.45-7.53 and the end of 7.42. What is left:
       host with no ISO says), and if it does not, fetching the build under
       the dated name `CHECKSUM` lists with the same sum. Not tried: a
       download under a dated name.
+
+## Open — RHEL 9
+
+Owner decision, 2026-11-24: RHEL 9 is next - RHEL 9 only - proven first in
+the BYO lab on the owner's server; the owner has a Red Hat developer account.
+Until a RHEL host has passed, `site.yml` goes on refusing RHEL and the
+documents go on saying Rocky Linux 9 (ODP-REVIEW I3). What names Rocky today,
+by I3 and a search of the tree: the signing key and its fingerprint
+(03.17.03), `/etc/rocky-release` in the software inventory and the SSP, the
+SCAP content file, the time servers, the repository IDs and the EFI path. A
+RHEL host also takes its packages through a subscription, which a Rocky host
+does not have.
+
+- [ ] **H1 The owner's part.** From the Red Hat account, into the BYO lab
+      directory on the server and never into the repository: the RHEL 9 KVM
+      guest image, whose download needs the login, with the checksum its
+      page shows; and an activation key with its organization ID.
+- [ ] **H2 A RHEL 9 guest in the BYO lab.** `vm/byo-guest.sh` builds from an
+      image the operator supplies as it does from Rocky's, and registers
+      the guest at first boot with the activation key from the lab
+      directory - by `subscription-manager` itself, since cloud-init's
+      `rh_subscription` spells its keys differently from one version to
+      the next, and RHEL 9.5's refuses an organization ID that is not a
+      number (Red Hat's RHEL-81169).
+- [ ] **H3 What trips.** `./nist apply --check --diff`, `./nist apply` and
+      `./nist verify` on that guest, with the guard lifted for it. Each
+      Rocky name above becomes a value chosen by the host's distribution
+      and read from the host where it can be - the key's fingerprint from
+      the key file RHEL ships, not from memory - and each difference in
+      the counts from the Rocky guest beside it is explained or fixed.
+- [ ] **H4 Supported.** The RHEL guest in `./nist release-run byo`; then
+      `site.yml`, the README's target, I3 and the changelog say RHEL 9,
+      for what that run proved: a host brought to the tool, not a
+      kickstart install.
+- [ ] **H5 The kickstart install on RHEL 9.** Its ISO needs the login too,
+      and its kickstart the registration. After H4.
 
 ## Open — container only
 

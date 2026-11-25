@@ -41,7 +41,10 @@ everything else, through libvirt: guests, their volumes (disks, install and
 seed ISOs, the BYO base image), UEFI variables, TPM state, DHCP pins, host
 keys, inventory entries and `nist-lab` (libvirt keeps its own per-domain
 logs, rotated by it). It finishes by running `tools/lab-residue.sh`, and
-fails if anything is left.
+fails if anything is left. One thing it cannot remove, and the residue does
+not list: on an Ubuntu host libvirt leaves a file
+`/etc/apparmor.d/libvirt/libvirt-UUID`, root's, for every guest that was
+ever started (DEFECTS 7.54).
 
 **Into a hardened guest.** After the overlay is applied, SSH wants your key
 *and* the account's password (03.05.03), from a host key already trusted,
@@ -262,7 +265,13 @@ Each of these stopped a build once. The fix is in the script, not in a note.
   restart, which on Ubuntu 26.04 has left the daemon unrecoverable short of
   a reboot. *Proven* on the laptop: check failed, fix, check passed and
   stayed so across `systemd-tmpfiles --create`, and three TPM guests started
-  where swtpm_setup had refused.
+  where swtpm_setup had refused. Both commands go by the running daemon and
+  not by a `qemu.conf` it has yet to read: with the file put back, `fix`
+  keeps the override until libvirt has restarted and removes it when run
+  again after (DEFECTS 7.55). Whether a host's libvirt is as its packages
+  ship it, Ubuntu's own tool says: `sudo dpkg -V` with the libvirt packages'
+  names prints each file that is missing or changed - ten on the laptop,
+  the AppArmor template for guests among them (7.54).
 - **A pinned address handed to someone else.** dnsmasq will not give a pinned
   address to a new MAC while an unexpired lease holds it for another, and the
   guest silently takes a different address. `byo-guest.sh` derives the MAC
